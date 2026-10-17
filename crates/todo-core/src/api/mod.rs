@@ -354,6 +354,10 @@ impl TaskRepository for NotifyingRepository {
         self.inner.entity_state(entity).await
     }
 
+    async fn entity_states(&self) -> CoreResult<Vec<(EntityRef, EntityState)>> {
+        self.inner.entity_states().await
+    }
+
     async fn sync_value(&self, key: &str) -> CoreResult<Option<String>> {
         self.inner.sync_value(key).await
     }

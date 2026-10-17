@@ -417,6 +417,31 @@ pub fn inboxes_of_two_devices_merge<R: TaskRepository>(repo: R) {
     assert_eq!(lists.iter().filter(|l| l.is_inbox()).count(), 1);
 }
 
+/// Der Export enthält Register aller lebenden und Tombstones aller gelöschten Entities.
+pub fn entity_states_export_everything<R: TaskRepository>(repo: R) {
+    let f = setup(repo);
+    let tasks = f.add_tasks(f.inbox.id(), 2);
+    let gone = EntityRef::Task(tasks[1].id());
+    block_on(f.repo.commit(ChangeSet::new().delete(gone))).expect("delete");
+    let states = block_on(f.repo.entity_states()).expect("export");
+    let entities: Vec<EntityRef> = states.iter().map(|(e, _)| *e).collect();
+    let mut expected = vec![
+        EntityRef::Task(tasks[0].id()),
+        gone,
+        EntityRef::TaskList(f.inbox.id()),
+        EntityRef::TaskList(f.work.id()),
+    ];
+    expected.sort();
+    assert_eq!(entities, expected);
+    for (entity, state) in &states {
+        assert_eq!(Some(state), f.state(*entity).as_ref());
+    }
+    assert!(matches!(
+        states.iter().find(|(e, _)| *e == gone),
+        Some((_, EntityState::Deleted(_)))
+    ));
+}
+
 /// Cursor und Werte der Engine bleiben gespeichert.
 pub fn sync_cursors_and_values_roundtrip<R: TaskRepository>(repo: R) {
     let f = setup(repo);

@@ -879,6 +879,7 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "futures",
+ "postcard",
  "proptest",
  "ruzstd",
  "serde",

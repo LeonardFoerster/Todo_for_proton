@@ -217,6 +217,10 @@ impl TaskRepository for SqliteTaskRepository {
             .await
     }
 
+    async fn entity_states(&self) -> CoreResult<Vec<(EntityRef, EntityState)>> {
+        self.db.call(|conn| sync_store::entity_states(conn)).await
+    }
+
     async fn sync_value(&self, key: &str) -> CoreResult<Option<String>> {
         let key = key.to_owned();
         self.db
@@ -357,6 +361,9 @@ mod tests {
         }
         async fn entity_state(&self, entity: EntityRef) -> CoreResult<Option<EntityState>> {
             self.repo.entity_state(entity).await
+        }
+        async fn entity_states(&self) -> CoreResult<Vec<(EntityRef, EntityState)>> {
+            self.repo.entity_states().await
         }
         async fn sync_value(&self, key: &str) -> CoreResult<Option<String>> {
             self.repo.sync_value(key).await

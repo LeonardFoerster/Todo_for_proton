@@ -34,7 +34,10 @@ use todo_core::{
     CoreError, CoreResult,
 };
 
-use crate::segment::{open_segment, seal_segment, SegmentError, SegmentHeader, MAX_OPS};
+use crate::{
+    segment::{open_segment, seal_segment, SegmentError, SegmentHeader, MAX_OPS},
+    snapshot::{open_snapshot, seal_snapshot, SnapshotBody, SnapshotHeader},
+};
 
 /// Version des Ordner-Layouts (`manifest.json`). Neuere Ordner werden nicht beschrieben.
 pub const LAYOUT_VERSION: u32 = 1;
@@ -50,6 +53,19 @@ const DEVICES_DIR: &str = "devices";
 const FEED_CURSOR: &str = "feed_cursor";
 const DEVICE_FILE_AT: &str = "device_file_at";
 const PUSHED_UP_TO: &str = "pushed_up_to";
+const OPS_SINCE_SNAPSHOT: &str = "ops_since_snapshot";
+const LAST_SNAPSHOT_AT: &str = "last_snapshot_at";
+/// Eigene Op-Nummer, bis zu der der letzte eigene Snapshot reicht …
+const SNAPSHOT_SEQ: &str = "snapshot_seq";
+/// … und der vorletzte. Nur was dieser abdeckt, wird kompaktiert: So bleibt ein Ersatz, falls
+/// der neueste Snapshot unlesbar ist.
+const PREV_SNAPSHOT_SEQ: &str = "prev_snapshot_seq";
+/// Erster Pull erledigt (ab dann keine Snapshot-Basis mehr nötig, außer bei Lücken).
+const INITIAL_PULL_DONE: &str = "initial_pull_done";
+const SNAPSHOTS_DIR: &str = "snapshots";
+/// So viele eigene Snapshots bleiben liegen (ein Ersatz, falls der neueste unlesbar ist).
+const KEEP_OWN_SNAPSHOTS: usize = 2;
+const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 /// Höchstens so viele Downloads gleichzeitig.
 const PARALLEL_DOWNLOADS: usize = 4;
 /// So viele Segmente werden je `apply_remote` (eine Transaktion) zusammengefasst.
@@ -65,6 +81,13 @@ pub struct SyncConfig {
     pub platform: String,
     /// `devices/<id>.json` wird höchstens so oft aktualisiert (jeder Upload kostet).
     pub device_file_interval_ms: i64,
+    /// Snapshot schreiben, wenn seit dem letzten mehr Ops gepusht/empfangen wurden …
+    pub snapshot_after_ops: u64,
+    /// … oder er älter ist als das (und seitdem etwas passiert ist).
+    pub snapshot_max_age_ms: i64,
+    /// Geräte, die so lange nicht gesehen wurden, bremsen die Kompaktierung nicht mehr
+    /// (sie brauchen dann einen Full-Resync – noch nicht umgesetzt).
+    pub inactive_device_ms: i64,
 }
 
 impl Default for SyncConfig {
@@ -74,6 +97,9 @@ impl Default for SyncConfig {
             device_name: "unknown".into(),
             platform: "unknown".into(),
             device_file_interval_ms: 10 * 60 * 1000,
+            snapshot_after_ops: 2_000,
+            snapshot_max_age_ms: 7 * DAY_MS,
+            inactive_device_ms: 90 * DAY_MS,
         }
     }
 }
@@ -95,6 +121,12 @@ pub struct SyncReport {
     pub clock_skews: u32,
     /// Hinweise ohne Inhalte (für Logs/Status).
     pub warnings: Vec<String>,
+    /// Ein Snapshot wurde als Basis importiert.
+    pub snapshot_loaded: bool,
+    /// Ein eigener Snapshot wurde geschrieben.
+    pub snapshot_written: bool,
+    /// Durch Kompaktierung gelöschte eigene Segmente.
+    pub segments_deleted: u32,
 }
 
 impl SyncReport {
@@ -106,6 +138,9 @@ impl SyncReport {
         self.newer_format |= other.newer_format;
         self.clock_skews += other.clock_skews;
         self.warnings.extend(other.warnings);
+        self.snapshot_loaded |= other.snapshot_loaded;
+        self.snapshot_written |= other.snapshot_written;
+        self.segments_deleted += other.segments_deleted;
     }
 }
 
@@ -340,7 +375,7 @@ impl SyncEngine {
             name: self.config.device_name.clone(),
             platform: self.config.platform.clone(),
             last_seen: now,
-            last_seq: self.pushed_up_to().await?,
+            last_seq: self.number(PUSHED_UP_TO).await?,
             cursors: self
                 .repo
                 .sync_cursors()
@@ -357,16 +392,6 @@ impl SyncEngine {
         self.repo
             .set_sync_value(DEVICE_FILE_AT, now.to_string())
             .await
-    }
-
-    /// Höchste hochgeladene Op-Nummer (vom letzten Push gemerkt).
-    async fn pushed_up_to(&self) -> CoreResult<u64> {
-        Ok(self
-            .repo
-            .sync_value(PUSHED_UP_TO)
-            .await?
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0))
     }
 
     /// Lädt die Outbox in Segmenten (≤ 500 Ops) hoch. Liefert die Zahl hochgeladener Ops.
@@ -440,6 +465,12 @@ impl SyncEngine {
     /// # Errors
     /// Fehler von Backend oder Repository.
     pub async fn pull(&self) -> CoreResult<SyncReport> {
+        Ok(self.pull_inner().await?.0)
+    }
+
+    /// Wie [`Self::pull`]; zweiter Wert: Bei mindestens einem Gerät fehlen Segmente am Anfang
+    /// der Kette (kompaktiert) – dann hilft nur ein Snapshot.
+    async fn pull_inner(&self) -> CoreResult<(SyncReport, bool)> {
         let session = self.session()?;
         let ops_dir = session.root.join(OPS_DIR)?;
         let (scope, next_feed) = self.changed_devices(&ops_dir, session.device).await?;
@@ -470,10 +501,12 @@ impl SyncEngine {
         }
 
         let mut report = SyncReport::default();
+        let mut behind = false;
         for (device, mut segments) in plan {
             let cursor = self.repo.sync_cursor(device).await?.unwrap_or(0);
             segments.retain(|s| s.to > cursor);
             segments.sort_by_key(|s| (s.from, s.to));
+            behind |= segments.first().is_some_and(|s| s.from > cursor + 1);
             report.merge(
                 self.pull_device(&session, device, cursor, &segments)
                     .await?,
@@ -482,7 +515,7 @@ impl SyncEngine {
         if let Some(cursor) = next_feed {
             self.repo.set_sync_value(FEED_CURSOR, cursor.0).await?;
         }
-        Ok(report)
+        Ok((report, behind))
     }
 
     /// Welche Geräteordner zu prüfen sind: `None` = alle (Listing), sonst laut Änderungs-Feed.
@@ -624,10 +657,250 @@ impl SyncEngine {
             }
         }
         let pushed = self.push().await?;
-        let mut report = self.pull().await?;
+        let mut report = SyncReport::default();
+        // Neues Gerät: Snapshot als Basis statt aller Segmente.
+        let fresh = self.repo.sync_value(INITIAL_PULL_DONE).await?.is_none()
+            && self.repo.sync_cursors().await?.is_empty();
+        if fresh {
+            report.merge(self.load_snapshot().await?);
+        }
+        let (pulled, behind) = self.pull_inner().await?;
+        report.merge(pulled);
+        if behind {
+            // Segmente wurden kompaktiert, bevor dieses Gerät sie las.
+            let loaded = self.load_snapshot().await?;
+            if loaded.snapshot_loaded {
+                report.merge(loaded);
+                report.merge(self.pull_inner().await?.0);
+            }
+        }
+        self.repo
+            .set_sync_value(INITIAL_PULL_DONE, "1".into())
+            .await?;
         report.pushed = pushed;
+        report.merge(
+            self.maybe_snapshot(u64::from(pushed) + u64::from(report.received))
+                .await?,
+        );
         self.write_device_file(first_run).await?;
         Ok(report)
+    }
+
+    /// Importiert den neuesten lesbaren Snapshot (State-Join über `apply_remote`) und setzt die
+    /// Cursor auf seinen Vektor, soweit sie dadurch vorrücken.
+    async fn load_snapshot(&self) -> CoreResult<SyncReport> {
+        let session = self.session()?;
+        let mut report = SyncReport::default();
+        for path in self.snapshot_paths(&session, None).await?.into_iter().rev() {
+            let bytes = match self.remote.read(&path).await {
+                Ok(bytes) => bytes,
+                Err(CoreError::NotFound(_)) => continue,
+                Err(e) => return Err(e),
+            };
+            let body = match open_snapshot(self.cipher.as_ref(), &session.key, &bytes) {
+                Ok((_, body)) => body,
+                Err(err) => {
+                    report.skipped_segments += 1;
+                    report.newer_format |= matches!(err, SegmentError::NewerFormat(_));
+                    report
+                        .warnings
+                        .push(format!("skipped {}: {err}", path.file_name()));
+                    continue;
+                }
+            };
+            let local: BTreeMap<DeviceId, u64> =
+                self.repo.sync_cursors().await?.into_iter().collect();
+            let cursors = body
+                .vector
+                .iter()
+                .filter(|(device, seq)| {
+                    *device != session.device && local.get(device).is_none_or(|c| seq > c)
+                })
+                .copied()
+                .collect();
+            let receipt = self
+                .repo
+                .apply_remote(RemoteBatch {
+                    ops: body.to_ops(),
+                    cursors,
+                    now: self.clock.now(),
+                })
+                .await?;
+            report.changed += u32::try_from(receipt.changed.len()).unwrap_or(u32::MAX);
+            report.clock_skews += receipt.clock_skews;
+            report.snapshot_loaded = true;
+            return Ok(report);
+        }
+        Ok(report)
+    }
+
+    /// Snapshot-Dateien, nach Alter aufsteigend; mit `device` nur die dieses Geräts.
+    async fn snapshot_paths(
+        &self,
+        session: &Session,
+        device: Option<DeviceId>,
+    ) -> CoreResult<Vec<RemotePath>> {
+        let dir = session.root.join(SNAPSHOTS_DIR)?;
+        let mut found: Vec<(Hlc, RemotePath)> = self
+            .remote
+            .list(&dir, None)
+            .await?
+            .entries
+            .into_iter()
+            .filter_map(|entry| {
+                let (hlc, owner) = SnapshotHeader::parse_file_name(entry.path.file_name())?;
+                device
+                    .is_none_or(|d| d == owner)
+                    .then_some((hlc, entry.path))
+            })
+            .collect();
+        found.sort();
+        Ok(found.into_iter().map(|(_, path)| path).collect())
+    }
+
+    /// Schreibt einen Snapshot, wenn genug passiert ist (`sync-strategy.md` §4), und kompaktiert
+    /// danach. Nur mit leerer Outbox: Dann ist klar, bis wohin die eigenen Ops reichen.
+    async fn maybe_snapshot(&self, activity: u64) -> CoreResult<SyncReport> {
+        let now = self.clock.now().as_millis();
+        let since = self.number(OPS_SINCE_SNAPSHOT).await? + activity;
+        self.repo
+            .set_sync_value(OPS_SINCE_SNAPSHOT, since.to_string())
+            .await?;
+        let last_at = match self.repo.sync_value(LAST_SNAPSHOT_AT).await? {
+            Some(at) => at.parse().unwrap_or(now),
+            None => {
+                self.repo
+                    .set_sync_value(LAST_SNAPSHOT_AT, now.to_string())
+                    .await?;
+                now
+            }
+        };
+        let due = since > self.config.snapshot_after_ops
+            || (since > 0 && now - last_at > self.config.snapshot_max_age_ms);
+        if !due || self.repo.pending_op_count().await? > 0 {
+            return Ok(SyncReport::default());
+        }
+        let session = self.session()?;
+        let own_seq = self.number(PUSHED_UP_TO).await?;
+        let mut vector = self.repo.sync_cursors().await?;
+        if own_seq > 0 {
+            vector.push((session.device, own_seq));
+            vector.sort();
+        }
+        let body = SnapshotBody {
+            vector,
+            entities: self.repo.entity_states().await?,
+        };
+        let header = SnapshotHeader {
+            device: session.device,
+            hlc: Hlc {
+                wall_ms: u64::try_from(now).unwrap_or(0),
+                counter: 0,
+                device: session.device,
+            },
+        };
+        let bytes = seal_snapshot(self.cipher.as_ref(), &session.key, &header, &body)?;
+        let path = session
+            .root
+            .join(&format!("{SNAPSHOTS_DIR}/{}", header.file_name()))?;
+        match self.remote.create(&path, bytes).await {
+            Ok(_) | Err(CoreError::Conflict(_)) => {}
+            Err(e) => return Err(e),
+        }
+        self.repo
+            .set_sync_value(OPS_SINCE_SNAPSHOT, "0".into())
+            .await?;
+        self.repo
+            .set_sync_value(LAST_SNAPSHOT_AT, now.to_string())
+            .await?;
+        let previous = self.number(SNAPSHOT_SEQ).await?;
+        self.repo
+            .set_sync_value(PREV_SNAPSHOT_SEQ, previous.to_string())
+            .await?;
+        self.repo
+            .set_sync_value(SNAPSHOT_SEQ, own_seq.to_string())
+            .await?;
+
+        let own = self.snapshot_paths(&session, Some(session.device)).await?;
+        for old in own.iter().rev().skip(KEEP_OWN_SNAPSHOTS) {
+            self.remote.delete(old).await?;
+        }
+        Ok(SyncReport {
+            snapshot_written: true,
+            segments_deleted: self.compact(&session).await?,
+            ..SyncReport::default()
+        })
+    }
+
+    /// Löscht eigene Segmente, die der vorletzte eigene Snapshot enthält **und** die alle
+    /// aktiven Geräte (laut `devices/*.json`) schon gelesen haben. Das jüngste eigene Segment
+    /// bleibt immer liegen: Daran erkennen zurückliegende Geräte die Lücke (→ Snapshot laden).
+    /// Liefert die Zahl gelöschter Segmente.
+    async fn compact(&self, session: &Session) -> CoreResult<u32> {
+        let now = self.clock.now().as_millis();
+        let mut bound = self.number(PREV_SNAPSHOT_SEQ).await?;
+        if bound == 0 {
+            return Ok(0);
+        }
+        let devices_dir = session.root.join(DEVICES_DIR)?;
+        for entry in self.remote.list(&devices_dir, None).await?.entries {
+            let bytes = match self.remote.read(&entry.path).await {
+                Ok(bytes) => bytes,
+                Err(CoreError::NotFound(_)) => continue,
+                Err(e) => return Err(e),
+            };
+            // Unlesbare Gerätedateien gelten als aktiv, ohne etwas gelesen zu haben.
+            let (device, last_seen, cursor) = match serde_json::from_slice::<DeviceInfo>(&bytes) {
+                Ok(info) => (
+                    Some(info.device_id),
+                    info.last_seen,
+                    info.cursors
+                        .get(&session.device.to_string())
+                        .copied()
+                        .unwrap_or(0),
+                ),
+                Err(_) => (None, now, 0),
+            };
+            if device == Some(session.device) || now - last_seen > self.config.inactive_device_ms {
+                continue;
+            }
+            bound = bound.min(cursor);
+        }
+        if bound == 0 {
+            return Ok(0);
+        }
+        let own_dir = session
+            .root
+            .join(&format!("{OPS_DIR}/{}", session.device))?;
+        let segments: Vec<(u64, RemotePath)> = self
+            .remote
+            .list(&own_dir, None)
+            .await?
+            .entries
+            .into_iter()
+            .filter_map(|entry| {
+                let (_, to) = SegmentHeader::parse_file_name(entry.path.file_name())?;
+                Some((to, entry.path))
+            })
+            .collect();
+        let newest = segments.iter().map(|(to, _)| *to).max().unwrap_or(0);
+        let mut deleted = 0;
+        for (to, path) in segments {
+            if to <= bound && to < newest {
+                self.remote.delete(&path).await?;
+                deleted += 1;
+            }
+        }
+        Ok(deleted)
+    }
+
+    async fn number(&self, key: &str) -> CoreResult<u64> {
+        Ok(self
+            .repo
+            .sync_value(key)
+            .await?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0))
     }
 
     /// Anzahl noch nicht hochgeladener Ops (für `SyncStatus::Offline`).

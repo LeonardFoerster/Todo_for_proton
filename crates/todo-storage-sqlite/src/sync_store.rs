@@ -167,6 +167,50 @@ pub(crate) fn sync_cursors(conn: &Connection) -> CoreResult<Vec<(DeviceId, u64)>
     Ok(cursors)
 }
 
+/// Alle Register und Tombstones, nach Entity sortiert.
+pub(crate) fn entity_states(conn: &Connection) -> CoreResult<Vec<(EntityRef, EntityState)>> {
+    let mut states: BTreeMap<EntityRef, EntityState> = BTreeMap::new();
+    let mut stmt = conn
+        .prepare_cached("SELECT field, hlc, value, entity_id, entity_kind FROM field_clocks")
+        .map_err(storage)?;
+    let mut rows = stmt.query([]).map_err(storage)?;
+    while let Some(row) = rows.next().map_err(storage)? {
+        let entity = read_entity(row, 3)?;
+        let (field, register) = read_register(row)?;
+        if let EntityState::Live(registers) = states
+            .entry(entity)
+            .or_insert_with(|| EntityState::Live(Registers::new()))
+        {
+            registers.insert(field, register);
+        }
+    }
+    let mut stmt = conn
+        .prepare_cached("SELECT hlc, entity_id, entity_kind FROM tombstones")
+        .map_err(storage)?;
+    let mut rows = stmt.query([]).map_err(storage)?;
+    while let Some(row) = rows.next().map_err(storage)? {
+        let hlc: Vec<u8> = row.get(0).map_err(storage)?;
+        let hlc = Hlc::from_bytes(&hlc).map_err(|e| corrupt("hlc", e))?;
+        states.insert(read_entity(row, 1)?, EntityState::Deleted(hlc));
+    }
+    Ok(states.into_iter().collect())
+}
+
+/// Entity aus den Spalten `entity_id` (bei `at`) und `entity_kind` (bei `at + 1`).
+fn read_entity(row: &rusqlite::Row<'_>, at: usize) -> CoreResult<EntityRef> {
+    let id: String = row.get(at).map_err(storage)?;
+    let kind: i64 = row.get(at + 1).map_err(storage)?;
+    match kind {
+        KIND_TASK => Ok(EntityRef::Task(
+            TaskId::parse(&id).map_err(|e| corrupt("task id", e))?,
+        )),
+        KIND_LIST => Ok(EntityRef::TaskList(
+            TaskListId::parse(&id).map_err(|e| corrupt("list id", e))?,
+        )),
+        other => Err(corrupt("entity kind", other)),
+    }
+}
+
 /// SQLite-Ganzzahlen sind vorzeichenbehaftet; Op-Nummern erreichen 2^63 nie.
 fn sql_seq(seq: u64) -> i64 {
     i64::try_from(seq).unwrap_or(i64::MAX)

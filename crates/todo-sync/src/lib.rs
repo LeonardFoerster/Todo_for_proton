@@ -8,6 +8,7 @@ pub mod compression;
 pub mod engine;
 pub mod scheduler;
 pub mod segment;
+pub mod snapshot;
 
 pub use engine::{Bootstrap, DeviceInfo, SyncConfig, SyncEngine, SyncReport};
 pub use scheduler::{

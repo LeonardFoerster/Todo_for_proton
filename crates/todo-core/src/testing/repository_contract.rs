@@ -65,6 +65,7 @@ macro_rules! repository_contract_tests {
             apply_remote_advances_local_hlc,
             inboxes_of_two_devices_merge,
             sync_cursors_and_values_roundtrip,
+            entity_states_export_everything,
         );
     };
     (@cases $make:expr; $($case:ident),* $(,)?) => {
@@ -115,6 +116,7 @@ pub fn run_all<R: TaskRepository>(make: impl Fn() -> R) {
     apply_remote_advances_local_hlc(make());
     inboxes_of_two_devices_merge(make());
     sync_cursors_and_values_roundtrip(make());
+    entity_states_export_everything(make());
 }
 
 // --- Hilfen ------------------------------------------------------------------------------------

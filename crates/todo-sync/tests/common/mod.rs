@@ -81,6 +81,17 @@ impl Device {
         repo: Arc<dyn TaskRepository>,
         start_ms: i64,
     ) -> Self {
+        Self::configured(name, remote, repo, start_ms, SyncConfig::default())
+    }
+
+    /// Wie [`Self::with_repo`] mit eigener Engine-Konfiguration (Name/Plattform werden gesetzt).
+    pub fn configured(
+        name: &str,
+        remote: Arc<dyn RemoteStore>,
+        repo: Arc<dyn TaskRepository>,
+        start_ms: i64,
+        config: SyncConfig,
+    ) -> Self {
         let clock = TestClock::at(start_ms);
         let keys = Arc::new(InMemoryKeyStore::new());
         let api = CoreApi::new(repo, clock.clone());
@@ -93,7 +104,7 @@ impl Device {
             SyncConfig {
                 device_name: name.into(),
                 platform: "test".into(),
-                ..SyncConfig::default()
+                ..config
             },
         );
         block_on(api.ensure_inbox()).expect("inbox");

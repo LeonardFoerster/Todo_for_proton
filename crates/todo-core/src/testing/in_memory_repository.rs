@@ -287,6 +287,15 @@ impl TaskRepository for InMemoryTaskRepository {
         Ok(self.state().entities.get(&entity).cloned())
     }
 
+    async fn entity_states(&self) -> CoreResult<Vec<(EntityRef, EntityState)>> {
+        Ok(self
+            .state()
+            .entities
+            .iter()
+            .map(|(entity, state)| (*entity, state.clone()))
+            .collect())
+    }
+
     async fn sync_value(&self, key: &str) -> CoreResult<Option<String>> {
         Ok(self.state().values.get(key).cloned())
     }

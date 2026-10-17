@@ -350,6 +350,9 @@ pub trait TaskRepository: MaybeSend + MaybeSync {
     /// Sync-Zustand einer Entity: Register (Wert + HLC je Feld, „Field-Clocks") oder Tombstone.
     async fn entity_state(&self, entity: EntityRef) -> CoreResult<Option<EntityState>>;
 
+    /// Sync-Zustand aller Entities (Snapshot-Export), nach Entity sortiert.
+    async fn entity_states(&self) -> CoreResult<Vec<(EntityRef, EntityState)>>;
+
     /// Kleine Schlüssel/Wert-Ablage der Sync-Engine (z. B. Feed-Cursor, Snapshot-Stand).
     async fn sync_value(&self, key: &str) -> CoreResult<Option<String>>;
 
