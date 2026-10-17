@@ -1,0 +1,10 @@
+{
+  "Code": 1000,
+  "User": {
+    "ID": "user-id-1",
+    "Name": "testuser",
+    "DisplayName": "Test User",
+    "Email": "testuser@example.org",
+    "Keys": []
+  }
+}
