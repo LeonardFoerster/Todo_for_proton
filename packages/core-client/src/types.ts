@@ -1,0 +1,24 @@
+// DTO-Typen der Rust-Seite. Erzeugt von ts-rs beim `cargo test` (`just types`) – nicht von Hand ändern,
+// sondern die Rust-DTOs (`todo_core::api::dto`, `apps/desktop/src-tauri/src/dto.rs`) anpassen.
+export type { AuthInfoDto } from "./generated/AuthInfoDto";
+export type { AuthStepDto } from "./generated/AuthStepDto";
+export type { ChangedEventDto } from "./generated/ChangedEventDto";
+export type { CreateTaskDto } from "./generated/CreateTaskDto";
+export type { DueDto } from "./generated/DueDto";
+export type { ErrorDto } from "./generated/ErrorDto";
+export type { ErrorKind } from "./generated/ErrorKind";
+export type { LocalDayDto } from "./generated/LocalDayDto";
+export type { MoveTargetDto } from "./generated/MoveTargetDto";
+export type { PageDto } from "./generated/PageDto";
+export type { PageRequestDto } from "./generated/PageRequestDto";
+export type { PriorityDto } from "./generated/PriorityDto";
+export type { SessionDto } from "./generated/SessionDto";
+export type { SyncStateDto } from "./generated/SyncStateDto";
+export type { SyncStatusDto } from "./generated/SyncStatusDto";
+export type { TaskDto } from "./generated/TaskDto";
+export type { TaskListDto } from "./generated/TaskListDto";
+export type { TaskPatchDto } from "./generated/TaskPatchDto";
+export type { TaskQueryDto } from "./generated/TaskQueryDto";
+export type { TaskStatusDto } from "./generated/TaskStatusDto";
+export type { TaskSummaryDto } from "./generated/TaskSummaryDto";
+export type { ViewDto } from "./generated/ViewDto";

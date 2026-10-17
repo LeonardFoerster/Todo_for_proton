@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-ensure-inbox"
+description = "Enables the ensure_inbox command without any pre-configured scope."
+commands.allow = ["ensure_inbox"]
+
+[[permission]]
+identifier = "deny-ensure-inbox"
+description = "Denies the ensure_inbox command without any pre-configured scope."
+commands.deny = ["ensure_inbox"]

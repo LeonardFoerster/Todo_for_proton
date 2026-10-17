@@ -26,6 +26,8 @@ workspace = true
 [dev-dependencies]
 futures.workspace = true
 serde_json.workspace = true
+# TS-Typen der DTOs für `packages/core-client` (nur in Tests erzeugt, kein Laufzeit-Code).
+ts-rs = "12.0.1"
 
 # proptest (rusty-fork/wait-timeout) baut nicht für wasm32.
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]

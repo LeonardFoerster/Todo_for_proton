@@ -55,6 +55,7 @@ pub(crate) fn list_id(s: &str) -> CoreResult<TaskListId> {
 // --- Enums -------------------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub enum TaskStatusDto {
     Open,
@@ -80,6 +81,7 @@ impl From<TaskStatusDto> for TaskStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub enum PriorityDto {
     None,
@@ -113,6 +115,7 @@ impl From<PriorityDto> for Priority {
 /// Fälligkeit: `{"kind":"date","date":"2026-10-20"}` oder
 /// `{"kind":"dateTime","at":"2026-10-20T12:00:00.000Z","tz":"Europe/Berlin"}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum DueDto {
     Date { date: String },
@@ -150,6 +153,7 @@ impl TryFrom<DueDto> for Due {
 // --- Ausgaben ----------------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct TaskListDto {
     pub id: String,
@@ -171,6 +175,7 @@ impl From<&TaskList> for TaskListDto {
 
 /// Vollständige Task (Detailansicht).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct TaskDto {
     pub id: String,
@@ -206,6 +211,7 @@ impl From<&Task> for TaskDto {
 
 /// Zeile einer Listenansicht (ohne Notiztext).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct TaskSummaryDto {
     pub id: String,
@@ -236,6 +242,7 @@ impl From<&TaskSummary> for TaskSummaryDto {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct PageDto<T> {
     pub items: Vec<T>,
@@ -254,29 +261,36 @@ impl From<Page<TaskSummary>> for PageDto<TaskSummaryDto> {
 // --- Eingaben ----------------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct CreateTaskDto {
     pub title: String,
     /// `None` = Inbox.
+    #[cfg_attr(test, ts(optional = nullable))]
     pub list_id: Option<String>,
 }
 
 /// Zu ändernde Felder; fehlend = unverändert. `due: null` entfernt die Fälligkeit,
 /// ein fehlendes `due` lässt sie unverändert.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct TaskPatchDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub notes: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub priority: Option<PriorityDto>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         with = "double_option"
     )]
+    #[cfg_attr(test, ts(as = "Option<DueDto>", optional = nullable))]
     pub due: Option<Option<DueDto>>,
 }
 
@@ -303,16 +317,21 @@ mod double_option {
 
 /// Ziel einer Verschiebung (Semantik wie `MoveTaskInput`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct MoveTargetDto {
     /// `None` = bisherige Liste.
+    #[cfg_attr(test, ts(optional = nullable))]
     pub list_id: Option<String>,
+    #[cfg_attr(test, ts(optional = nullable))]
     pub after: Option<String>,
+    #[cfg_attr(test, ts(optional = nullable))]
     pub before: Option<String>,
 }
 
 /// Lokaler Tag, von der Shell in der Zeitzone des Nutzers berechnet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct LocalDayDto {
     /// `YYYY-MM-DD`
@@ -336,6 +355,7 @@ impl TryFrom<&LocalDayDto> for LocalDay {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ViewDto {
     Inbox,
@@ -354,12 +374,15 @@ pub enum ViewDto {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct TaskQueryDto {
     pub view: ViewDto,
     #[serde(default)]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub status: Option<TaskStatusDto>,
     #[serde(default)]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub tag: Option<String>,
 }
 
@@ -384,8 +407,10 @@ impl TryFrom<&TaskQueryDto> for TaskQuery {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct PageRequestDto {
+    #[cfg_attr(test, ts(optional = nullable))]
     pub cursor: Option<String>,
     pub limit: u32,
 }

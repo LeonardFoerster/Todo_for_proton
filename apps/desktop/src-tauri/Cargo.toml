@@ -14,7 +14,27 @@ tauri-build = { version = "2.7.3", features = [] }
 
 [dependencies]
 tauri = { version = "2.12.4", features = [] }
+todo-core.workspace = true
+todo-storage-sqlite.workspace = true
+todo-sync = { workspace = true, features = ["zstd-native"] }
+todo-crypto.workspace = true
+proton-adapter.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+# Tauri läuft auf tokio; hier nur Kanal, Timer und `select!` für den Sync-Scheduler.
+tokio = { version = "1.53.3", default-features = false, features = ["sync", "time", "macros"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+todo-keystore-secret-service.workspace = true
+
+[dev-dependencies]
+tauri = { version = "2.12.4", features = ["test"] }
+todo-core = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true
+tempfile.workspace = true
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "time", "test-util"] }
+# TS-Typen der Shell-DTOs (Fehler, Events, Sync, Login) – nur in Tests erzeugt.
+ts-rs = "12.0.1"
 
 [lints]
 workspace = true
-

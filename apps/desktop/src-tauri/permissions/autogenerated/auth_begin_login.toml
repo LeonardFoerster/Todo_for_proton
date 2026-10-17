@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-auth-begin-login"
+description = "Enables the auth_begin_login command without any pre-configured scope."
+commands.allow = ["auth_begin_login"]
+
+[[permission]]
+identifier = "deny-auth-begin-login"
+description = "Denies the auth_begin_login command without any pre-configured scope."
+commands.deny = ["auth_begin_login"]

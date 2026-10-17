@@ -40,3 +40,7 @@ desktop-dev:
 # Desktop-App als Release-Binary bauen (ohne Pakete; Packaging kommt nach dem Prototyp)
 desktop-build:
     cd apps/desktop && pnpm install --frozen-lockfile && pnpm tauri build --no-bundle
+
+# TS-Typen der DTOs neu erzeugen (packages/core-client/src/generated; läuft auch mit `just test`)
+types:
+    cargo test -p todo-core -p todo-desktop --lib export_bindings

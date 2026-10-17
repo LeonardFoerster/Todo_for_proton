@@ -1,0 +1,189 @@
+//! Dünne `async`-Commands, 1:1 zu `CoreApi` (Namen wie die Use-Cases). Schreibende Commands
+//! melden dem Sync-Treiber eine lokale Änderung (Debounce-Push).
+
+use tauri::State;
+use todo_core::api::dto::{
+    CreateTaskDto, MoveTargetDto, PageDto, PageRequestDto, TaskDto, TaskListDto, TaskPatchDto,
+    TaskQueryDto, TaskSummaryDto,
+};
+use todo_sync::SchedulerEvent;
+
+use crate::{
+    dto::{AuthInfoDto, AuthStepDto, ErrorDto, SessionDto, SyncStatusDto},
+    state::{AppState, PROVIDER_NAME, PROVIDER_NOTICE},
+    STARTED,
+};
+
+type Result<T> = std::result::Result<T, ErrorDto>;
+
+// --- Listen ------------------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn ensure_inbox(state: State<'_, AppState>) -> Result<TaskListDto> {
+    Ok(state.api.ensure_inbox().await?)
+}
+
+#[tauri::command]
+pub async fn list_task_lists(state: State<'_, AppState>) -> Result<Vec<TaskListDto>> {
+    Ok(state.api.list_task_lists().await?)
+}
+
+#[tauri::command]
+pub async fn create_task_list(state: State<'_, AppState>, name: String) -> Result<TaskListDto> {
+    let list = state.api.create_task_list(name).await?;
+    state.sync.local_change();
+    Ok(list)
+}
+
+#[tauri::command]
+pub async fn rename_task_list(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+) -> Result<TaskListDto> {
+    let list = state.api.rename_task_list(id, name).await?;
+    state.sync.local_change();
+    Ok(list)
+}
+
+#[tauri::command]
+pub async fn delete_task_list(state: State<'_, AppState>, id: String) -> Result<u32> {
+    let moved = state.api.delete_task_list(id).await?;
+    state.sync.local_change();
+    Ok(moved)
+}
+
+// --- Tasks -------------------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn create_task(state: State<'_, AppState>, input: CreateTaskDto) -> Result<TaskDto> {
+    let task = state.api.create_task(input).await?;
+    state.sync.local_change();
+    Ok(task)
+}
+
+#[tauri::command]
+pub async fn get_task(state: State<'_, AppState>, id: String) -> Result<TaskDto> {
+    Ok(state.api.get_task(id).await?)
+}
+
+#[tauri::command]
+pub async fn update_task(
+    state: State<'_, AppState>,
+    id: String,
+    patch: TaskPatchDto,
+) -> Result<TaskDto> {
+    let task = state.api.update_task(id, patch).await?;
+    state.sync.local_change();
+    Ok(task)
+}
+
+#[tauri::command]
+pub async fn complete_task(state: State<'_, AppState>, id: String, done: bool) -> Result<TaskDto> {
+    let task = state.api.complete_task(id, done).await?;
+    state.sync.local_change();
+    Ok(task)
+}
+
+#[tauri::command]
+pub async fn move_task(
+    state: State<'_, AppState>,
+    id: String,
+    target: MoveTargetDto,
+) -> Result<TaskDto> {
+    let task = state.api.move_task(id, target).await?;
+    state.sync.local_change();
+    Ok(task)
+}
+
+#[tauri::command]
+pub async fn delete_task(state: State<'_, AppState>, id: String) -> Result<()> {
+    state.api.delete_task(id).await?;
+    state.sync.local_change();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn list_tasks(
+    state: State<'_, AppState>,
+    query: TaskQueryDto,
+    page: PageRequestDto,
+) -> Result<PageDto<TaskSummaryDto>> {
+    Ok(state.api.list_tasks(query, page).await?)
+}
+
+// --- Anmeldung ---------------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn auth_info(state: State<'_, AppState>) -> Result<AuthInfoDto> {
+    Ok(AuthInfoDto {
+        provider: PROVIDER_NAME.into(),
+        notice: PROVIDER_NOTICE.into(),
+        available: state.account.available().await,
+    })
+}
+
+#[tauri::command]
+pub async fn auth_current(state: State<'_, AppState>) -> Result<Option<SessionDto>> {
+    state.account.current().await
+}
+
+#[tauri::command]
+pub async fn auth_begin_login(state: State<'_, AppState>) -> Result<AuthStepDto> {
+    state.account.begin_login().await
+}
+
+#[tauri::command]
+pub async fn auth_open_browser(state: State<'_, AppState>, flow: String) -> Result<()> {
+    state.account.reopen_browser(&flow)
+}
+
+#[tauri::command]
+pub async fn auth_poll_login(state: State<'_, AppState>, flow: String) -> Result<AuthStepDto> {
+    state
+        .account
+        .poll_login(flow, &state.api, &state.sync)
+        .await
+}
+
+#[tauri::command]
+pub async fn auth_cancel_login(state: State<'_, AppState>, flow: String) -> Result<()> {
+    state.account.cancel_login(flow).await
+}
+
+#[tauri::command]
+pub async fn auth_logout(state: State<'_, AppState>) -> Result<()> {
+    state.account.logout(&state.sync).await
+}
+
+// --- Sync & Lebenszyklus -----------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn sync_status(state: State<'_, AppState>) -> Result<SyncStatusDto> {
+    Ok(state.sync.status())
+}
+
+#[tauri::command]
+pub async fn sync_now(state: State<'_, AppState>) -> Result<()> {
+    state.sync.event(SchedulerEvent::ManualSync);
+    Ok(())
+}
+
+/// `online`/`offline`-Ereignisse der WebView (die Shell hat keinen eigenen Netzwerk-Monitor).
+#[tauri::command]
+pub async fn set_online(state: State<'_, AppState>, online: bool) -> Result<()> {
+    state.sync.event(if online {
+        SchedulerEvent::NetworkUp
+    } else {
+        SchedulerEvent::NetworkDown
+    });
+    Ok(())
+}
+
+/// Die UI hat die erste Liste gerendert: Startzeit melden, Sync anstoßen.
+#[tauri::command]
+pub async fn app_ready(state: State<'_, AppState>) -> Result<()> {
+    crate::report_startup(STARTED.get().copied());
+    state.sync.event(SchedulerEvent::AppStarted);
+    Ok(())
+}
