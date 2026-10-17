@@ -18,9 +18,10 @@ Status: **Planungs-/Skeleton-Phase.** Es gibt noch keinen Feature-Code.
 |---|---|
 | `AGENTS.md` | Diese Datei – Regeln & Kontext |
 | `development/` | **Alle** Architektur-, Planungs- und Entscheidungsdokumente (gitignored) |
-| `crates/todo-core/` | Domain-Modell, Use-Cases, **Port-Traits** (Interfaces). Kein IO. |
-| `crates/todo-sync/` | Sync-Engine (Op-Log, HLC, Merge). Spricht nur mit Ports. |
+| `crates/todo-core/` | Domain-Modell, Use-Cases, **Port-Traits** (Interfaces), Sync-Modell (HLC, Ops, Merge). Kein IO. |
+| `crates/todo-sync/` | Sync-Engine (Segmente, Push/Pull, Scheduler, Snapshots). Spricht nur mit Ports. |
 | `crates/todo-storage-sqlite/` | `TaskRepository`-Implementierung mit SQLite (nativ) |
+| `crates/todo-remote-fs/` | `RemoteStore` auf lokalem Verzeichnis (Entwicklung, Tests, Dev-CLI) |
 | `crates/proton-adapter/` | **Einziger** Ort für Proton-Code (Auth, Drive) – implementiert Ports |
 | `crates/todo-wasm/` | wasm-bindgen-Bindings des Cores für die Web-App |
 | `crates/todo-cli/` | Dev-CLI (`cargo run -p todo-cli -- help`): Core + SQLite ohne UI, nur über `CoreApi`; nicht ausgeliefert |

@@ -22,11 +22,16 @@
 //! rustfmt am Formatieren des Inhalts hindern.
 
 mod clock;
+mod remote_store;
 mod repository;
 
 pub use clock::Clock;
 #[cfg(any(test, feature = "test-support"))]
 pub use clock::{FixedClock, SteppingClock};
+pub use remote_store::{
+    RemoteChanges, RemoteCursor, RemoteDir, RemoteEntry, RemoteListing, RemotePath, RemoteStore,
+    Revision,
+};
 pub use repository::{
     Change, ChangeSet, CommitReceipt, EntityRef, Page, PageRequest, SmartView, TaskQuery,
     TaskRepository, TaskSummary, PAGE_LIMIT_MAX,

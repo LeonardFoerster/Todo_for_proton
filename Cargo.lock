@@ -717,6 +717,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "todo-remote-fs"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "tempfile",
+ "todo-core",
+]
+
+[[package]]
 name = "todo-storage-sqlite"
 version = "0.0.0"
 dependencies = [

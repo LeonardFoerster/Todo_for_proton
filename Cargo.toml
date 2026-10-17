@@ -10,6 +10,7 @@ publish = false
 [workspace.dependencies]
 async-trait = "0.1.92"
 todo-core = { path = "crates/todo-core" }
+todo-remote-fs = { path = "crates/todo-remote-fs" }
 todo-storage-sqlite = { path = "crates/todo-storage-sqlite" }
 todo-sync = { path = "crates/todo-sync" }
 futures = { version = "0.3.34", default-features = false, features = ["executor"] }

@@ -17,6 +17,9 @@ pub enum CoreError {
     /// Vorübergehendes Netzwerkproblem – erneuter Versuch sinnvoll.
     #[error("network: {0}")]
     Network(String),
+    /// Gegenseite drosselt (HTTP 429); erst nach `retry_after_s` Sekunden erneut versuchen.
+    #[error("rate limited, retry after {retry_after_s} s")]
+    RateLimited { retry_after_s: u32 },
     /// Gegenseite hat endgültig abgelehnt – erneuter Versuch zwecklos.
     #[error("remote rejected: {0}")]
     RemoteRejected(String),
@@ -24,6 +27,14 @@ pub enum CoreError {
     Conflict(String),
     #[error("internal: {0}")]
     Internal(String),
+}
+
+impl CoreError {
+    /// Lohnt ein späterer erneuter Versuch (Netz weg, Zeitüberschreitung, Drosselung)?
+    #[must_use]
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, Self::Network(_) | Self::RateLimited { .. })
+    }
 }
 
 impl From<ParseIdError> for CoreError {
@@ -41,6 +52,14 @@ mod tests {
     fn parse_id_error_becomes_validation() {
         let err: CoreError = TaskId::parse("x").unwrap_err().into();
         assert!(matches!(err, CoreError::Validation(_)));
+    }
+
+    #[test]
+    fn only_network_and_rate_limits_are_retryable() {
+        assert!(CoreError::Network("x".into()).is_retryable());
+        assert!(CoreError::RateLimited { retry_after_s: 3 }.is_retryable());
+        assert!(!CoreError::RemoteRejected("x".into()).is_retryable());
+        assert!(!CoreError::Conflict("x".into()).is_retryable());
     }
 
     #[test]
