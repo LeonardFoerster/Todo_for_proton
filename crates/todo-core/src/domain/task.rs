@@ -184,6 +184,20 @@ impl Task {
         Ok(())
     }
 
+    /// Verschiebt die Task an eine Position (`sort_key`) in einer Liste – auch in dieselbe Liste.
+    pub fn move_to(
+        &mut self,
+        list_id: TaskListId,
+        sort_key: SortKey,
+        clock: &(impl Clock + ?Sized),
+    ) {
+        if list_id != self.list_id || sort_key != self.sort_key {
+            self.list_id = list_id;
+            self.sort_key = sort_key;
+            self.touch(clock);
+        }
+    }
+
     /// Markiert die Task als erledigt. Auf einer erledigten Task ohne Wirkung
     /// (der ursprüngliche `completed_at` bleibt erhalten).
     pub fn complete(&mut self, clock: &(impl Clock + ?Sized)) {
@@ -400,6 +414,21 @@ mod tests {
         };
         assert!(t.set_due(Some(due), &clock).is_err());
         assert_eq!(t, snapshot);
+    }
+
+    #[test]
+    fn move_to_changes_list_and_position() {
+        let clock = clock();
+        let mut t = task(&clock);
+        let other = TaskListId::new();
+        let key = SortKey::between(Some(&SortKey::first()), None).unwrap();
+        t.move_to(other, key.clone(), &clock);
+        assert_eq!(t.list_id(), other);
+        assert_eq!(t.sort_key(), &key);
+        assert!(t.updated_at() > t.created_at());
+        let snapshot = t.clone();
+        t.move_to(other, key, &clock);
+        assert_eq!(t, snapshot, "gleiche Position = no-op");
     }
 
     #[test]

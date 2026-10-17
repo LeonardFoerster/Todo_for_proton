@@ -7,6 +7,8 @@ description = "Domain, Use-Cases und Ports (Interfaces). Kein IO."
 
 [dependencies]
 async-trait.workspace = true
+# Nur für `testing` (Feature test-support): synchrone Ausführung der Contract-Tests.
+futures = { workspace = true, optional = true }
 chrono.workspace = true
 serde.workspace = true
 thiserror.workspace = true
@@ -14,7 +16,7 @@ uuid.workspace = true
 
 [features]
 # Test-Doubles (z. B. `FixedClock`, `SteppingClock`) für Tests anderer Crates.
-test-support = []
+test-support = ["dep:futures"]
 
 [lints]
 workspace = true
