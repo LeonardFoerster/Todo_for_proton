@@ -1,3 +1,5 @@
 packages:
   - "apps/*"
   - "packages/*"
+minimumReleaseAgeExclude:
+  - '@lucide/svelte@1.59.0'

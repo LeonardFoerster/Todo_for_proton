@@ -1,0 +1,26 @@
+// Lucide-Icons (ISC) einzeln importiert – nur was hier steht, landet im Bundle.
+export type { LucideIcon as IconComponent } from "@lucide/svelte";
+export { default as Calendar } from "@lucide/svelte/icons/calendar";
+export { default as CalendarDays } from "@lucide/svelte/icons/calendar-days";
+export { default as Check } from "@lucide/svelte/icons/check";
+export { default as CircleCheck } from "@lucide/svelte/icons/circle-check";
+export { default as Cloud } from "@lucide/svelte/icons/cloud";
+export { default as CloudOff } from "@lucide/svelte/icons/cloud-off";
+export { default as Ellipsis } from "@lucide/svelte/icons/ellipsis";
+export { default as Flag } from "@lucide/svelte/icons/flag";
+export { default as GripVertical } from "@lucide/svelte/icons/grip-vertical";
+export { default as Hash } from "@lucide/svelte/icons/hash";
+export { default as Inbox } from "@lucide/svelte/icons/inbox";
+export { default as List } from "@lucide/svelte/icons/list";
+export { default as LogIn } from "@lucide/svelte/icons/log-in";
+export { default as LogOut } from "@lucide/svelte/icons/log-out";
+export { default as Monitor } from "@lucide/svelte/icons/monitor";
+export { default as Moon } from "@lucide/svelte/icons/moon";
+export { default as PanelLeft } from "@lucide/svelte/icons/panel-left";
+export { default as Plus } from "@lucide/svelte/icons/plus";
+export { default as RefreshCw } from "@lucide/svelte/icons/refresh-cw";
+export { default as Settings } from "@lucide/svelte/icons/settings";
+export { default as Sun } from "@lucide/svelte/icons/sun";
+export { default as Trash } from "@lucide/svelte/icons/trash";
+export { default as Undo } from "@lucide/svelte/icons/undo";
+export { default as X } from "@lucide/svelte/icons/x";

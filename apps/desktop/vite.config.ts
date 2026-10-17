@@ -1,9 +1,10 @@
 import { svelte } from "@sveltejs/vite-plugin-svelte";
+import { themeInit } from "@tasks/ui/vite";
 import { defineConfig } from "vite";
 
 // Tauri lädt im Dev-Modus von diesem festen Port; im Release die gebauten Dateien aus `dist/`.
 export default defineConfig({
-  plugins: [svelte()],
+  plugins: [svelte(), themeInit()],
   clearScreen: false,
   server: {
     port: 1420,

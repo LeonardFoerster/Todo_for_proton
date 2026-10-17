@@ -1,0 +1,30 @@
+{
+  "name": "@tasks/ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens.css": "./src/tokens/tokens.css",
+    "./vite": "./src/theme/vite-plugin.ts"
+  },
+  "scripts": {
+    "dev": "vite",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@lucide/svelte": "1.59.0",
+    "@tasks/core-client": "workspace:*",
+    "svelte": "5.57.2"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "@tsconfig/svelte": "5.0.8",
+    "@types/node": "22.20.5",
+    "svelte-check": "4.7.7",
+    "typescript": "6.0.3",
+    "vite": "8.3.4",
+    "vitest": "5.0.5"
+  }
+}

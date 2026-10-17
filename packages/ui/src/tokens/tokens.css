@@ -1,0 +1,204 @@
+/*
+ * Design-Tokens (ui-guidelines.md §3). Komponenten nutzen nur semantische Tokens.
+ * Abweichungen von den Richtlinien-Werten nur für Kontrast (≥ 4.5:1 Text, ≥ 3:1 Bedienelemente),
+ * geprüft in tokens.test.ts.
+ */
+:root {
+  /* Basis-Palette (eigene Werte, Proton-ähnliche Anmutung) */
+  --violet-100: #ede8ff;
+  --violet-500: #6d4aff;
+  --violet-600: #5b3ae6;
+
+  /* Flächen */
+  --color-bg: #ffffff;
+  --color-bg-subtle: #f5f5f7; /* Sidebar */
+  --color-bg-hover: #ebebef;
+  --color-bg-active: #e3e3e8;
+  --color-bg-selected: #ede8ff;
+  --color-bg-raised: #ffffff; /* Menüs, Dialoge */
+  --color-bg-inverse: #22212e; /* Toasts */
+  --color-border: #e3e3e8;
+  --color-border-strong: #c9c8d1; /* Eingabefelder */
+  --color-control-border: #7e7d8a; /* Checkbox-Ring (≥ 3:1) */
+
+  /* Text */
+  --color-text: #1b1a24;
+  --color-text-muted: #65646f;
+  --color-text-disabled: #a8a7b3;
+  --color-text-inverse: #f4f3f8;
+
+  /* Akzent: Text/Icons/Fokus vs. gefüllte Flächen (weißer Text darauf) */
+  --color-accent: var(--violet-500);
+  --color-accent-hover: var(--violet-600);
+  --color-accent-text: var(--violet-600);
+  --color-accent-fill: var(--violet-500);
+  --color-accent-fill-hover: var(--violet-600);
+  --color-accent-inverse: #b9a8ff; /* Aktion im Toast */
+  --color-on-accent: #ffffff;
+
+  /* Status */
+  --color-danger: #d42b4c;
+  --color-danger-fill: #d42b4c; /* weißer Text darauf */
+  --color-danger-fill-hover: #b8203f;
+  --color-danger-subtle: #fdecef;
+  --color-warning: #a35f00;
+  --color-success: #18794e;
+  --color-focus-ring: color-mix(in srgb, var(--violet-500) 55%, transparent);
+
+  /* Raster & Form */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 999px;
+  --row-height: 36px;
+  --control-height: 32px;
+  --control-height-lg: 36px;
+
+  /* Typografie */
+  --font-sans: system-ui, "Inter", "Cantarell", "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", monospace;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /* Bewegung */
+  --duration-fast: 100ms;
+  --duration-base: 160ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --shadow-popover: 0 4px 16px rgb(0 0 0 / 0.12); /* nur Menüs/Dialoge/Toasts */
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --color-bg: #191927;
+  --color-bg-subtle: #14141f;
+  --color-bg-hover: #25253a;
+  --color-bg-active: #2c2c44;
+  --color-bg-selected: #2e2752;
+  --color-bg-raised: #222235;
+  --color-bg-inverse: #2f2e48;
+  --color-border: #2c2c40;
+  --color-border-strong: #3d3d57;
+  --color-control-border: #75748c;
+
+  --color-text: #ececf3;
+  --color-text-muted: #9a99ad;
+  --color-text-disabled: #5d5c70;
+  --color-text-inverse: #ececf3;
+
+  --color-accent: #8a6cff; /* heller für Kontrast auf dunkel */
+  --color-accent-hover: #9d84ff;
+  --color-accent-text: #a891ff;
+  --color-accent-fill: var(--violet-500); /* weißer Text braucht die dunklere Fläche */
+  --color-accent-fill-hover: #7352ff;
+  --color-accent-inverse: #b9a8ff;
+
+  --color-danger: #ff6680;
+  --color-danger-fill: #d42b4c;
+  --color-danger-fill-hover: #c02442;
+  --color-danger-subtle: #3a1d2a;
+  --color-warning: #f0a33c;
+  --color-success: #3fbf86;
+
+  --shadow-popover: 0 4px 16px rgb(0 0 0 / 0.45);
+
+  color-scheme: dark;
+}
+
+/* Grundlage für Apps, die das Design-System einbinden. */
+html {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: 1.43;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--violet-500) 28%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-base: 0ms;
+  }
+}
+
+/*
+ * Tooltips: `data-tooltip="Text"` (+ optional `data-tooltip-side="right|top"`) an einem
+ * positionierten Element. Nur CSS, erscheint verzögert bei Hover und sichtbar bei Tastaturfokus.
+ */
+[data-tooltip] {
+  position: relative;
+}
+
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  z-index: 50;
+  left: 50%;
+  top: calc(100% + 6px);
+  transform: translateX(-50%);
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-inverse);
+  color: var(--color-text-inverse);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  line-height: 18px;
+  white-space: pre;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease) 0s;
+}
+
+[data-tooltip-side="right"]::after {
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+[data-tooltip-side="top"]::after {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+[data-tooltip]:hover::after {
+  opacity: 1;
+  transition-delay: 450ms;
+}
+
+[data-tooltip]:focus-visible::after {
+  opacity: 1;
+}
