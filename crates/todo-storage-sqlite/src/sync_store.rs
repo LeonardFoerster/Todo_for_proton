@@ -150,6 +150,23 @@ pub(crate) fn sync_cursor(conn: &Connection, device: DeviceId) -> CoreResult<Opt
         .transpose()
 }
 
+pub(crate) fn sync_cursors(conn: &Connection) -> CoreResult<Vec<(DeviceId, u64)>> {
+    let mut stmt = conn
+        .prepare_cached("SELECT device_id, seq FROM remote_cursors ORDER BY device_id")
+        .map_err(storage)?;
+    let mut rows = stmt.query([]).map_err(storage)?;
+    let mut cursors = Vec::new();
+    while let Some(row) = rows.next().map_err(storage)? {
+        let device: String = row.get(0).map_err(storage)?;
+        let seq: i64 = row.get(1).map_err(storage)?;
+        cursors.push((
+            DeviceId::parse(&device).map_err(|e| corrupt("cursor device", e))?,
+            u64::try_from(seq).map_err(|e| corrupt("cursor", e))?,
+        ));
+    }
+    Ok(cursors)
+}
+
 /// SQLite-Ganzzahlen sind vorzeichenbehaftet; Op-Nummern erreichen 2^63 nie.
 fn sql_seq(seq: u64) -> i64 {
     i64::try_from(seq).unwrap_or(i64::MAX)

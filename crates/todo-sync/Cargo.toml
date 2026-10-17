@@ -14,6 +14,8 @@ pure-rust-zstd = ["dep:ruzstd"]
 
 [dependencies]
 todo-core.workspace = true
+# Nur `join_all` (parallele Downloads), keine Laufzeit.
+futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 zstd = { version = "0.14.3", default-features = false, optional = true }
@@ -24,7 +26,6 @@ todo-core = { workspace = true, features = ["test-support"] }
 todo-crypto.workspace = true
 todo-remote-fs.workspace = true
 todo-storage-sqlite.workspace = true
-futures.workspace = true
 proptest.workspace = true
 tempfile.workspace = true
 

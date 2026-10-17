@@ -346,6 +346,10 @@ impl TaskRepository for NotifyingRepository {
         self.inner.set_sync_cursor(device, seq).await
     }
 
+    async fn sync_cursors(&self) -> CoreResult<Vec<(DeviceId, u64)>> {
+        self.inner.sync_cursors().await
+    }
+
     async fn entity_state(&self, entity: EntityRef) -> CoreResult<Option<EntityState>> {
         self.inner.entity_state(entity).await
     }

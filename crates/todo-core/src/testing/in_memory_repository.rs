@@ -274,6 +274,15 @@ impl TaskRepository for InMemoryTaskRepository {
         Ok(())
     }
 
+    async fn sync_cursors(&self) -> CoreResult<Vec<(DeviceId, u64)>> {
+        Ok(self
+            .state()
+            .cursors
+            .iter()
+            .map(|(device, seq)| (*device, *seq))
+            .collect())
+    }
+
     async fn entity_state(&self, entity: EntityRef) -> CoreResult<Option<EntityState>> {
         Ok(self.state().entities.get(&entity).cloned())
     }

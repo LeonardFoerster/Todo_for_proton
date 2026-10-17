@@ -207,6 +207,10 @@ impl TaskRepository for SqliteTaskRepository {
             .await
     }
 
+    async fn sync_cursors(&self) -> CoreResult<Vec<(DeviceId, u64)>> {
+        self.db.call(|conn| sync_store::sync_cursors(conn)).await
+    }
+
     async fn entity_state(&self, entity: EntityRef) -> CoreResult<Option<EntityState>> {
         self.db
             .call(move |conn| SqliteReplica::new(conn).entity_state(entity))
@@ -347,6 +351,9 @@ mod tests {
         }
         async fn set_sync_cursor(&self, device: DeviceId, seq: u64) -> CoreResult<()> {
             self.repo.set_sync_cursor(device, seq).await
+        }
+        async fn sync_cursors(&self) -> CoreResult<Vec<(DeviceId, u64)>> {
+            self.repo.sync_cursors().await
         }
         async fn entity_state(&self, entity: EntityRef) -> CoreResult<Option<EntityState>> {
             self.repo.entity_state(entity).await

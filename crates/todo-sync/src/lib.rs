@@ -5,4 +5,7 @@
 //! Siehe `development/sync-strategy.md`.
 
 pub mod compression;
+pub mod engine;
 pub mod segment;
+
+pub use engine::{Bootstrap, DeviceInfo, SyncConfig, SyncEngine, SyncReport};

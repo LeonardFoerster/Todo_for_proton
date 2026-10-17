@@ -344,6 +344,9 @@ pub trait TaskRepository: MaybeSend + MaybeSync {
 
     async fn set_sync_cursor(&self, device: DeviceId, seq: u64) -> CoreResult<()>;
 
+    /// Alle Cursor, nach Gerät sortiert (für `devices/<id>.json` und die Kompaktierung).
+    async fn sync_cursors(&self) -> CoreResult<Vec<(DeviceId, u64)>>;
+
     /// Sync-Zustand einer Entity: Register (Wert + HLC je Feld, „Field-Clocks") oder Tombstone.
     async fn entity_state(&self, entity: EntityRef) -> CoreResult<Option<EntityState>>;
 
