@@ -28,3 +28,7 @@ serde_json.workspace = true
 # proptest (rusty-fork/wait-timeout) baut nicht für wasm32.
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 proptest.workspace = true
+
+[[test]]
+name = "api"
+required-features = ["test-support"]

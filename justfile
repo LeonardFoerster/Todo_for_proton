@@ -3,10 +3,11 @@
 # Standard-Prüfung vor jedem Commit: Format, Lints, Tests
 check: fmt-check clippy test doc wasm
 
-# Alle Rust-Tests im Workspace (`--all-targets` enthält keine Doctests, daher zweiter Lauf)
+# Alle Rust-Tests im Workspace (`--all-targets` enthält keine Doctests, daher zweiter Lauf).
+# `--all-features`, damit Tests mit `required-features = ["test-support"]` nicht still entfallen.
 test:
-    cargo test --workspace --all-targets
-    cargo test --workspace --doc
+    cargo test --workspace --all-targets --all-features
+    cargo test --workspace --doc --all-features
 
 # Code formatieren
 fmt:
