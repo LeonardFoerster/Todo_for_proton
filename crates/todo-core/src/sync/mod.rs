@@ -1,0 +1,9 @@
+//! Sync-Datenmodell: HLC, Ops, Diff und Merge – reine Logik ohne IO.
+//!
+//! Liegt im Core (nicht in `todo-sync`), weil der [`TaskRepository`](crate::ports::TaskRepository)-Port
+//! Ops zusammen mit dem Zustand atomar schreiben muss und Adapter nur vom Core abhängen dürfen
+//! (ADR-015). Die Sync-Engine (Segmente, Push/Pull, Scheduler) liegt in `todo-sync`.
+
+mod hlc;
+
+pub use hlc::{ClockSkew, Hlc, HlcState, MAX_CLOCK_DRIFT_MS};

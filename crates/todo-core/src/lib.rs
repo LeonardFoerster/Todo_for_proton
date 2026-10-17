@@ -8,6 +8,7 @@ pub mod app;
 pub mod domain;
 pub mod error;
 pub mod ports;
+pub mod sync;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 

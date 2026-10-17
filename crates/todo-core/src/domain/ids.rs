@@ -49,6 +49,18 @@ macro_rules! define_id {
             pub fn parse(s: &str) -> Result<Self, ParseIdError> {
                 Uuid::try_parse(s).map(Self).map_err(|_| ParseIdError { input: s.to_owned() })
             }
+
+            /// Die 16 Bytes der UUID (Big Endian; Byte-Reihenfolge = Sortierreihenfolge).
+            #[must_use]
+            pub fn to_bytes(self) -> [u8; 16] {
+                self.0.into_bytes()
+            }
+
+            /// Gegenstück zu [`Self::to_bytes`] (kompakte Binärformate, z. B. Sync).
+            #[must_use]
+            pub fn from_bytes(bytes: [u8; 16]) -> Self {
+                Self(Uuid::from_bytes(bytes))
+            }
         }
 
         impl fmt::Display for $name {
@@ -139,6 +151,14 @@ mod tests {
             let err = TaskId::parse(bad).unwrap_err();
             assert!(err.to_string().contains("invalid id"));
         }
+    }
+
+    #[test]
+    fn bytes_roundtrip_and_keep_order() {
+        let a = DeviceId::new();
+        let b = DeviceId::new();
+        assert_eq!(DeviceId::from_bytes(a.to_bytes()), a);
+        assert_eq!(a.to_bytes() < b.to_bytes(), a < b);
     }
 
     #[test]
