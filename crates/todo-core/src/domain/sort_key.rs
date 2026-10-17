@@ -308,6 +308,15 @@ mod tests {
     }
 
     #[test]
+    fn edge_paths() {
+        // Benachbarte Ziffern, `b` länger: dessen erste Ziffer allein liegt dazwischen.
+        assert_eq!(between(Some("a01"), Some("a02V")), "a02");
+        // Kopfzeichenwechsel mit kürzer werdendem Ganzzahlteil.
+        assert_eq!(between(Some("Yzz"), None), "Z0");
+        assert_eq!(between(None, Some("b00")), "az");
+    }
+
+    #[test]
     fn between_is_strictly_between() {
         let keys = ["Zz", "a0", "a0V", "a1", "a1V", "a2", "b00", "b01"];
         for pair in keys.windows(2) {
