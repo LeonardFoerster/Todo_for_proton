@@ -1,6 +1,6 @@
 //! Die zentrale Entity `Task`.
 
-use super::{text::normalize_name, SortKey, TagId, TaskId, TaskListId, Timestamp};
+use super::{text::normalize_name, Due, SortKey, TagId, TaskId, TaskListId, Timestamp};
 use crate::{ports::Clock, CoreResult};
 
 /// Maximale Titellänge in Unicode-Zeichen.
@@ -35,6 +35,7 @@ pub struct Task {
     notes: String,
     status: TaskStatus,
     priority: Priority,
+    due: Option<Due>,
     tags: Vec<TagId>,
     sort_key: SortKey,
     created_at: Timestamp,
@@ -64,6 +65,7 @@ impl Task {
             notes: String::new(),
             status: TaskStatus::Open,
             priority: Priority::None,
+            due: None,
             tags: Vec::new(),
             sort_key,
             created_at: now,
@@ -110,6 +112,11 @@ impl Task {
     #[must_use]
     pub fn priority(&self) -> Priority {
         self.priority
+    }
+
+    #[must_use]
+    pub fn due(&self) -> Option<&Due> {
+        self.due.as_ref()
     }
 
     #[must_use]
@@ -162,6 +169,19 @@ impl Task {
             self.priority = priority;
             self.touch(clock);
         }
+    }
+
+    /// Setzt oder entfernt die Fälligkeit.
+    ///
+    /// # Errors
+    /// `CoreError::Validation` bei leerem oder zu langem Zeitzonen-Namen.
+    pub fn set_due(&mut self, due: Option<Due>, clock: &(impl Clock + ?Sized)) -> CoreResult<()> {
+        let due = due.map(Due::normalized).transpose()?;
+        if due != self.due {
+            self.due = due;
+            self.touch(clock);
+        }
+        Ok(())
     }
 
     /// Markiert die Task als erledigt. Auf einer erledigten Task ohne Wirkung
@@ -228,6 +248,7 @@ mod tests {
         assert!(!t.is_done());
         assert_eq!(t.priority(), Priority::None);
         assert_eq!(t.notes(), "");
+        assert_eq!(t.due(), None);
         assert!(t.tags().is_empty());
         assert_eq!(t.parent_id(), None);
         assert_eq!(t.sort_key().as_str(), "a0");
@@ -356,6 +377,34 @@ mod tests {
         assert_eq!(t.priority(), Priority::High);
         let snapshot = t.clone();
         t.set_priority(Priority::High, &clock);
+        assert_eq!(t, snapshot);
+    }
+
+    #[test]
+    fn set_due_sets_clears_and_touches_only_on_change() {
+        let clock = clock();
+        let mut t = task(&clock);
+        let date = Due::Date(crate::domain::NaiveDate::from_ymd_opt(2026, 10, 20).unwrap());
+        t.set_due(Some(date.clone()), &clock).unwrap();
+        assert_eq!(t.due(), Some(&date));
+        let snapshot = t.clone();
+        t.set_due(Some(date), &clock).unwrap();
+        assert_eq!(t, snapshot);
+        t.set_due(None, &clock).unwrap();
+        assert_eq!(t.due(), None);
+        assert!(t.updated_at() > snapshot.updated_at());
+    }
+
+    #[test]
+    fn set_due_rejects_invalid_time_zone_and_keeps_state() {
+        let clock = clock();
+        let mut t = task(&clock);
+        let snapshot = t.clone();
+        let due = Due::DateTime {
+            at: Timestamp::EPOCH,
+            tz: String::new(),
+        };
+        assert!(t.set_due(Some(due), &clock).is_err());
         assert_eq!(t, snapshot);
     }
 
