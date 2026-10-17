@@ -1114,8 +1114,8 @@ impl<P: Pgp> Drive<P> {
             self.cache().file_by_link.insert(link.link_id.clone(), path);
             changes.changed.push(entry);
         } else if !link.is_draft() {
-            // Papierkorb (Update mit State 2 / Trashed).
-            self.cache().file_by_link.remove(&link.link_id);
+            // Papierkorb (Update mit State 2 / Trashed); das spätere Lösch-Event meldet denselben
+            // Pfad noch einmal – wird unten zusammengefasst.
             changes.deleted.push(path);
         }
         Ok(())
@@ -1249,7 +1249,8 @@ impl<P: Pgp> RemoteStore for Drive<P> {
         if let Err(err) = purged {
             tracing::warn!(error = %err, "file stays in trash");
         }
-        self.cache().file_by_link.remove(&link.link_id);
+        // Die Zuordnung LinkID → Pfad bleibt, bis das Lösch-Event verarbeitet ist (es trägt nur
+        // die LinkID; live ist das Papierkorb-Event dafür nicht verlässlich).
         Ok(())
     }
 
@@ -1321,12 +1322,14 @@ impl<P: Pgp> RemoteStore for Drive<P> {
         changes.changed = latest.into_values().collect();
         changes.changed.sort_by(|a, b| a.path.cmp(&b.path));
         let changed: HashSet<&RemotePath> = changes.changed.iter().map(|e| &e.path).collect();
-        let deleted: Vec<RemotePath> = changes
+        let mut deleted: Vec<RemotePath> = changes
             .deleted
             .iter()
             .filter(|p| !changed.contains(p))
             .cloned()
             .collect();
+        deleted.sort();
+        deleted.dedup();
         changes.deleted = deleted;
         Ok(Some(changes))
     }

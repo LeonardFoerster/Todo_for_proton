@@ -586,7 +586,9 @@ fn route(
                     Some(link) => {
                         link.json["State"] = json!(2);
                         link.json["Trashed"] = json!(now_s());
-                        let json = link.json.clone();
+                        // Live (P6-04): das Papierkorb-Event reicht nicht, um den Pfad zu bestimmen;
+                        // hier nur Kennungen wie bei v2-Events. Erst das Lösch-Event zählt.
+                        let json = json!({ "LinkID": id, "IsTrashed": true });
                         state.event(2, json);
                         1000
                     }
