@@ -47,7 +47,7 @@ function key(target: EventTarget, key: string, init: KeyboardEventInit = {}) {
   target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init }));
 }
 
-export const steps: Step[] = [
+const base: Step[] = [
   ["App startet im Eingang", async () => void (await until("h1 Eingang", () => heading() === "Eingang"))],
   [
     "Navigation zu Heute",
@@ -84,7 +84,8 @@ function stats(deltas: number[]): { p50: number; p95: number; max: number; dropp
 }
 
 // P7-07: Task-Liste mit 1 000 Tasks.
-steps.push(
+const p707: Step[] = [];
+p707.push(
   [
     "1 000 Tasks anlegen (IPC)",
     async (client) => {
@@ -152,14 +153,95 @@ steps.push(
   ],
 );
 
-export async function runSelftest(client: CoreClient, extra: Step[] = []): Promise<void> {
+const field = (label: string) =>
+  until(label, () => document.querySelector<HTMLInputElement & HTMLTextAreaElement>(`[aria-label="${label}"]`));
+
+async function openTask(title: RegExp) {
+  (await until(`Zeile ${title}`, () => byRole("option", title))).click();
+  await until("Detail-Panel", () => document.querySelector('[aria-label="Task-Details"] textarea'));
+}
+
+// P7-08 Teil 1: anlegen, bearbeiten, verschieben (danach App neu starten → p708b).
+const p708a: Step[] = [
+  [
+    "Liste „Projekt“ anlegen",
+    async () => {
+      await click("button", "Neue Liste");
+      const input = await field("Name der neuen Liste");
+      type(input, "Projekt");
+      key(input, "Enter");
+      await until("h1 Projekt", () => heading() === "Projekt");
+      await click("link", /^Eingang/);
+      await until("h1 Eingang", () => heading() === "Eingang");
+    },
+  ],
+  [
+    "Quick-Add mit „morgen“, Feld bleibt fokussiert",
+    async () => {
+      const input = await field("Neue Task");
+      type(input, "Persistenz prüfen morgen");
+      key(input, "Enter");
+      await until("neue Zeile", () => byRole("option", /^Persistenz prüfen, Fällig/));
+      if (document.activeElement !== input) throw new Error("Fokus verloren");
+    },
+  ],
+  [
+    "Notizen + Priorität im Detail",
+    async () => {
+      await openTask(/^Persistenz prüfen/);
+      const notes = await field("Notizen");
+      type(notes, "Überlebt den Neustart");
+      notes.dispatchEvent(new FocusEvent("blur"));
+      await click("radio", "Hoch");
+      await sleep(300);
+    },
+  ],
+  [
+    "In Liste „Projekt“ verschieben",
+    async () => {
+      const select = await until("Listenauswahl", () => document.querySelector<HTMLSelectElement>("#detail-list"));
+      const option = [...select.options].find((o) => o.textContent === "Projekt")!;
+      select.value = option.value;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      await until("aus Eingang verschwunden", () => !byRole("option", /^Persistenz prüfen/));
+    },
+  ],
+];
+
+// P7-08 Teil 2 (nach Neustart): alles noch da?
+const p708b: Step[] = [
+  [
+    "Nach Neustart: Task in „Projekt“ mit Notiz, Priorität, Fälligkeit",
+    async () => {
+      await click("link", /^Projekt/);
+      await until("h1 Projekt", () => heading() === "Projekt");
+      await openTask(/^Persistenz prüfen, Fällig/);
+      const notes = await field("Notizen");
+      await until("Notiz", () => notes.value === "Überlebt den Neustart");
+      const high = await until("Priorität", () => byRole("radio", "Hoch"));
+      if (high.getAttribute("aria-checked") !== "true") throw new Error("Priorität nicht hoch");
+      const due = await until("Datum", () => document.querySelector<HTMLInputElement>("#detail-due")?.value);
+      const tomorrow = new Date(Date.now() + 86_400_000);
+      const expected = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
+      if (due !== expected) throw new Error(`Fällig ${due}, erwartet ${expected}`);
+      return `fällig ${due}`;
+    },
+  ],
+];
+
+const SUITES: Record<string, Step[]> = { base, p707, p708a, p708b };
+
+/** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */
+export async function runSelftest(client: CoreClient, selection: string): Promise<void> {
+  const names = selection === "1" ? ["base", "p707"] : selection.split(",").map((n) => n.trim());
+  const steps = names.flatMap((n) => SUITES[n] ?? [[`Suite ${n}`, async () => Promise.reject(new Error("unbekannt"))] as Step]);
   const box = document.createElement("pre");
   box.style.cssText =
     "position:fixed;top:8px;right:8px;z-index:9999;margin:0;padding:8px 12px;max-width:520px;font:12px/1.5 monospace;background:#000c;color:#fff;border-radius:6px;white-space:pre-wrap";
   document.body.append(box);
   const lines: string[] = [];
   let failed = 0;
-  for (const [name, run] of [...steps, ...extra]) {
+  for (const [name, run] of steps) {
     try {
       const detail = await run(client);
       lines.push(`PASS ${name}${detail ? ` – ${detail}` : ""}`);

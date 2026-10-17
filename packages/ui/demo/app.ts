@@ -13,3 +13,15 @@ if (params.has("collapsed")) localStorage.setItem("tasks.sidebar-collapsed", par
 const client = new FakeCoreClient({ latencyMs: Number(params.get("latency") ?? 0) });
 await seed(client, Number(params.get("n") ?? 0));
 mount(App, { target: document.getElementById("app")!, props: { client } });
+
+// ?open=1: erste Task öffnen (Detail-Panel), ?type=Text: Quick-Add vorbelegen (Screenshots).
+if (params.has("open")) setTimeout(() => document.querySelector<HTMLElement>('[role="option"]')?.click(), 300);
+const typed = params.get("type");
+if (typed) {
+  setTimeout(() => {
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Neue Task"]')!;
+    input.value = typed;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.focus();
+  }, 300);
+}

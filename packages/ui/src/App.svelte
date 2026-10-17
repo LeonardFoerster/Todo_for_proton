@@ -5,6 +5,8 @@
   import Toaster from "./components/Toaster.svelte";
   import { toasts } from "./components/toasts.svelte";
   import Sidebar from "./features/sidebar/Sidebar.svelte";
+  import QuickAdd from "./features/quick-add/QuickAdd.svelte";
+  import TaskDetail from "./features/task-detail/TaskDetail.svelte";
   import TaskList from "./features/task-list/TaskList.svelte";
   import { PanelLeft } from "./icons";
   import { setCoreClient } from "./lib/context";
@@ -12,7 +14,8 @@
   import { readFlag, writeFlag } from "./lib/preferences";
   import { routeHash, Router } from "./lib/router.svelte";
   import { SyncState } from "./lib/sync.svelte";
-  import { routeTitle } from "./lib/views";
+  import { todayPlus } from "./lib/format-date";
+  import { routeListId, routeTitle } from "./lib/views";
   import { followSystemTheme } from "./theme/theme";
   import "./tokens/tokens.css";
 
@@ -35,6 +38,7 @@
   let drawerOpen = $state(false);
   let ready = $state(false);
   let selectedId = $state<string | null>(null);
+  let quickAdd = $state<QuickAdd>();
   let reportedReady = false;
 
   const route = $derived(router.route);
@@ -91,11 +95,15 @@
 
   function newTask() {
     drawerOpen = false;
-    // Quick-Add folgt in P7-08.
+    quickAdd?.focus();
+  }
+
+  function closeDetail() {
+    selectedId = null;
   }
 </script>
 
-<div class="app" class:collapsed class:drawer-open={drawerOpen}>
+<div class="app" class:collapsed class:drawer-open={drawerOpen} class:detail-open={selectedId !== null}>
   <aside class="sidebar-slot">
     <Sidebar
       {route}
@@ -122,13 +130,29 @@
       <h1 id="view-title">{title}</h1>
     </header>
     <div class="pane-body">
-      {#if ready}
+      {#if ready && (route.view !== "list" || lists.lists.some((l) => l.id === route.listId))}
         {#key routeHash(route)}
-          <TaskList {route} {lists} bind:selectedId onready={listReady} />
+          {#if route.view !== "completed"}
+            <QuickAdd
+              bind:this={quickAdd}
+              listId={routeListId(route)}
+              defaultDue={route.view === "today" ? todayPlus(0) : null}
+              placeholder={route.view === "today" ? "Task für heute hinzufügen" : "Task hinzufügen – z. B. „Zahnarzt anrufen morgen“"}
+            />
+          {/if}
+          <div class="list-slot">
+            <TaskList {route} {lists} bind:selectedId onready={listReady} />
+          </div>
         {/key}
       {/if}
     </div>
   </main>
+
+  {#if selectedId}
+    <aside class="detail-slot">
+      <TaskDetail taskId={selectedId} {lists} onclose={closeDetail} />
+    </aside>
+  {/if}
 </div>
 <Toaster />
 
@@ -190,9 +214,50 @@
     margin-left: calc(-1 * var(--space-3));
   }
   .pane-body {
+    display: flex;
+    flex-direction: column;
     flex: 1;
     min-height: 0;
     position: relative;
+  }
+  .list-slot {
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* Detail: ≥ 1100 px eigene Spalte, darunter schwebend */
+  .detail-slot {
+    min-width: 0;
+    min-height: 0;
+    margin: var(--space-2) var(--space-2) var(--space-2) 0;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+  .app.detail-open {
+    grid-template-columns: var(--sidebar-width) minmax(360px, 1fr) clamp(360px, 30vw, 420px);
+  }
+  @media (max-width: 1099px) {
+    .app.detail-open {
+      grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+    }
+    .detail-slot {
+      position: fixed;
+      top: var(--space-2);
+      right: var(--space-2);
+      bottom: var(--space-2);
+      z-index: 20;
+      width: min(400px, calc(100vw - 2 * var(--space-2)));
+      margin: 0;
+      box-shadow: var(--shadow-popover);
+      animation: slide-in var(--duration-base) var(--ease);
+    }
+  }
+  @keyframes slide-in {
+    from {
+      opacity: 0;
+      transform: translateX(16px);
+    }
   }
   .scrim {
     display: none;
@@ -235,6 +300,12 @@
     }
     .menu {
       display: block;
+    }
+    .detail-slot {
+      inset: 0;
+      width: auto;
+      border: 0;
+      border-radius: 0;
     }
   }
 </style>
