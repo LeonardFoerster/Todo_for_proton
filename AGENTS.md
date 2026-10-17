@@ -110,7 +110,7 @@ Die Rust-Toolchain ist über `rust-toolchain.toml` fixiert.
 | Kommando | Wirkung |
 |---|---|
 | `just check` | **Standard-Prüfung vor jedem Commit:** `fmt-check` + `clippy` + `test` |
-| `just test` | Alle Rust-Tests im Workspace |
+| `just test` | Alle Rust-Tests im Workspace (inkl. Doctests) |
 | `just fmt` | Code formatieren |
 | `just fmt-check` | Formatierung nur prüfen |
 | `just clippy` | Clippy über alle Targets, Warnungen = Fehler |

@@ -3,9 +3,10 @@
 # Standard-Prüfung vor jedem Commit: Format, Lints, Tests
 check: fmt-check clippy test
 
-# Alle Rust-Tests im Workspace
+# Alle Rust-Tests im Workspace (`--all-targets` enthält keine Doctests, daher zweiter Lauf)
 test:
     cargo test --workspace --all-targets
+    cargo test --workspace --doc
 
 # Code formatieren
 fmt:
