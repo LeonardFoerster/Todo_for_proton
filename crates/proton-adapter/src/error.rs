@@ -25,7 +25,8 @@ pub(crate) mod code {
     /// `x-pm-appversion` fehlt bzw. ist unbekannt/gesperrt.
     pub(crate) const APP_VERSION_MISSING: i64 = 5002;
     pub(crate) const APP_VERSION_BAD: i64 = 5003;
-    /// Refresh-Token ungültig (z. B. nach Logout oder Rotation).
+    /// Refresh-Token ungültig (z. B. nach Logout oder Rotation); als 4xx eine Widerrufung.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) const INVALID_REFRESH_TOKEN: i64 = 10013;
 }
 
@@ -44,6 +45,8 @@ pub(crate) enum ApiError {
         status: u16,
         code: Option<i64>,
         retry_after_s: Option<u32>,
+        /// `Details` der Fehlerantwort als JSON (z. B. Konfliktdetails bei 2500), sonst leer.
+        details: Option<String>,
     },
     /// Erfolgsantwort, die nicht dem erwarteten Format entspricht.
     Decode(String),
@@ -53,6 +56,13 @@ impl ApiError {
     pub(crate) fn code(&self) -> Option<i64> {
         match self {
             Self::Status { code, .. } => *code,
+            _ => None,
+        }
+    }
+
+    pub(crate) fn details(&self) -> Option<&str> {
+        match self {
+            Self::Status { details, .. } => details.as_deref(),
             _ => None,
         }
     }
@@ -90,6 +100,7 @@ impl From<ApiError> for CoreError {
             status,
             code,
             retry_after_s,
+            ..
         } = err
         else {
             return match err {
@@ -141,6 +152,7 @@ mod tests {
             status,
             code,
             retry_after_s: None,
+            details: None,
         }
     }
 
@@ -157,6 +169,7 @@ mod tests {
             status: 429,
             code: None,
             retry_after_s: Some(42),
+            details: None,
         };
         assert_eq!(
             CoreError::from(limited),
@@ -172,6 +185,7 @@ mod tests {
             status: 503,
             code: None,
             retry_after_s: Some(5),
+            details: None,
         };
         assert_eq!(
             CoreError::from(unavailable),

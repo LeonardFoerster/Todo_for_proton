@@ -184,10 +184,15 @@ impl ApiClient {
                 "{} {}: body is not JSON",
                 req.method, req.route
             ))),
-            _ => Err(ApiError::Status {
+            body => Err(ApiError::Status {
                 status: status.as_u16(),
                 code: proton_code,
                 retry_after_s,
+                details: body
+                    .as_ref()
+                    .and_then(|b| b.get("Details"))
+                    .filter(|d| !d.is_null())
+                    .map(Value::to_string),
             }),
         }
     }
@@ -262,6 +267,7 @@ impl ApiClient {
                 status: status.as_u16(),
                 code: storage_code(&bytes),
                 retry_after_s,
+                details: None,
             })
         }
     }

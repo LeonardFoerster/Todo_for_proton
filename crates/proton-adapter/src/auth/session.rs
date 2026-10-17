@@ -234,13 +234,22 @@ impl Session {
 
     /// Authentifizierter Aufruf: bei 401 einmal Tokens erneuern und wiederholen.
     pub(crate) async fn send(&self, req: Request<'static>) -> CoreResult<Value> {
+        Ok(self.try_send(req).await??)
+    }
+
+    /// Wie [`Self::send`], aber API-Fehler kommen unverändert zurück (z. B. für Konfliktdetails);
+    /// der äußere Fehler betrifft nur die Sitzung (Login nötig, Refresh ohne Netz …).
+    pub(crate) async fn try_send(
+        &self,
+        req: Request<'static>,
+    ) -> CoreResult<Result<Value, ApiError>> {
         let credentials = self.refresh(None).await?;
         match self.api.send(req.clone().auth(credentials.auth())).await {
             Err(err) if err.is_unauthorized() => {
                 let fresh = self.refresh(Some(&credentials.access)).await?;
-                Ok(self.api.send(req.auth(fresh.auth())).await?)
+                Ok(self.api.send(req.auth(fresh.auth())).await)
             }
-            result => Ok(result?),
+            result => Ok(result),
         }
     }
 
