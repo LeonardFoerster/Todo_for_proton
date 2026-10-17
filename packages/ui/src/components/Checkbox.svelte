@@ -44,8 +44,10 @@
     display: inline-grid;
     place-items: center;
     flex: none;
-    width: 20px;
-    height: 20px;
+    /* 28 px Trefferfläche, optisch 20 px (negativer Rand hält das Zeilenlayout). */
+    width: 28px;
+    height: 28px;
+    margin: -4px;
     padding: 0;
     border: 0;
     border-radius: var(--radius-full);

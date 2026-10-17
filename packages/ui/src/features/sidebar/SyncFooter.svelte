@@ -13,10 +13,10 @@
   let { status, account, collapsed = false, onlogin, onsync }: Props = $props();
 
   const pending = $derived(status.pendingOps);
-  const view = $derived.by((): { icon: IconComponent; text: string; tone: "muted" | "ok" | "warn" | "busy" } => {
+  const view = $derived.by((): { icon: IconComponent; text: string; long?: string; tone: "muted" | "ok" | "warn" | "busy" } => {
     switch (status.state) {
       case "disabled":
-        return { icon: CloudOff, text: "Nur auf diesem Gerät", tone: "muted" };
+        return { icon: CloudOff, text: "Nur lokal", long: "Nur auf diesem Gerät", tone: "muted" };
       case "syncing":
         return { icon: RefreshCw, text: "Synchronisiere …", tone: "busy" };
       case "idle":
@@ -38,7 +38,7 @@
   const needsLogin = $derived(status.state === "disabled" || status.state === "authRequired");
   const tooltip = $derived(
     [
-      view.text,
+      view.long ?? view.text,
       account,
       status.lastSuccess ? `Zuletzt synchronisiert: ${new Date(status.lastSuccess).toLocaleString("de-DE")}` : null,
       status.state !== "disabled" && pending > 0 ? `${pending} lokale Änderung${pending === 1 ? "" : "en"} ausstehend` : null,
@@ -52,7 +52,7 @@
   <button
     type="button"
     class="status {view.tone}"
-    aria-label="Sync-Status: {view.text}"
+    aria-label="Sync-Status: {view.long ?? view.text}"
     data-tooltip={tooltip}
     data-tooltip-side="top"
     onclick={needsLogin ? onlogin : onsync}

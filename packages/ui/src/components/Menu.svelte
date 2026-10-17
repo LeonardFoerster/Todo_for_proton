@@ -122,9 +122,13 @@
     text-align: left;
     cursor: pointer;
   }
-  button:hover:not(:disabled),
+  button:hover:not(:disabled) {
+    background: var(--color-bg-hover);
+  }
+  /* Tastaturfokus deutlich: Fläche + Ring (die Hover-Fläche allein hat zu wenig Kontrast). */
   button:focus-visible {
-    outline: none;
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: -2px;
     background: var(--color-bg-hover);
   }
   button:disabled {
