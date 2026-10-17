@@ -228,20 +228,14 @@ mod tests {
     }
 
     fn task(clock: &SteppingClock) -> Task {
-        Task::new(
-            TaskListId::new(),
-            "Milch kaufen",
-            SortKey::for_test("a0"),
-            clock,
-        )
-        .unwrap()
+        Task::new(TaskListId::new(), "Milch kaufen", SortKey::first(), clock).unwrap()
     }
 
     #[test]
     fn new_task_has_sane_defaults() {
         let list = TaskListId::new();
         let clock = FixedClock(Timestamp::from_millis(7));
-        let t = Task::new(list, "  Milch kaufen \n", SortKey::for_test("a0"), &clock).unwrap();
+        let t = Task::new(list, "  Milch kaufen \n", SortKey::first(), &clock).unwrap();
         assert_eq!(t.title(), "Milch kaufen");
         assert_eq!(t.list_id(), list);
         assert_eq!(t.status(), TaskStatus::Open);
@@ -251,7 +245,7 @@ mod tests {
         assert_eq!(t.due(), None);
         assert!(t.tags().is_empty());
         assert_eq!(t.parent_id(), None);
-        assert_eq!(t.sort_key().as_str(), "a0");
+        assert_eq!(t.sort_key(), &SortKey::first());
         assert_eq!(t.created_at(), Timestamp::from_millis(7));
         assert_eq!(t.updated_at(), t.created_at());
         assert_eq!(t.completed_at(), None);
@@ -269,7 +263,7 @@ mod tests {
         let list = TaskListId::new();
         let too_long = "x".repeat(TASK_TITLE_MAX_CHARS + 1);
         for title in ["", "   ", "\t\n", too_long.as_str()] {
-            let err = Task::new(list, title, SortKey::for_test("a0"), &clock).unwrap_err();
+            let err = Task::new(list, title, SortKey::first(), &clock).unwrap_err();
             assert!(
                 matches!(err, CoreError::Validation(_)),
                 "{title:?} → {err:?}"
@@ -282,9 +276,9 @@ mod tests {
         let clock = clock();
         let list = TaskListId::new();
         let max = "ü".repeat(TASK_TITLE_MAX_CHARS); // 1000 Bytes, 500 Zeichen
-        assert!(Task::new(list, &max, SortKey::for_test("a0"), &clock).is_ok());
+        assert!(Task::new(list, &max, SortKey::first(), &clock).is_ok());
         let emoji = "🦀".repeat(TASK_TITLE_MAX_CHARS + 1);
-        assert!(Task::new(list, &emoji, SortKey::for_test("a0"), &clock).is_err());
+        assert!(Task::new(list, &emoji, SortKey::first(), &clock).is_err());
     }
 
     #[test]
@@ -418,12 +412,7 @@ mod tests {
     #[test]
     fn accepts_dyn_clock() {
         let clock: Box<dyn Clock> = Box::new(FixedClock(Timestamp::EPOCH));
-        let t = Task::new(
-            TaskListId::new(),
-            "x",
-            SortKey::for_test("a0"),
-            clock.as_ref(),
-        );
+        let t = Task::new(TaskListId::new(), "x", SortKey::first(), clock.as_ref());
         assert!(t.is_ok());
     }
 }
