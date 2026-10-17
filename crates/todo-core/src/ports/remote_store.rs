@@ -3,7 +3,7 @@
 //!
 //! Die Sync-Engine braucht nur einen App-Ordner mit (überwiegend) unveränderlichen Dateien.
 //! Alles Backend-Spezifische (Volumes, Shares, Revisionen, Block-Upload, Krypto des Anbieters)
-//! bleibt im Adapter. Implementierungen: Proton-Drive-Adapter, `FsRemoteStore` (lokales
+//! bleibt im Adapter. Implementierungen: Adapter des Cloud-Backends (P6), `FsRemoteStore` (lokales
 //! Verzeichnis), `InMemoryRemoteStore` (Tests, mit Fehler-Injektion).
 
 use std::fmt;
