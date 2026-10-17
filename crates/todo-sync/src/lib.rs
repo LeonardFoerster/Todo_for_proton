@@ -6,6 +6,10 @@
 
 pub mod compression;
 pub mod engine;
+pub mod scheduler;
 pub mod segment;
 
 pub use engine::{Bootstrap, DeviceInfo, SyncConfig, SyncEngine, SyncReport};
+pub use scheduler::{
+    Actions, Scheduler, SchedulerConfig, SchedulerEvent, SyncOutcome, SyncPauseReason, SyncStatus,
+};
