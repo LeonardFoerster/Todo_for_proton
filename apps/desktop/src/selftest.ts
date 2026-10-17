@@ -303,7 +303,84 @@ const p709b: Step[] = [
   ],
 ];
 
-const SUITES: Record<string, Step[]> = { base, p707, p708a, p708b, p709a, p709b };
+/** Taste an das fokussierte Element (wie die echte Tastatur). */
+function press(k: string, init: KeyboardEventInit = {}) {
+  key(document.activeElement ?? document.body, k, init);
+}
+
+// P7-10: anlegen → abhaken → löschen nur mit der Tastatur.
+const p710: Step[] = [
+  [
+    "N fokussiert Quick-Add, Enter legt zwei Tasks an",
+    async () => {
+      await click("link", /^Eingang/);
+      press("n");
+      const input = await until("Fokus Quick-Add", () => document.activeElement?.getAttribute("aria-label") === "Neue Task" && (document.activeElement as HTMLInputElement));
+      for (const title of ["Tastatur A", "Tastatur B"]) {
+        type(input, title);
+        press("Enter");
+        await until(title, () => byRole("option", title));
+      }
+      press("Escape");
+      if (document.activeElement === input) throw new Error("Quick-Add noch fokussiert");
+    },
+  ],
+  [
+    "↓/J wählen aus, Fokus sichtbar",
+    async () => {
+      press("ArrowDown");
+      await sleep(50);
+      while (document.activeElement?.getAttribute("aria-label") !== "Tastatur A") {
+        press("j");
+        await sleep(30);
+        if (!document.activeElement?.closest('[role="listbox"]')) throw new Error("Fokus nicht in der Liste");
+      }
+      const row = document.activeElement as HTMLElement;
+      const style = getComputedStyle(row);
+      if (style.outlineStyle === "none" || row.getAttribute("aria-selected") !== "true") {
+        throw new Error(`outline=${style.outlineStyle}, selected=${row.getAttribute("aria-selected")}`);
+      }
+      return `Fokusring ${style.outlineWidth} ${style.outlineStyle}`;
+    },
+  ],
+  [
+    "Leertaste hakt ab",
+    async () => {
+      press(" ");
+      await until("abgehakt", () => byRole("option", /^Tastatur A, erledigt/));
+    },
+  ],
+  [
+    "Enter öffnet, Esc schließt Details",
+    async () => {
+      press("Enter");
+      await until("Detail", () => document.querySelector('[aria-label="Task-Details"]'));
+      press("Escape");
+      await until("Detail zu", () => !document.querySelector('[aria-label="Task-Details"]'));
+    },
+  ],
+  [
+    "J + Entf löscht Tastatur B",
+    async () => {
+      press("j");
+      await until("B ausgewählt", () => document.activeElement?.getAttribute("aria-label") === "Tastatur B");
+      press("Delete");
+      await until("B weg", () => !byRole("option", "Tastatur B"));
+    },
+  ],
+  [
+    "? zeigt die Kürzel",
+    async () => {
+      press("?");
+      const dialog = await until("Dialog", () => document.querySelector<HTMLDialogElement>("dialog[open]"));
+      press("Escape");
+      await until("Dialog zu", () => !document.querySelector("dialog[open]"));
+      return `${dialog.querySelectorAll("dt").length} Kürzel`;
+    },
+  ],
+];
+
+const SUITES: Record<string, Step[]> = { base, p707, p708a, p708b, p709a, p709b, p710 };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */
 export async function runSelftest(client: CoreClient, selection: string): Promise<void> {

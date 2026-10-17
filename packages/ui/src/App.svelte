@@ -8,11 +8,13 @@
   import QuickAdd from "./features/quick-add/QuickAdd.svelte";
   import TaskDetail from "./features/task-detail/TaskDetail.svelte";
   import TaskList from "./features/task-list/TaskList.svelte";
-  import { PanelLeft } from "./icons";
+  import ShortcutHelp from "./features/shell/ShortcutHelp.svelte";
+  import { Keyboard, PanelLeft } from "./icons";
   import { setCoreClient } from "./lib/context";
   import { ListsState } from "./lib/lists.svelte";
   import { readFlag, writeFlag } from "./lib/preferences";
-  import { routeHash, Router } from "./lib/router.svelte";
+  import { routeHash, Router, type SmartViewKind } from "./lib/router.svelte";
+  import { ShortcutRegistry } from "./lib/shortcuts";
   import { SyncState } from "./lib/sync.svelte";
   import { todayPlus } from "./lib/format-date";
   import { routeListId, routeTitle } from "./lib/views";
@@ -38,7 +40,11 @@
   let collapsed = $state(readFlag(COLLAPSED_KEY));
   let drawerOpen = $state(false);
   let ready = $state(false);
+  /** Hervorgehobene Zeile (Tastatur/Klick). */
   let selectedId = $state<string | null>(null);
+  /** Im Detail-Panel geöffnete Task; folgt der Auswahl, solange das Panel offen ist. */
+  let openId = $state<string | null>(null);
+  let showShortcuts = $state(false);
   let quickAdd = $state<QuickAdd>();
   let taskList = $state<TaskList>();
   let reportedReady = false;
@@ -47,7 +53,7 @@
   const title = $derived(routeTitle(route, lists.lists));
 
   onMount(() => {
-    const stops = [router.listen(), followSystemTheme()];
+    const stops = [router.listen(), followSystemTheme(), shortcuts.attach(window), trackInputMode()];
     void (async () => {
       try {
         await client.ensureInbox();
@@ -101,19 +107,114 @@
   }
 
   function closeDetail() {
-    selectedId = null;
+    openId = null;
+    void taskList?.focusSelected();
   }
 
   /** Über die Liste löschen (kennt die Nachbarn für „Rückgängig“), sonst direkt. */
   function deleteFromDetail(id: string) {
     const task = taskList?.items().find((t) => t.id === id);
-    selectedId = null;
+    openId = null;
     if (task && taskList) void taskList.deleteTask(task);
     else void deleteWithUndo(client, id);
   }
+
+  // --- Tastatur (ui-guidelines §5) -------------------------------------------------------------
+
+  /**
+   * Letzte Eingabeart als `data-input` auf `<html>` (keyboard|pointer): Bei Tastaturbedienung zeigt
+   * die fokussierte Zeile immer einen Ring – unabhängig von der `:focus-visible`-Heuristik der Engine.
+   */
+  function trackInputMode(): () => void {
+    const root = document.documentElement;
+    const keyboard = (e: KeyboardEvent) => {
+      if (!["Control", "Alt", "Shift", "Meta"].includes(e.key)) root.dataset.input = "keyboard";
+    };
+    const pointer = () => (root.dataset.input = "pointer");
+    addEventListener("keydown", keyboard, true);
+    addEventListener("pointerdown", pointer, true);
+    return () => {
+      removeEventListener("keydown", keyboard, true);
+      removeEventListener("pointerdown", pointer, true);
+    };
+  }
+
+  const shortcuts = new ShortcutRegistry();
+  const hasList = () => !!taskList && taskList.items().length > 0;
+  const selected = () => taskList?.items().find((t) => t.id === selectedId);
+
+  /** Auswahl verschieben; ohne Auswahl die erste bzw. letzte Zeile. */
+  function selectBy(delta: -1 | 1) {
+    const items = taskList?.items() ?? [];
+    if (!items.length) return;
+    const current = items.findIndex((t) => t.id === selectedId);
+    const next = current < 0 ? (delta > 0 ? 0 : items.length - 1) : Math.max(0, Math.min(items.length - 1, current + delta));
+    selectedId = items[next].id;
+    if (openId) openId = selectedId;
+    taskList?.scrollToIndex(next);
+    void taskList?.focusSelected();
+  }
+
+  function goTo(view: SmartViewKind) {
+    router.navigate({ view });
+    selectedId = openId = null;
+  }
+
+  function escape(e: KeyboardEvent) {
+    const target = e.target as HTMLElement | null;
+    if (showShortcuts) showShortcuts = false;
+    else if (target && target.matches("input, textarea, select")) target.blur();
+    else if (openId) closeDetail();
+    else if (drawerOpen) drawerOpen = false;
+    else selectedId = null;
+  }
+
+  shortcuts.setModal(() => showShortcuts);
+  shortcuts.register(
+    { keys: ["n"], description: "Neue Task", group: "Allgemein", run: newTask },
+    { keys: ["ctrl+n"], description: "Neue Task (auch beim Tippen)", group: "Allgemein", inInputs: true, run: newTask },
+    {
+      keys: ["?"],
+      description: "Tastaturkürzel anzeigen",
+      group: "Allgemein",
+      inModal: true,
+      run: () => (showShortcuts = !showShortcuts),
+    },
+    {
+      keys: ["escape"],
+      description: "Schließen / Auswahl aufheben",
+      group: "Allgemein",
+      inInputs: true,
+      inModal: true,
+      run: escape,
+    },
+    { keys: ["arrowdown", "j"], label: "↓ / J", description: "Nächste Task", group: "Liste", when: hasList, run: () => selectBy(1) },
+    { keys: ["arrowup", "k"], label: "↑ / K", description: "Vorige Task", group: "Liste", when: hasList, run: () => selectBy(-1) },
+    {
+      keys: ["space", "e"],
+      label: "Leertaste / E",
+      description: "Erledigt umschalten",
+      group: "Liste",
+      when: () => !!selected(),
+      run: () => taskList?.toggleTask(selected()!),
+    },
+    {
+      keys: ["enter"],
+      description: "Details öffnen",
+      group: "Liste",
+      when: () => !!selected(),
+      run: () => (openId = selectedId),
+    },
+    { keys: ["delete"], description: "Löschen (mit Rückgängig)", group: "Liste", when: () => !!selected(), run: () => void taskList?.deleteTask() },
+    { keys: ["alt+arrowup"], description: "Nach oben verschieben", group: "Liste", when: () => !!selected(), run: () => taskList?.moveSelected(-1) },
+    { keys: ["alt+arrowdown"], description: "Nach unten verschieben", group: "Liste", when: () => !!selected(), run: () => taskList?.moveSelected(1) },
+    { keys: ["g i"], description: "Eingang", group: "Ansichten", run: () => goTo("inbox") },
+    { keys: ["g t"], description: "Heute", group: "Ansichten", run: () => goTo("today") },
+    { keys: ["g u"], description: "Geplant", group: "Ansichten", run: () => goTo("upcoming") },
+  );
 </script>
 
-<div class="app" class:collapsed class:drawer-open={drawerOpen} class:detail-open={selectedId !== null}>
+<div class="app" class:collapsed class:drawer-open={drawerOpen} class:detail-open={openId !== null}>
   <aside class="sidebar-slot">
     <Sidebar
       {route}
@@ -138,6 +239,9 @@
         <IconButton label="Navigation öffnen" icon={PanelLeft} onclick={() => (drawerOpen = true)} />
       </span>
       <h1 id="view-title">{title}</h1>
+      <span class="header-actions">
+        <IconButton label="Tastaturkürzel" shortcut="?" icon={Keyboard} onclick={() => (showShortcuts = true)} />
+      </span>
     </header>
     <div class="pane-body">
       {#if ready && (route.view !== "list" || lists.lists.some((l) => l.id === route.listId))}
@@ -151,20 +255,23 @@
             />
           {/if}
           <div class="list-slot">
-            <TaskList bind:this={taskList} {route} {lists} bind:selectedId onready={listReady} />
+            <TaskList bind:this={taskList} {route} {lists} bind:selectedId onopen={(id) => (openId = id)} onready={listReady} />
           </div>
         {/key}
       {/if}
     </div>
   </main>
 
-  {#if selectedId}
+  {#if openId}
     <aside class="detail-slot">
-      <TaskDetail taskId={selectedId} {lists} onclose={closeDetail} ondelete={deleteFromDetail} />
+      <TaskDetail taskId={openId} {lists} onclose={closeDetail} ondelete={deleteFromDetail} />
     </aside>
   {/if}
 </div>
 <Toaster />
+{#if showShortcuts}
+  <ShortcutHelp shortcuts={shortcuts.list()} onclose={() => (showShortcuts = false)} />
+{/if}
 
 <style>
   :global(html, body, #app) {
@@ -209,6 +316,9 @@
     height: 56px;
     padding: 0 var(--space-4) 0 var(--space-6);
     flex: none;
+  }
+  .header-actions {
+    margin-left: auto;
   }
   h1 {
     margin: 0;

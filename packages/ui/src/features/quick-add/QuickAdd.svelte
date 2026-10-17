@@ -63,6 +63,8 @@
         e.preventDefault();
         void submit();
       } else if (e.key === "Escape") {
+        // Selbst behandelt: Text leeren, Fokus abgeben (die globale Esc-Aktion nicht zusätzlich).
+        e.preventDefault();
         value = "";
         input.blur();
       }

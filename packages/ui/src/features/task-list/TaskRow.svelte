@@ -24,6 +24,8 @@
   const priorityLabel = { none: "", low: "Niedrige Priorität", medium: "Mittlere Priorität", high: "Hohe Priorität" };
 </script>
 
+<!-- Tasten (Enter, Leertaste, Entf, Pfeile) behandelt die zentrale Registry (lib/shortcuts.ts). -->
+<!-- svelte-ignore a11y_click_events_have_key_events -->
 <div
   class="row"
   class:done
@@ -37,9 +39,6 @@
   onclick={(e) => {
     e.currentTarget.focus({ preventScroll: true });
     onopen(task);
-  }}
-  onkeydown={(e) => {
-    if (e.key === "Enter" && e.target === e.currentTarget) onopen(task);
   }}
 >
   {#if ondragstart}
@@ -142,9 +141,13 @@
     background: var(--color-bg-selected);
     opacity: 0.6;
   }
-  .row:focus-visible {
+  .row:focus-visible,
+  :global([data-input="keyboard"]) .row:focus {
     outline: 2px solid var(--color-focus-ring);
     outline-offset: -2px;
+  }
+  :global([data-input="pointer"]) .row:focus:not(:focus-visible) {
+    outline: none;
   }
   .title {
     flex: 1;

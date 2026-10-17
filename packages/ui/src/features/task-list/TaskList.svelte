@@ -238,15 +238,6 @@
       rowHeight={ROW}
       onEndReached={rows.hasMore ? () => void rows.loadMore() : undefined}
       oncontextmenu={contextMenu}
-      onkeydown={(e) => {
-        if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
-          e.preventDefault();
-          moveSelected(e.key === "ArrowUp" ? -1 : 1);
-        } else if (e.key === "Delete") {
-          e.preventDefault();
-          void deleteTask();
-        }
-      }}
     >
       {#snippet row(task)}
         <TaskRow

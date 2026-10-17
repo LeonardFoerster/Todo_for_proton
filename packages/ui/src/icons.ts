@@ -27,3 +27,4 @@ export { default as X } from "@lucide/svelte/icons/x";
 export { default as ArrowDown } from "@lucide/svelte/icons/arrow-down";
 export { default as ArrowUp } from "@lucide/svelte/icons/arrow-up";
 export { default as PanelRight } from "@lucide/svelte/icons/panel-right";
+export { default as Keyboard } from "@lucide/svelte/icons/keyboard";
