@@ -6,6 +6,7 @@ publish.workspace = true
 description = "Domain, Use-Cases und Ports (Interfaces). Kein IO."
 
 [dependencies]
+async-trait.workspace = true
 chrono.workspace = true
 serde.workspace = true
 thiserror.workspace = true
@@ -19,5 +20,9 @@ test-support = []
 workspace = true
 
 [dev-dependencies]
-proptest.workspace = true
+futures.workspace = true
 serde_json.workspace = true
+
+# proptest (rusty-fork/wait-timeout) baut nicht für wasm32.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+proptest.workspace = true

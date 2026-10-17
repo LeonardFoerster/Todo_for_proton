@@ -260,6 +260,7 @@ fn assemble(head: u8, digits: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(target_arch = "wasm32"))]
     use proptest::prelude::*;
 
     use super::*;
@@ -397,6 +398,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     proptest! {
         /// Zufällige Einfügepositionen: Die Liste bleibt streng sortiert, alle Keys sind gültig.
         #[test]

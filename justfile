@@ -24,6 +24,8 @@ clippy:
 doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 
-# Kompiliert die Web-Composition-Root (inkl. todo-core) für wasm32
+# Kompiliert die Web-Composition-Root und todo-core inkl. Tests (?Send-Ports) für wasm32.
+# todo-core allein braucht dort `uuid/js` als Zufallsquelle (liefert sonst todo-wasm).
 wasm:
     cargo check -p todo-wasm --target wasm32-unknown-unknown
+    cargo check -p todo-core --target wasm32-unknown-unknown --all-targets --features uuid/js,test-support

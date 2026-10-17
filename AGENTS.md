@@ -115,7 +115,7 @@ Die Rust-Toolchain ist über `rust-toolchain.toml` fixiert.
 | `just fmt-check` | Formatierung nur prüfen |
 | `just clippy` | Clippy über alle Targets und Features, Warnungen = Fehler |
 | `just doc` | API-Doku bauen, Warnungen = Fehler |
-| `just wasm` | `todo-wasm` (inkl. Core) für `wasm32-unknown-unknown` prüfen |
+| `just wasm` | `todo-wasm` und `todo-core` (inkl. Tests) für `wasm32-unknown-unknown` prüfen |
 
 Pre-commit-Hook aktivieren (einmal pro Clone): `git config core.hooksPath .githooks`.
 

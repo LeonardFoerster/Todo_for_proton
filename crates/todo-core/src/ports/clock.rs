@@ -1,9 +1,12 @@
 //! Zeitquelle als Port, damit Domain und Use-Cases deterministisch testbar bleiben.
 
+use super::{MaybeSend, MaybeSync};
 use crate::domain::Timestamp;
 
 /// Liefert die aktuelle Zeit. Nativ und im Browser jeweils vom Adapter implementiert.
-pub trait Clock {
+///
+/// `MaybeSend + MaybeSync`, damit sie als `Arc<dyn Clock>` zwischen Threads geteilt werden kann.
+pub trait Clock: MaybeSend + MaybeSync {
     fn now(&self) -> Timestamp;
 }
 
