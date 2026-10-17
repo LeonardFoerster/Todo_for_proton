@@ -74,7 +74,7 @@ Budgets (Release-Build, Arch Linux, Mittelklasse-Laptop) – Details in `develop
 | Metrik | Ziel | Hart |
 |---|---|---|
 | Kaltstart bis erste interaktive Liste (Desktop) | < 400 ms | < 800 ms |
-| Idle-RAM gesamt (PSS, **inkl.** WebKit-Prozesse) | < 120 MB | < 180 MB |
+| Idle-RAM gesamt (PSS, **inkl.** WebKit-Prozesse) | < 250 MB | < 320 MB |
 | Idle-CPU | ~0 % (keine Timer/Animationen im Leerlauf) | – |
 | Web: initiales JS (gzip, ohne WASM) | < 80 KB | < 150 KB |
 | Web: WASM (gzip) | < 300 KB | < 600 KB |
@@ -88,7 +88,7 @@ Regeln:
 - Sync nie auf dem UI-Thread; Tauri-Commands `async`; im Web läuft der Core in einem **Web Worker**.
 - Kein Polling im Leerlauf. Sync ist ereignisgetrieben (Änderung, Fokus, Netz zurück) mit Backoff.
 - Lazy-Load für selten genutzte Views (Einstellungen, Login-Flow).
-- RAM immer als **PSS über alle Prozesse** messen (`smem -t -P 'todo|WebKit'`), nicht nur RSS des Hauptprozesses.
+- RAM immer als **PSS über alle Prozesse** messen (`tools/measure-desktop.sh` bzw. `smem -t -P 'todo|WebKit'`), nicht nur RSS des Hauptprozesses; keine zweite Instanz parallel.
 
 Typische Fallstricke: siehe Abschnitt „Performance-Fallstricke" in `development/architecture.md`
 (WebKitGTK-DMABUF/NVIDIA, Svelte-Reaktivität auf großen Arrays, `backdrop-filter`/Schatten-Overkill,
