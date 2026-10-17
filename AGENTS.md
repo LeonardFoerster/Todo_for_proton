@@ -26,6 +26,7 @@ Status: **Planungs-/Skeleton-Phase.** Es gibt noch keinen Feature-Code.
 | `crates/todo-wasm/` | wasm-bindgen-Bindings des Cores für die Web-App |
 | `crates/todo-cli/` | Dev-CLI (`cargo run -p todo-cli -- help`): Core + SQLite ohne UI, nur über `CoreApi`; `sync --remote DIR` gegen ein lokales Verzeichnis; nicht ausgeliefert |
 | `crates/todo-crypto/` | `Cipher`-Implementierung (XChaCha20-Poly1305) für Sync-Segmente/Snapshots |
+| `crates/todo-keystore-secret-service/` | `KeyStore` auf dem System-Schlüsselbund (Secret Service, nur Linux) |
 | `apps/desktop/` | Tauri-2-Shell für Linux (dünn: Commands → Core) |
 | `apps/web/` | Web-Einstieg (Vite + Svelte), Core läuft als WASM im Web Worker |
 | `packages/ui/` | Gemeinsame Svelte-5-Komponenten + Design-Tokens |

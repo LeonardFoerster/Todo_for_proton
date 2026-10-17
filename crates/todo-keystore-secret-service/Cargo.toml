@@ -1,0 +1,21 @@
+[package]
+name = "todo-keystore-secret-service"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+description = "KeyStore-Port auf dem System-Schlüsselbund (freedesktop Secret Service: GNOME Keyring, KWallet)."
+
+[dependencies]
+async-trait.workspace = true
+todo-core.workspace = true
+
+# Secret Service gibt es nur unter Linux/BSD-Desktops; auf anderen Zielen ist das Crate leer.
+# oo7: rein Rust (zbus), async auf tokio; im Flatpak-Sandbox automatisch über das Secret-Portal.
+[target.'cfg(target_os = "linux")'.dependencies]
+oo7 = { version = "0.6.0", default-features = false, features = ["tokio", "native_crypto"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+tokio = { version = "1.53.3", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

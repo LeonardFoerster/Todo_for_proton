@@ -11,6 +11,7 @@ publish = false
 async-trait = "0.1.92"
 todo-core = { path = "crates/todo-core" }
 todo-crypto = { path = "crates/todo-crypto" }
+todo-keystore-secret-service = { path = "crates/todo-keystore-secret-service" }
 todo-remote-fs = { path = "crates/todo-remote-fs" }
 todo-storage-sqlite = { path = "crates/todo-storage-sqlite" }
 todo-sync = { path = "crates/todo-sync", default-features = false }
