@@ -27,7 +27,7 @@ Status: **Planungs-/Skeleton-Phase.** Es gibt noch keinen Feature-Code.
 | `crates/todo-cli/` | Dev-CLI (`cargo run -p todo-cli -- help`): Core + SQLite ohne UI, nur über `CoreApi`; `sync --remote DIR` gegen ein lokales Verzeichnis, `login` + `sync --remote proton` gegen Proton Drive; nicht ausgeliefert |
 | `crates/todo-crypto/` | `Cipher`-Implementierung (XChaCha20-Poly1305) für Sync-Segmente/Snapshots |
 | `crates/todo-keystore-secret-service/` | `KeyStore` auf dem System-Schlüsselbund (Secret Service, nur Linux) |
-| `apps/desktop/` | Tauri-2-Shell für Linux (dünn: Commands → Core) |
+| `apps/desktop/` | Tauri-2-Shell für Linux (dünn: Commands → Core); Rust-Crate `todo-desktop` in `src-tauri/` |
 | `apps/web/` | Web-Einstieg (Vite + Svelte), Core läuft als WASM im Web Worker |
 | `packages/ui/` | Gemeinsame Svelte-5-Komponenten + Design-Tokens |
 | `packages/core-client/` | TS-Interface `CoreClient` + Implementierungen (Tauri-IPC / WASM-Worker) |
@@ -120,6 +120,8 @@ Die Rust-Toolchain ist über `rust-toolchain.toml` fixiert.
 | `just clippy` | Clippy über alle Targets und Features, Warnungen = Fehler |
 | `just doc` | API-Doku bauen, Warnungen = Fehler |
 | `just wasm` | `todo-wasm` und `todo-core` (inkl. Tests) für `wasm32-unknown-unknown` prüfen |
+| `just desktop-dev` | Desktop-App im Dev-Modus (Vite + Tauri-Fenster) |
+| `just desktop-build` | Release-Binary der Desktop-App (`target/release/todo-desktop`) |
 
 Pre-commit-Hook aktivieren (einmal pro Clone): `git config core.hooksPath .githooks`.
 

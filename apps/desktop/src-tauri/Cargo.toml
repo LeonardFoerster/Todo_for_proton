@@ -1,0 +1,19 @@
+[package]
+name = "todo-desktop"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+description = "Tauri-2-Shell für Linux: Composition Root (Core, SQLite, Sync, Proton) und dünne Commands."
+
+[lib]
+name = "todo_desktop"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.3", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.4", features = [] }
+
+[lints]
+workspace = true

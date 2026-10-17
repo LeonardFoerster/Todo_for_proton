@@ -32,3 +32,11 @@ doc:
 wasm:
     cargo check -p todo-wasm --target wasm32-unknown-unknown
     cargo check -p todo-core --target wasm32-unknown-unknown --all-targets --features uuid/js,test-support
+
+# Desktop-App im Dev-Modus (Vite-Dev-Server + Tauri-Fenster mit Hot-Reload)
+desktop-dev:
+    cd apps/desktop && pnpm install --frozen-lockfile && pnpm tauri dev
+
+# Desktop-App als Release-Binary bauen (ohne Pakete; Packaging kommt nach dem Prototyp)
+desktop-build:
+    cd apps/desktop && pnpm install --frozen-lockfile && pnpm tauri build --no-bundle

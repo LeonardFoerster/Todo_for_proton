@@ -1,6 +1,6 @@
 {
   "name": "tasks-monorepo",
   "private": true,
-  "packageManager": "pnpm@10",
+  "packageManager": "pnpm@11.8.0",
   "scripts": {}
 }

@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*"]
-# apps/desktop/src-tauri kommt hinzu, sobald die Tauri-Shell angelegt ist.
+members = ["crates/*", "apps/desktop/src-tauri"]
 
 [workspace.package]
 edition = "2021"

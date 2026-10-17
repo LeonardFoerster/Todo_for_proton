@@ -28,3 +28,6 @@ apps/desktop/src-tauri/target/
 
 # Dev-CLI-Datenbank (todo-cli)
 todo-dev.sqlite3*
+
+# Tauri-generierte Schemas
+apps/desktop/src-tauri/gen/
