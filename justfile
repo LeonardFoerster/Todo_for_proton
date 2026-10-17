@@ -1,7 +1,7 @@
 # Entwickler-Kommandos. Übersicht: `just --list`
 
 # Standard-Prüfung vor jedem Commit: Format, Lints, Tests
-check: fmt-check clippy test
+check: fmt-check clippy test doc
 
 # Alle Rust-Tests im Workspace (`--all-targets` enthält keine Doctests, daher zweiter Lauf)
 test:
@@ -19,3 +19,7 @@ fmt-check:
 # Clippy mit Warnungen als Fehler
 clippy:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+# API-Doku bauen, Warnungen (z. B. kaputte Links) = Fehler
+doc:
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features

@@ -81,11 +81,11 @@ macro_rules! define_id {
 }
 
 define_id!(
-    /// ID einer [`Task`](crate::domain).
+    /// ID einer [`Task`](crate::domain::Task).
     TaskId
 );
 define_id!(
-    /// ID einer Liste (`TaskList`).
+    /// ID einer Liste ([`TaskList`](crate::domain::TaskList)).
     TaskListId
 );
 define_id!(
