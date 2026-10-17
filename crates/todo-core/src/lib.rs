@@ -7,6 +7,8 @@ pub mod app;
 pub mod domain;
 pub mod error;
 pub mod ports;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 
 pub use error::{CoreError, CoreResult};
 
