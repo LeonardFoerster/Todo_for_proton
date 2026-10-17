@@ -4,6 +4,8 @@
 //! Befehle: `todo-cli help`.
 
 mod args;
+#[cfg(target_os = "linux")]
+mod proton;
 
 use std::{
     collections::BTreeMap,
@@ -11,11 +13,10 @@ use std::{
     path::PathBuf,
     process::ExitCode,
     sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use args::{Cli, Command, UsageError, USAGE};
-use futures::executor::block_on;
 use todo_core::{
     api::{
         dto::{
@@ -25,7 +26,7 @@ use todo_core::{
         CoreApi,
     },
     domain::{NaiveDate, Timestamp},
-    ports::{Clock, KeyStore, SecretBytes},
+    ports::{Clock, KeyStore, RemoteStore, SecretBytes},
     CoreError, CoreResult,
 };
 use todo_crypto::XChaCha20Poly1305Cipher;
@@ -135,23 +136,74 @@ fn run(cli: Cli) -> Result<()> {
     let remote = cli
         .remote
         .or_else(|| env::var_os("TODO_REMOTE").map(PathBuf::from));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| Error::Input(format!("tokio runtime: {e}")))?;
+    match cli.command {
+        Command::Login => return runtime.block_on(login()),
+        Command::Logout => return runtime.block_on(logout()),
+        _ => {}
+    }
     let repo = SqliteTaskRepository::open(&path)?;
     let api = CoreApi::new(Arc::new(repo), Arc::new(SystemClock));
-    block_on(async {
+    runtime.block_on(async {
         // Wie beim App-Start: Die Inbox existiert immer.
         api.ensure_inbox().await?;
         execute(&api, cli.command, remote).await
     })
 }
 
-/// Ein Sync-Durchlauf gegen ein lokales Verzeichnis (`FsRemoteStore`).
+#[cfg(target_os = "linux")]
+async fn login() -> Result<()> {
+    proton::login().await
+}
+
+#[cfg(target_os = "linux")]
+async fn logout() -> Result<()> {
+    proton::logout().await
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn login() -> Result<()> {
+    Err(Error::Input(
+        "Proton-Login gibt es in der Dev-CLI nur unter Linux".into(),
+    ))
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn logout() -> Result<()> {
+    login().await
+}
+
+/// Backend + KeyStore für `sync`: `proton` oder ein lokales Verzeichnis.
+async fn backend(remote: PathBuf) -> Result<(Arc<dyn RemoteStore>, Arc<dyn KeyStore>)> {
+    if remote.as_os_str() == "proton" {
+        #[cfg(target_os = "linux")]
+        {
+            let proton = proton::Proton::connect().await?;
+            return Ok((proton.remote().await?, Arc::clone(&proton.key_store)));
+        }
+        #[cfg(not(target_os = "linux"))]
+        return Err(Error::Input(
+            "Proton-Sync gibt es in der Dev-CLI nur unter Linux".into(),
+        ));
+    }
+    Ok((
+        Arc::new(FsRemoteStore::new(remote)?),
+        Arc::new(ProcessKeyStore::default()),
+    ))
+}
+
+/// Ein Sync-Durchlauf gegen das gewählte Backend.
 async fn sync(api: &CoreApi, remote: PathBuf) -> Result<()> {
     let device_name = env::var("HOSTNAME").unwrap_or_else(|_| "todo-cli".into());
+    let (remote, key_store) = backend(remote).await?;
     let engine = SyncEngine::new(
         api.repository(),
-        Arc::new(FsRemoteStore::new(remote)?),
+        remote,
         Arc::new(XChaCha20Poly1305Cipher::new()),
-        Arc::new(ProcessKeyStore::default()),
+        key_store,
         Arc::new(SystemClock),
         SyncConfig {
             device_name,
@@ -159,8 +211,13 @@ async fn sync(api: &CoreApi, remote: PathBuf) -> Result<()> {
             ..SyncConfig::default()
         },
     );
+    let started = Instant::now();
     let report = engine.sync_once().await?;
-    println!("{}", report_text(&report));
+    println!(
+        "{} ({} ms)",
+        report_text(&report),
+        started.elapsed().as_millis()
+    );
     for warning in &report.warnings {
         println!("Warnung: {warning}");
     }
@@ -351,6 +408,8 @@ async fn execute(api: &CoreApi, command: Command, remote: Option<PathBuf>) -> Re
             })?;
             sync(api, remote).await?;
         }
+        // Laufen ohne Datenbank (siehe `run`).
+        Command::Login | Command::Logout => unreachable!("handled before opening the database"),
     }
     Ok(())
 }

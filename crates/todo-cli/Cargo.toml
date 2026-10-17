@@ -13,8 +13,13 @@ todo-sync = { workspace = true, features = ["zstd-native"] }
 todo-remote-fs.workspace = true
 todo-crypto.workspace = true
 async-trait.workspace = true
-# `block_on` genügt: Die CLI führt genau einen Befehl aus.
-futures.workspace = true
+# `sync --remote proton`, `login`, `logout`: Proton-Adapter + System-Schlüsselbund. Beide brauchen
+# tokio (reqwest/zbus); die CLI läuft deshalb auf einer Single-Thread-Runtime.
+proton-adapter.workspace = true
+tokio = { version = "1.53.3", default-features = false, features = ["rt", "time"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+todo-keystore-secret-service.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -24,7 +24,7 @@ Status: **Planungs-/Skeleton-Phase.** Es gibt noch keinen Feature-Code.
 | `crates/todo-remote-fs/` | `RemoteStore` auf lokalem Verzeichnis (Entwicklung, Tests, Dev-CLI) |
 | `crates/proton-adapter/` | **Einziger** Ort für Proton-Code (Auth, Drive) – implementiert Ports |
 | `crates/todo-wasm/` | wasm-bindgen-Bindings des Cores für die Web-App |
-| `crates/todo-cli/` | Dev-CLI (`cargo run -p todo-cli -- help`): Core + SQLite ohne UI, nur über `CoreApi`; `sync --remote DIR` gegen ein lokales Verzeichnis; nicht ausgeliefert |
+| `crates/todo-cli/` | Dev-CLI (`cargo run -p todo-cli -- help`): Core + SQLite ohne UI, nur über `CoreApi`; `sync --remote DIR` gegen ein lokales Verzeichnis, `login` + `sync --remote proton` gegen Proton Drive; nicht ausgeliefert |
 | `crates/todo-crypto/` | `Cipher`-Implementierung (XChaCha20-Poly1305) für Sync-Segmente/Snapshots |
 | `crates/todo-keystore-secret-service/` | `KeyStore` auf dem System-Schlüsselbund (Secret Service, nur Linux) |
 | `apps/desktop/` | Tauri-2-Shell für Linux (dünn: Commands → Core) |

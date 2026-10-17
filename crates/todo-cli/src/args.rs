@@ -5,9 +5,11 @@ use std::{fmt, path::PathBuf};
 pub const USAGE: &str = "\
 todo-cli – Core + SQLite ohne UI (Entwicklerwerkzeug)
 
-Aufruf: todo-cli [--db DATEI] [--remote ORDNER] BEFEHL …
+Aufruf: todo-cli [--db DATEI] [--remote ORDNER|proton] BEFEHL …
   DB-Datei: --db, sonst $TODO_DB, sonst ./todo-dev.sqlite3
-  Sync-Ordner (nur für `sync`): --remote, sonst $TODO_REMOTE
+  Sync-Backend (nur für `sync`): --remote, sonst $TODO_REMOTE – ein lokales Verzeichnis
+  oder `proton` (Proton Drive des mit `login` angemeldeten Kontos; Ordner namens
+  „proton“ als ./proton angeben)
 
 Befehle:
   lists                          Listen anzeigen
@@ -22,7 +24,10 @@ Befehle:
   mv ID [-l LISTE] [--before ID | --after ID]
                                  verschieben (ohne Position: ans Ende)
   rm ID                          Task löschen
-  sync                           mit dem Sync-Ordner abgleichen (lokales Verzeichnis als Backend)
+  sync                           mit dem Sync-Backend abgleichen
+  login                          bei Proton anmelden (im Browser, inkl. 2FA); Sitzung im
+                                 System-Schlüsselbund
+  logout                         abmelden, Sitzung und Sync-Schlüssel bleiben nicht zurück
 
 ID: vollständige ID oder ein eindeutiges Ende davon (wie von `ls` gezeigt).
 LISTE: Name (Groß-/Kleinschreibung egal) oder ID.";
@@ -78,6 +83,8 @@ pub enum Command {
         id: String,
     },
     Sync,
+    Login,
+    Logout,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,6 +179,14 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Cli, UsageError> 
             no_rest(&args)?;
             Command::Sync
         }
+        "login" => {
+            no_rest(&args)?;
+            Command::Login
+        }
+        "logout" => {
+            no_rest(&args)?;
+            Command::Logout
+        }
         other => return Err(UsageError(format!("unbekannter Befehl {other:?}"))),
     };
     Ok(Cli {
@@ -252,6 +267,15 @@ mod tests {
         assert_eq!(cli.command, Command::Sync);
         assert_eq!(cli.remote, Some(PathBuf::from("./remote")));
         assert!(parse_str("sync jetzt").is_err());
+    }
+
+    #[test]
+    fn login_logout_and_proton_remote() {
+        assert_eq!(parse_str("login").unwrap().command, Command::Login);
+        assert_eq!(parse_str("logout").unwrap().command, Command::Logout);
+        assert!(parse_str("login jetzt").is_err());
+        let cli = parse_str("sync --remote proton").unwrap();
+        assert_eq!(cli.remote, Some(PathBuf::from("proton")));
     }
 
     #[test]

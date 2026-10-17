@@ -90,6 +90,14 @@ pub struct SyncConfig {
     pub inactive_device_ms: i64,
 }
 
+impl SyncConfig {
+    /// Name des Sync-Schlüssels im `KeyStore` (beim Abmelden zu löschen).
+    #[must_use]
+    pub fn key_name(&self) -> String {
+        format!("sync-key:{}", self.app_folder)
+    }
+}
+
 impl Default for SyncConfig {
     fn default() -> Self {
         Self {
@@ -245,7 +253,7 @@ impl SyncEngine {
     }
 
     fn key_name(&self) -> String {
-        format!("sync-key:{}", self.config.app_folder)
+        self.config.key_name()
     }
 
     fn session(&self) -> CoreResult<Session> {

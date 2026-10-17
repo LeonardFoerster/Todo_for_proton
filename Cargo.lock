@@ -3766,13 +3766,15 @@ name = "todo-cli"
 version = "0.0.0"
 dependencies = [
  "async-trait",
- "futures",
+ "proton-adapter",
  "tempfile",
  "todo-core",
  "todo-crypto",
+ "todo-keystore-secret-service",
  "todo-remote-fs",
  "todo-storage-sqlite",
  "todo-sync",
+ "tokio",
 ]
 
 [[package]]
