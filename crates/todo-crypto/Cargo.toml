@@ -1,0 +1,17 @@
+[package]
+name = "todo-crypto"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+description = "Cipher-Port mit XChaCha20-Poly1305 (RustCrypto) für Sync-Segmente und Snapshots."
+
+[dependencies]
+todo-core.workspace = true
+# Ohne Default-Features: keine eigene getrandom-Version, Zufall kommt von `getrandom` unten.
+chacha20poly1305 = { version = "0.10.1", default-features = false, features = ["alloc"] }
+# Dieselbe Version wie `uuid` (eine Zufallsquelle). Im Browser aktiviert die Composition Root
+# `todo-wasm` das Feature `wasm_js` (über `uuid/js`).
+getrandom = "0.4.3"
+
+[lints]
+workspace = true

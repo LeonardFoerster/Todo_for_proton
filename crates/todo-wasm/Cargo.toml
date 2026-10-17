@@ -7,7 +7,9 @@ description = "wasm-bindgen Composition Root für die Web-App."
 
 [dependencies]
 todo-core.workspace = true
-todo-sync.workspace = true
+todo-crypto.workspace = true
+# Kein C-zstd im Browser: reines Rust, gleiches Format.
+todo-sync = { workspace = true, default-features = false, features = ["pure-rust-zstd"] }
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -19,3 +21,5 @@ workspace = true
 # Composition Root, damit todo-core frei von wasm-bindgen bleibt.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 uuid = { workspace = true, features = ["js"] }
+# Dasselbe für Schlüssel und Nonces der Cipher (`todo-crypto`).
+getrandom = { version = "0.4.3", features = ["wasm_js"] }

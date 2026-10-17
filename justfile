@@ -8,6 +8,8 @@ check: fmt-check clippy test doc wasm
 test:
     cargo test --workspace --all-targets --all-features
     cargo test --workspace --doc --all-features
+    # Kompression ohne C-zstd (Pfad der Web-App) separat, da --all-features beide aktiviert.
+    cargo test -p todo-sync --lib --no-default-features --features pure-rust-zstd
 
 # Code formatieren
 fmt:
