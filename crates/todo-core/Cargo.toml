@@ -10,6 +10,8 @@ async-trait.workspace = true
 # Nur für `testing` (Feature test-support): synchrone Ausführung der Contract-Tests.
 futures = { workspace = true, optional = true }
 chrono.workspace = true
+# Kanonisches Binärformat der Sync-Ops (Outbox, Segmente, Snapshots), ADR-016.
+postcard.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 uuid.workspace = true

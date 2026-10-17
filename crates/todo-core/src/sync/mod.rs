@@ -5,5 +5,7 @@
 //! (ADR-015). Die Sync-Engine (Segmente, Push/Pull, Scheduler) liegt in `todo-sync`.
 
 mod hlc;
+mod op;
 
 pub use hlc::{ClockSkew, Hlc, HlcState, MAX_CLOCK_DRIFT_MS};
+pub use op::{decode_ops, encode_ops, FieldMap, FieldName, FieldValue, Op, OpId, OpKind};

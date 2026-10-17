@@ -27,6 +27,29 @@ impl fmt::Display for ParseIdError {
 
 impl std::error::Error for ParseIdError {}
 
+/// Liest eine UUID aus 16 Bytes (Binärformate).
+struct UuidBytes;
+
+impl<'de> de::Visitor<'de> for UuidBytes {
+    type Value = Uuid;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("16 id bytes")
+    }
+
+    fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<Uuid, E> {
+        Uuid::from_slice(v).map_err(E::custom)
+    }
+
+    fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Uuid, A::Error> {
+        let mut bytes = Vec::with_capacity(16);
+        while let Some(byte) = seq.next_element::<u8>()? {
+            bytes.push(byte);
+        }
+        self.visit_bytes(&bytes)
+    }
+}
+
 macro_rules! define_id {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
@@ -77,16 +100,25 @@ macro_rules! define_id {
             }
         }
 
+        /// Menschenlesbare Formate (JSON) bekommen den String, Binärformate (Sync) 16 Bytes.
         impl Serialize for $name {
             fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                serializer.collect_str(self)
+                if serializer.is_human_readable() {
+                    serializer.collect_str(self)
+                } else {
+                    serializer.serialize_bytes(self.0.as_bytes())
+                }
             }
         }
 
         impl<'de> Deserialize<'de> for $name {
             fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-                let s = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
-                Self::parse(&s).map_err(de::Error::custom)
+                if deserializer.is_human_readable() {
+                    let s = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
+                    Self::parse(&s).map_err(de::Error::custom)
+                } else {
+                    deserializer.deserialize_bytes(UuidBytes).map(Self)
+                }
             }
         }
     };

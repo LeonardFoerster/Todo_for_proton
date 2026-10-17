@@ -4,6 +4,8 @@
 //! dazu; bis dahin schreibt `commit` nur den Zustand. Volltextsuche (`search`) ist nicht Teil des
 //! Prototyps und fehlt deshalb bewusst.
 
+use serde::{Deserialize, Serialize};
+
 use super::{MaybeSend, MaybeSync};
 use crate::{
     domain::{
@@ -16,8 +18,8 @@ use crate::{
 /// Größte erlaubte Seitengröße für [`PageRequest::limit`].
 pub const PAGE_LIMIT_MAX: u32 = 500;
 
-/// Verweis auf eine gespeicherte Entity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+/// Verweis auf eine gespeicherte Entity. Teil des Op-Formats: Varianten nur anhängen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum EntityRef {
     Task(TaskId),
     TaskList(TaskListId),
