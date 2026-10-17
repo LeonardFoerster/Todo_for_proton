@@ -130,6 +130,8 @@ pub struct Scheduler {
     poll_next_ms: u64,
     rate_limited_until: Option<Timestamp>,
     newer_format: bool,
+    /// Backend verlangt neuen Login: pausiert bis `SetEnabled(true)` (nach dem Login).
+    auth_required: bool,
     last_success: Option<Timestamp>,
     pending_ops: u64,
     status: SyncStatus,
@@ -154,6 +156,7 @@ impl Scheduler {
             failures: 0,
             rate_limited_until: None,
             newer_format: false,
+            auth_required: false,
             last_success: None,
             pending_ops: 0,
             status: SyncStatus::Disabled,
@@ -172,6 +175,7 @@ impl Scheduler {
         match event {
             SchedulerEvent::SetEnabled(on) => {
                 self.enabled = on;
+                self.auth_required = false;
                 self.deadline = None;
                 self.failures = 0;
                 sync_now = on;
@@ -238,6 +242,13 @@ impl Scheduler {
             }
             // Ein anderer Lauf ist noch aktiv: nichts ändern.
             Err(CoreError::Conflict(_)) => false,
+            // Ohne Login hilft kein Wiederholen: pausieren, bis die Shell nach dem Login
+            // `SetEnabled(true)` meldet.
+            Err(CoreError::AuthRequired | CoreError::Auth(_)) => {
+                self.auth_required = true;
+                self.deadline = None;
+                false
+            }
             Err(CoreError::RateLimited { retry_after_s }) => {
                 self.failures += 1;
                 let wait = (u64::from(retry_after_s) * 1000).max(self.backoff_ms());
@@ -265,7 +276,12 @@ impl Scheduler {
     /// Setzt die gewünschte Aktion unter den aktuellen Bedingungen um.
     fn decide(&mut self, mut sync_now: bool, now: Timestamp) -> Actions {
         let blocked_until = self.rate_limited_until.filter(|until| now < *until);
-        if !self.enabled || !self.online || self.newer_format || blocked_until.is_some() {
+        if !self.enabled
+            || !self.online
+            || self.newer_format
+            || self.auth_required
+            || blocked_until.is_some()
+        {
             sync_now = false;
         }
         if self.running {
@@ -285,7 +301,13 @@ impl Scheduler {
         }
         let timer_in_ms = self
             .deadline
-            .filter(|_| self.enabled && self.online && self.visible && !self.newer_format)
+            .filter(|_| {
+                self.enabled
+                    && self.online
+                    && self.visible
+                    && !self.newer_format
+                    && !self.auth_required
+            })
             .map(|due| ms_until(now, due));
         Actions {
             sync_now,
@@ -306,6 +328,8 @@ impl Scheduler {
     fn idle_status(&self, rate_limited: bool) -> SyncStatus {
         if !self.enabled {
             SyncStatus::Disabled
+        } else if self.auth_required {
+            SyncStatus::Paused(SyncPauseReason::AuthRequired)
         } else if self.newer_format {
             SyncStatus::Paused(SyncPauseReason::NewerFormat)
         } else if rate_limited {
@@ -551,6 +575,38 @@ mod tests {
             assert!(!s.handle(event, ts(60_000)).sync_now, "gesperrt");
         }
         assert!(s.handle(SchedulerEvent::TimerFired, ts(120_000)).sync_now);
+    }
+
+    #[test]
+    fn auth_errors_pause_until_enabled_again() {
+        for err in [
+            CoreError::AuthRequired,
+            CoreError::Auth(todo_core::ports::AuthError::SessionRevoked),
+        ] {
+            let mut s = scheduler();
+            s.handle(SchedulerEvent::SetEnabled(true), ts(0));
+            let paused = s.handle(failed(err, 3), ts(0));
+            assert_eq!(
+                paused.status,
+                SyncStatus::Paused(SyncPauseReason::AuthRequired)
+            );
+            assert_eq!(paused.timer_in_ms, None, "kein Retry ohne Login");
+            for event in [
+                SchedulerEvent::ManualSync,
+                SchedulerEvent::AppFocused,
+                SchedulerEvent::NetworkUp,
+                SchedulerEvent::LocalChange { pending_ops: 4 },
+            ] {
+                let actions = s.handle(event, ts(10_000));
+                assert!(!actions.sync_now);
+                assert_eq!(actions.timer_in_ms, None);
+            }
+            // Nach dem Login meldet die Shell den Sync wieder an.
+            assert!(
+                s.handle(SchedulerEvent::SetEnabled(true), ts(20_000))
+                    .sync_now
+            );
+        }
     }
 
     #[test]

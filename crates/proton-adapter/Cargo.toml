@@ -6,18 +6,24 @@ publish.workspace = true
 description = "Proton Auth + Drive hinter den Ports AuthProvider/RemoteStore. Einziger Ort für Proton-Code."
 
 [dependencies]
+aes-gcm = { version = "0.10.3", default-features = false, features = ["aes", "alloc"] }
 async-trait.workspace = true
+base64 = "0.23.1"
+getrandom = "0.4.3"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "json", "multipart"] }
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 todo-core.workspace = true
+tokio = { version = "1.53.3", default-features = false, features = ["sync"] }
 tracing = "0.1.44"
 
 [lints]
 workspace = true
 
 [dev-dependencies]
-tokio = { version = "1.53.3", features = ["macros", "rt-multi-thread"] }
+futures.workspace = true
+todo-core = { workspace = true, features = ["test-support"] }
+tokio = { version = "1.53.3", features = ["macros", "rt-multi-thread", "time"] }
 tracing-subscriber = "0.3.23"
 wiremock = "0.6.5"

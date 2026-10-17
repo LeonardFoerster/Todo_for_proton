@@ -21,11 +21,13 @@
 //! Bewusst kein eigenes `#[port]`-Makro: Ein `macro_rules!`-Wrapper um den ganzen Trait würde
 //! rustfmt am Formatieren des Inhalts hindern.
 
+mod auth;
 mod cipher;
 mod clock;
 mod remote_store;
 mod repository;
 
+pub use auth::{AuthError, AuthFlowId, AuthProvider, AuthStep, SessionInfo};
 pub use cipher::{Cipher, KeyStore, SecretBytes};
 pub use clock::Clock;
 #[cfg(any(test, feature = "test-support"))]

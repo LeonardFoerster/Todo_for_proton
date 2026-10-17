@@ -1,6 +1,6 @@
 //! Gemeinsamer Fehlertyp des Cores (`CoreError`). Siehe `development/interfaces.md` §0.
 
-use crate::domain::ParseIdError;
+use crate::{domain::ParseIdError, ports::AuthError};
 
 /// Ergebnis-Typ aller öffentlichen Core-Funktionen.
 pub type CoreResult<T> = Result<T, CoreError>;
@@ -25,6 +25,11 @@ pub enum CoreError {
     RemoteRejected(String),
     #[error("conflict: {0}")]
     Conflict(String),
+    /// Nicht (mehr) angemeldet – erst nach erneutem Login weiter.
+    #[error("auth required")]
+    AuthRequired,
+    #[error("auth: {0}")]
+    Auth(AuthError),
     #[error("internal: {0}")]
     Internal(String),
 }
@@ -60,6 +65,8 @@ mod tests {
         assert!(CoreError::RateLimited { retry_after_s: 3 }.is_retryable());
         assert!(!CoreError::RemoteRejected("x".into()).is_retryable());
         assert!(!CoreError::Conflict("x".into()).is_retryable());
+        assert!(!CoreError::AuthRequired.is_retryable());
+        assert!(!CoreError::Auth(AuthError::SessionRevoked).is_retryable());
     }
 
     #[test]

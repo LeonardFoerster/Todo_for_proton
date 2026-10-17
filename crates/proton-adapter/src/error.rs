@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use todo_core::CoreError;
+use todo_core::{ports::AuthError, CoreError};
 
 /// Proton-Codes, die der Adapter unterscheidet (Quelle: P2-Proben, `proton-research.md` §5/§13).
 pub(crate) mod code {
@@ -105,6 +105,18 @@ impl From<ApiError> for CoreError {
                 retry_after_s: retry_after_s.unwrap_or(DEFAULT_RETRY_AFTER_S),
             },
             (408 | 500..=599, _) => CoreError::Network(text),
+            // Die Session-Schicht erneuert vorher einmal die Tokens; kommt 401 trotzdem an,
+            // hilft nur ein neuer Login.
+            (401, _) => CoreError::AuthRequired,
+            (
+                _,
+                Some(
+                    code::APP_VERSION_MISSING
+                    | code::APP_VERSION_BAD
+                    | code::INVALID_APP_VERSION_FORMAT,
+                ),
+            )
+            | (400, Some(code::OUTDATED_APP)) => CoreError::Auth(AuthError::ClientRejected(text)),
             (_, Some(code::ALREADY_EXISTS)) => CoreError::Conflict(text),
             (404, _) | (_, Some(code::NOT_EXISTS)) => CoreError::NotFound(text),
             _ => CoreError::RemoteRejected(text),
@@ -181,12 +193,23 @@ mod tests {
             CoreError::from(status(404, None)),
             CoreError::NotFound(_)
         ));
+        assert_eq!(
+            CoreError::from(status(401, Some(401))),
+            CoreError::AuthRequired
+        );
         for (s, c) in [
             (400, code::APP_VERSION_MISSING),
+            (400, code::APP_VERSION_BAD),
             (400, code::INVALID_APP_VERSION_FORMAT),
             (400, code::OUTDATED_APP),
-            (422, 2001),
         ] {
+            let err = CoreError::from(status(s, Some(c)));
+            assert!(
+                matches!(err, CoreError::Auth(AuthError::ClientRejected(_))),
+                "{s}/{c}: {err:?}"
+            );
+        }
+        for (s, c) in [(422, 2001), (422, code::OUTDATED_APP)] {
             let err = CoreError::from(status(s, Some(c)));
             assert!(matches!(err, CoreError::RemoteRejected(_)), "{s}/{c}");
             assert!(!err.is_retryable());

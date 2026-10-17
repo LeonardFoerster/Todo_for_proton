@@ -53,7 +53,7 @@ pub(crate) struct Auth<'a> {
 }
 
 /// Ein API-Aufruf. `route` ist die Vorlage fürs Log (z. B. `/drive/shares/{share}/files`).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Request<'a> {
     method: Method,
     route: &'static str,
@@ -82,6 +82,11 @@ impl<'a> Request<'a> {
 
     pub(crate) fn post(route: &'static str, path: impl Into<String>) -> Self {
         Self::new(Method::POST, route, path)
+    }
+
+    /// Methode und Routen-Vorlage (für Fehlermeldungen; ohne Geheimnisse).
+    pub(crate) fn describe(&self) -> String {
+        format!("{} {}", self.method, self.route)
     }
 
     #[must_use]
@@ -128,10 +133,6 @@ impl ApiClient {
             .build()
             .map_err(|e| CoreError::Internal(format!("http client: {}", e.without_url())))?;
         Ok(Self { http, config })
-    }
-
-    pub(crate) fn config(&self) -> &ApiConfig {
-        &self.config
     }
 
     /// Führt einen Aufruf aus. Erfolg = 2xx und Proton-Code 1000/1001 (oder ohne Code).
