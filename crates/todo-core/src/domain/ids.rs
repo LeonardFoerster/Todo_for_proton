@@ -1,0 +1,153 @@
+//! Typsichere IDs als Newtypes über UUIDv7.
+//!
+//! An allen Grenzen (IPC, Speicher, Sync) werden IDs als String transportiert.
+//! Die Typen sind untereinander nicht austauschbar:
+//!
+//! ```compile_fail
+//! use todo_core::domain::{TaskId, TaskListId};
+//! let list_id: TaskListId = TaskId::new();
+//! ```
+
+use std::{fmt, str::FromStr};
+
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use uuid::Uuid;
+
+/// Ein String ließ sich nicht als ID lesen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseIdError {
+    input: String,
+}
+
+impl fmt::Display for ParseIdError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid id: {:?}", self.input)
+    }
+}
+
+impl std::error::Error for ParseIdError {}
+
+macro_rules! define_id {
+    ($(#[$meta:meta])* $name:ident) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        pub struct $name(Uuid);
+
+        impl $name {
+            /// Erzeugt eine neue, zeitlich sortierbare ID (UUIDv7).
+            // Kein `Default`: eine „Standard-ID" wäre irreführend, jede ID ist neu.
+            #[allow(clippy::new_without_default)]
+            #[must_use]
+            pub fn new() -> Self {
+                Self(Uuid::now_v7())
+            }
+
+            /// Liest eine ID aus ihrer String-Darstellung.
+            ///
+            /// # Errors
+            /// [`ParseIdError`], wenn `s` keine gültige UUID ist.
+            pub fn parse(s: &str) -> Result<Self, ParseIdError> {
+                Uuid::try_parse(s).map(Self).map_err(|_| ParseIdError { input: s.to_owned() })
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.hyphenated().fmt(f)
+            }
+        }
+
+        impl FromStr for $name {
+            type Err = ParseIdError;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                Self::parse(s)
+            }
+        }
+
+        impl Serialize for $name {
+            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.collect_str(self)
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                let s = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
+                Self::parse(&s).map_err(de::Error::custom)
+            }
+        }
+    };
+}
+
+define_id!(
+    /// ID einer [`Task`](crate::domain).
+    TaskId
+);
+define_id!(
+    /// ID einer Liste (`TaskList`).
+    TaskListId
+);
+define_id!(
+    /// ID eines `Tag`s.
+    TagId
+);
+define_id!(
+    /// ID eines Geräts (eine Installation der App).
+    DeviceId
+);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn string_roundtrip() {
+        let id = TaskId::new();
+        let s = id.to_string();
+        assert_eq!(TaskId::parse(&s).unwrap(), id);
+        assert_eq!(s.parse::<TaskId>().unwrap(), id);
+    }
+
+    #[test]
+    fn display_is_lowercase_hyphenated() {
+        let id = TaskListId::parse("0192F0C4-7A3B-7C2D-8E4F-0123456789AB").unwrap();
+        assert_eq!(id.to_string(), "0192f0c4-7a3b-7c2d-8e4f-0123456789ab");
+    }
+
+    #[test]
+    fn new_ids_are_distinct() {
+        assert_ne!(TagId::new(), TagId::new());
+    }
+
+    #[test]
+    fn new_ids_are_time_sortable() {
+        let ids: Vec<DeviceId> = (0..1_000).map(|_| DeviceId::new()).collect();
+        assert!(ids.windows(2).all(|w| w[0] < w[1]));
+        let mut strings: Vec<String> = ids.iter().map(ToString::to_string).collect();
+        let created = strings.clone();
+        strings.sort();
+        assert_eq!(
+            strings, created,
+            "String-Sortierung entspricht Erzeugungsreihenfolge"
+        );
+    }
+
+    #[test]
+    fn invalid_string_is_rejected() {
+        for bad in ["", "not-a-uuid", "0192f0c4-7a3b-7c2d-8e4f-0123456789a"] {
+            let err = TaskId::parse(bad).unwrap_err();
+            assert!(err.to_string().contains("invalid id"));
+        }
+    }
+
+    #[test]
+    fn serializes_as_plain_string() {
+        let id = TaskId::new();
+        let json = serde_json::to_string(&id).unwrap();
+        assert_eq!(json, format!("\"{id}\""));
+        assert_eq!(serde_json::from_str::<TaskId>(&json).unwrap(), id);
+        assert!(serde_json::from_str::<TaskId>("\"nope\"").is_err());
+        assert!(serde_json::from_str::<TaskId>("42").is_err());
+    }
+}

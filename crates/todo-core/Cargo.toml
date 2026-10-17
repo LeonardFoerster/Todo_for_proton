@@ -6,6 +6,11 @@ publish.workspace = true
 description = "Domain, Use-Cases und Ports (Interfaces). Kein IO."
 
 [dependencies]
+serde.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

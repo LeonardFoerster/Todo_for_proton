@@ -10,6 +10,9 @@ publish = false
 [workspace.dependencies]
 todo-core = { path = "crates/todo-core" }
 todo-sync = { path = "crates/todo-sync" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+uuid = { version = "1.28.0", features = ["v7"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
