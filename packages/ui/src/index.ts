@@ -8,3 +8,4 @@ export { default as Toaster } from "./components/Toaster.svelte";
 export { toasts, type ToastOptions } from "./components/toasts.svelte";
 export { default as VirtualList } from "./components/VirtualList.svelte";
 export * from "./theme/theme";
+export { default as App } from "./App.svelte";

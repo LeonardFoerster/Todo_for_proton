@@ -1,3 +1,4 @@
+// @vitest-environment node
 // Kontrast der Token-Paare in beiden Themes (WCAG 2.x): Text ≥ 4.5:1, Bedienelemente ≥ 3:1.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
