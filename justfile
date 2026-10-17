@@ -1,7 +1,7 @@
 # Entwickler-Kommandos. Übersicht: `just --list`
 
 # Standard-Prüfung vor jedem Commit: Format, Lints, Tests
-check: fmt-check clippy test doc wasm
+check: fmt-check clippy test doc wasm ts
 
 # Alle Rust-Tests im Workspace (`--all-targets` enthält keine Doctests, daher zweiter Lauf).
 # `--all-features`, damit Tests mit `required-features = ["test-support"]` nicht still entfallen.
@@ -44,3 +44,10 @@ desktop-build:
 # TS-Typen der DTOs neu erzeugen (packages/core-client/src/generated; läuft auch mit `just test`)
 types:
     cargo test -p todo-core -p todo-desktop --lib export_bindings
+
+# TS/Svelte: ESLint, Typecheck (tsc/svelte-check) und Vitest über alle pnpm-Pakete
+ts:
+    pnpm install --frozen-lockfile --silent
+    pnpm lint
+    pnpm check
+    pnpm test

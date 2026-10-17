@@ -113,7 +113,7 @@ Die Rust-Toolchain ist über `rust-toolchain.toml` fixiert.
 
 | Kommando | Wirkung |
 |---|---|
-| `just check` | **Standard-Prüfung vor jedem Commit:** `fmt-check` + `clippy` + `test` + `doc` + `wasm` |
+| `just check` | **Standard-Prüfung vor jedem Commit:** `fmt-check` + `clippy` + `test` + `doc` + `wasm` + `ts` |
 | `just test` | Alle Rust-Tests im Workspace (inkl. Doctests) |
 | `just fmt` | Code formatieren |
 | `just fmt-check` | Formatierung nur prüfen |
@@ -122,6 +122,7 @@ Die Rust-Toolchain ist über `rust-toolchain.toml` fixiert.
 | `just wasm` | `todo-wasm` und `todo-core` (inkl. Tests) für `wasm32-unknown-unknown` prüfen |
 | `just desktop-dev` | Desktop-App im Dev-Modus (Vite + Tauri-Fenster) |
 | `just desktop-build` | Release-Binary der Desktop-App (`target/release/todo-desktop`) |
+| `just ts` | TS/Svelte: ESLint, Typecheck, Vitest (alle pnpm-Pakete) |
 | `just types` | TS-Typen der DTOs neu erzeugen (`packages/core-client/src/generated/`, läuft auch in `just test`) |
 
 Pre-commit-Hook aktivieren (einmal pro Clone): `git config core.hooksPath .githooks`.
