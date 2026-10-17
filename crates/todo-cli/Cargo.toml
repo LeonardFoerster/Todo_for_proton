@@ -1,0 +1,18 @@
+[package]
+name = "todo-cli"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+description = "Entwickler-CLI: Core + SQLite ohne UI benutzen (nicht Teil der App-Auslieferung)."
+
+[dependencies]
+todo-core.workspace = true
+todo-storage-sqlite.workspace = true
+# `block_on` genügt: Die CLI führt genau einen Befehl aus.
+futures.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -23,6 +23,7 @@ Status: **Planungs-/Skeleton-Phase.** Es gibt noch keinen Feature-Code.
 | `crates/todo-storage-sqlite/` | `TaskRepository`-Implementierung mit SQLite (nativ) |
 | `crates/proton-adapter/` | **Einziger** Ort für Proton-Code (Auth, Drive) – implementiert Ports |
 | `crates/todo-wasm/` | wasm-bindgen-Bindings des Cores für die Web-App |
+| `crates/todo-cli/` | Dev-CLI (`cargo run -p todo-cli -- help`): Core + SQLite ohne UI, nur über `CoreApi`; nicht ausgeliefert |
 | `apps/desktop/` | Tauri-2-Shell für Linux (dünn: Commands → Core) |
 | `apps/web/` | Web-Einstieg (Vite + Svelte), Core läuft als WASM im Web Worker |
 | `packages/ui/` | Gemeinsame Svelte-5-Komponenten + Design-Tokens |

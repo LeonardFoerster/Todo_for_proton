@@ -25,3 +25,6 @@ apps/desktop/src-tauri/target/
 # Lokale Secrets
 .env
 .env.*
+
+# Dev-CLI-Datenbank (todo-cli)
+todo-dev.sqlite3*
