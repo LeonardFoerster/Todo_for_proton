@@ -821,10 +821,14 @@ dependencies = [
 name = "todo-cli"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "futures",
  "tempfile",
  "todo-core",
+ "todo-crypto",
+ "todo-remote-fs",
  "todo-storage-sqlite",
+ "todo-sync",
 ]
 
 [[package]]

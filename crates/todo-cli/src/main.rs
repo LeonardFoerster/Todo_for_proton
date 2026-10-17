@@ -6,10 +6,11 @@
 mod args;
 
 use std::{
+    collections::BTreeMap,
     env, fmt,
     path::PathBuf,
     process::ExitCode,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -24,10 +25,13 @@ use todo_core::{
         CoreApi,
     },
     domain::{NaiveDate, Timestamp},
-    ports::Clock,
-    CoreError,
+    ports::{Clock, KeyStore, SecretBytes},
+    CoreError, CoreResult,
 };
+use todo_crypto::XChaCha20Poly1305Cipher;
+use todo_remote_fs::FsRemoteStore;
 use todo_storage_sqlite::SqliteTaskRepository;
+use todo_sync::{SyncConfig, SyncEngine, SyncReport};
 
 const DEFAULT_DB: &str = "todo-dev.sqlite3";
 const PAGE_SIZE: u32 = 200;
@@ -48,6 +52,36 @@ impl Clock for SystemClock {
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_millis());
         Timestamp::from_millis(i64::try_from(ms).unwrap_or(i64::MAX))
+    }
+}
+
+/// Schlüssel nur für die Dauer eines Aufrufs: Die CLI lädt den Sync-Schlüssel bei jedem `sync`
+/// aus dem Sync-Ordner (`keys/sync-key.enc`). Die App nutzt dafür den System-Schlüsselbund.
+#[derive(Debug, Default)]
+struct ProcessKeyStore(Mutex<BTreeMap<String, SecretBytes>>);
+
+#[async_trait::async_trait]
+impl KeyStore for ProcessKeyStore {
+    async fn get(&self, name: &str) -> CoreResult<Option<SecretBytes>> {
+        Ok(self.entries().get(name).cloned())
+    }
+
+    async fn put(&self, name: &str, value: SecretBytes) -> CoreResult<()> {
+        self.entries().insert(name.to_owned(), value);
+        Ok(())
+    }
+
+    async fn delete(&self, name: &str) -> CoreResult<()> {
+        self.entries().remove(name);
+        Ok(())
+    }
+}
+
+impl ProcessKeyStore {
+    fn entries(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, SecretBytes>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -98,16 +132,69 @@ fn run(cli: Cli) -> Result<()> {
         .db
         .or_else(|| env::var_os("TODO_DB").map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from(DEFAULT_DB));
+    let remote = cli
+        .remote
+        .or_else(|| env::var_os("TODO_REMOTE").map(PathBuf::from));
     let repo = SqliteTaskRepository::open(&path)?;
     let api = CoreApi::new(Arc::new(repo), Arc::new(SystemClock));
     block_on(async {
         // Wie beim App-Start: Die Inbox existiert immer.
         api.ensure_inbox().await?;
-        execute(&api, cli.command).await
+        execute(&api, cli.command, remote).await
     })
 }
 
-async fn execute(api: &CoreApi, command: Command) -> Result<()> {
+/// Ein Sync-Durchlauf gegen ein lokales Verzeichnis (`FsRemoteStore`).
+async fn sync(api: &CoreApi, remote: PathBuf) -> Result<()> {
+    let device_name = env::var("HOSTNAME").unwrap_or_else(|_| "todo-cli".into());
+    let engine = SyncEngine::new(
+        api.repository(),
+        Arc::new(FsRemoteStore::new(remote)?),
+        Arc::new(XChaCha20Poly1305Cipher::new()),
+        Arc::new(ProcessKeyStore::default()),
+        Arc::new(SystemClock),
+        SyncConfig {
+            device_name,
+            platform: "todo-cli".into(),
+            ..SyncConfig::default()
+        },
+    );
+    let report = engine.sync_once().await?;
+    println!("{}", report_text(&report));
+    for warning in &report.warnings {
+        println!("Warnung: {warning}");
+    }
+    let pending = engine.pending().await?;
+    if pending > 0 {
+        println!("{pending} Op(s) noch nicht hochgeladen.");
+    }
+    Ok(())
+}
+
+fn report_text(report: &SyncReport) -> String {
+    let mut text = format!(
+        "Sync: {} Op(s) hochgeladen, {} empfangen, {} Änderung(en) übernommen.",
+        report.pushed, report.received, report.changed
+    );
+    if report.snapshot_loaded {
+        text.push_str(" Snapshot geladen.");
+    }
+    if report.snapshot_written {
+        text.push_str(" Snapshot geschrieben.");
+    }
+    if report.skipped_segments > 0 {
+        text.push_str(&format!(
+            " {} Segment(e) übersprungen.",
+            report.skipped_segments
+        ));
+    }
+    if report.newer_format {
+        text.push_str(" Sync-Ordner stammt von einer neueren Version – bitte aktualisieren.");
+    }
+    text
+}
+
+async fn execute(api: &CoreApi, command: Command, remote: Option<PathBuf>) -> Result<()> {
     match command {
         Command::Help => println!("{USAGE}"),
         Command::Lists => {
@@ -255,6 +342,14 @@ async fn execute(api: &CoreApi, command: Command) -> Result<()> {
             let id = resolve_task(api, &id).await?;
             api.delete_task(id).await?;
             println!("Gelöscht.");
+        }
+        Command::Sync => {
+            let remote = remote.ok_or_else(|| {
+                Error::Usage(UsageError(
+                    "sync braucht --remote ORDNER oder $TODO_REMOTE".into(),
+                ))
+            })?;
+            sync(api, remote).await?;
         }
     }
     Ok(())

@@ -8,6 +8,11 @@ description = "Entwickler-CLI: Core + SQLite ohne UI benutzen (nicht Teil der Ap
 [dependencies]
 todo-core.workspace = true
 todo-storage-sqlite.workspace = true
+# `sync`: Engine + lokales Verzeichnis als Backend + Cipher (die CLI ist hier Composition Root).
+todo-sync = { workspace = true, features = ["zstd-native"] }
+todo-remote-fs.workspace = true
+todo-crypto.workspace = true
+async-trait.workspace = true
 # `block_on` genügt: Die CLI führt genau einen Befehl aus.
 futures.workspace = true
 

@@ -5,8 +5,9 @@ use std::{fmt, path::PathBuf};
 pub const USAGE: &str = "\
 todo-cli – Core + SQLite ohne UI (Entwicklerwerkzeug)
 
-Aufruf: todo-cli [--db DATEI] BEFEHL …
+Aufruf: todo-cli [--db DATEI] [--remote ORDNER] BEFEHL …
   DB-Datei: --db, sonst $TODO_DB, sonst ./todo-dev.sqlite3
+  Sync-Ordner (nur für `sync`): --remote, sonst $TODO_REMOTE
 
 Befehle:
   lists                          Listen anzeigen
@@ -21,6 +22,7 @@ Befehle:
   mv ID [-l LISTE] [--before ID | --after ID]
                                  verschieben (ohne Position: ans Ende)
   rm ID                          Task löschen
+  sync                           mit dem Sync-Ordner abgleichen (lokales Verzeichnis als Backend)
 
 ID: vollständige ID oder ein eindeutiges Ende davon (wie von `ls` gezeigt).
 LISTE: Name (Groß-/Kleinschreibung egal) oder ID.";
@@ -29,6 +31,8 @@ LISTE: Name (Groß-/Kleinschreibung egal) oder ID.";
 pub struct Cli {
     /// `None` = Standardpfad (Umgebung oder Arbeitsverzeichnis).
     pub db: Option<PathBuf>,
+    /// Sync-Ordner; `None` = `$TODO_REMOTE`.
+    pub remote: Option<PathBuf>,
     pub command: Command,
 }
 
@@ -73,6 +77,7 @@ pub enum Command {
     Rm {
         id: String,
     },
+    Sync,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,9 +93,11 @@ impl fmt::Display for UsageError {
 pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Cli, UsageError> {
     let mut args: Vec<String> = args.into_iter().collect();
     let db = take_opt(&mut args, &["--db"])?.map(PathBuf::from);
+    let remote = take_opt(&mut args, &["--remote"])?.map(PathBuf::from);
     if args.is_empty() {
         return Ok(Cli {
             db,
+            remote,
             command: Command::Help,
         });
     }
@@ -161,9 +168,17 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Cli, UsageError> 
         "rm" => Command::Rm {
             id: single(args, "ID")?,
         },
+        "sync" => {
+            no_rest(&args)?;
+            Command::Sync
+        }
         other => return Err(UsageError(format!("unbekannter Befehl {other:?}"))),
     };
-    Ok(Cli { db, command })
+    Ok(Cli {
+        db,
+        remote,
+        command,
+    })
 }
 
 /// Entfernt `NAME WERT` aus `args`.
@@ -229,6 +244,14 @@ mod tests {
 
     fn cmd(s: &str) -> Command {
         parse_str(s).unwrap().command
+    }
+
+    #[test]
+    fn sync_takes_remote_anywhere() {
+        let cli = parse_str("--db a.db sync --remote ./remote").unwrap();
+        assert_eq!(cli.command, Command::Sync);
+        assert_eq!(cli.remote, Some(PathBuf::from("./remote")));
+        assert!(parse_str("sync jetzt").is_err());
     }
 
     #[test]

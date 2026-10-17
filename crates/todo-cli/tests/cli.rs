@@ -9,6 +9,7 @@ fn todo(db: &Path, args: &[&str]) -> (bool, String) {
         .arg(db)
         .args(args)
         .env_remove("TODO_DB")
+        .env_remove("TODO_REMOTE")
         .output()
         .expect("todo-cli startet");
     let text = String::from_utf8(if out.status.success() {
@@ -76,4 +77,41 @@ fn errors_exit_non_zero() {
     assert!(!success);
     assert!(text.contains("validation"), "{text}");
     assert!(!todo(&db, &["frobnicate"]).0);
+}
+
+/// P5-12: zwei Datenbanken, ein Sync-Ordner – anlegen in A, sync A, sync B, `ls` in B.
+#[test]
+fn two_databases_sync_through_a_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (dir.path().join("a.db"), dir.path().join("b.db"));
+    let remote = dir.path().join("remote");
+    let remote = remote.to_str().unwrap();
+
+    ok(&a, &["add", "Milch", "kaufen"]);
+    ok(&a, &["list-add", "Arbeit"]);
+    ok(&a, &["add", "Bericht", "-l", "Arbeit"]);
+    let report = ok(&a, &["sync", "--remote", remote]);
+    assert!(report.contains("4 Op(s) hochgeladen"), "{report}");
+
+    let report = ok(&b, &["--remote", remote, "sync"]);
+    assert!(report.contains("empfangen"), "{report}");
+    let inbox = ok(&b, &["ls"]);
+    assert!(inbox.contains("Milch kaufen"), "{inbox}");
+    assert!(ok(&b, &["ls", "Arbeit"]).contains("Bericht"));
+    assert_eq!(ok(&b, &["lists"]).matches("(Inbox)").count(), 1);
+
+    // Und zurück: B hakt ab, A sieht es.
+    let milk = short_id(&inbox, "Milch kaufen");
+    ok(&b, &["done", &milk]);
+    ok(&b, &["sync", "--remote", remote]);
+    ok(&a, &["sync", "--remote", remote]);
+    assert!(ok(&a, &["ls"]).contains(&format!("[x] {milk}  Milch kaufen")));
+}
+
+#[test]
+fn sync_without_remote_is_a_usage_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let (success, text) = todo(&dir.path().join("a.db"), &["sync"]);
+    assert!(!success);
+    assert!(text.contains("--remote"), "{text}");
 }
