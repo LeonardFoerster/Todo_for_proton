@@ -22,10 +22,15 @@
 //! rustfmt am Formatieren des Inhalts hindern.
 
 mod clock;
+mod repository;
 
 pub use clock::Clock;
 #[cfg(any(test, feature = "test-support"))]
 pub use clock::{FixedClock, SteppingClock};
+pub use repository::{
+    Change, ChangeSet, CommitReceipt, EntityRef, Page, PageRequest, SmartView, TaskQuery,
+    TaskRepository, TaskSummary, PAGE_LIMIT_MAX,
+};
 
 /// `Send` auf nativen Zielen, leer auf wasm32.
 #[cfg(not(target_arch = "wasm32"))]

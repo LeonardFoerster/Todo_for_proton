@@ -8,10 +8,42 @@ use std::ops::Range;
 pub use chrono::NaiveDate;
 
 use super::{text::normalize_name, Timestamp};
-use crate::CoreResult;
+use crate::{CoreError, CoreResult};
 
 /// Maximale Länge eines Zeitzonen-Namens (IANA-Namen sind deutlich kürzer).
 pub const DUE_TZ_MAX_CHARS: usize = 64;
+
+/// Ein Kalendertag in der lokalen Zone des Nutzers, vom Aufrufer berechnet (der Core rechnet
+/// keine Zonen): Datum plus Tagesgrenzen `start..end` (`end` = Beginn des Folgetags).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LocalDay {
+    date: NaiveDate,
+    start: Timestamp,
+    end: Timestamp,
+}
+
+impl LocalDay {
+    /// # Errors
+    /// `CoreError::Validation`, wenn nicht `start < end`.
+    pub fn new(date: NaiveDate, start: Timestamp, end: Timestamp) -> CoreResult<Self> {
+        if start >= end {
+            return Err(CoreError::Validation(format!(
+                "local day {date}: start must be before end"
+            )));
+        }
+        Ok(Self { date, start, end })
+    }
+
+    #[must_use]
+    pub fn date(&self) -> NaiveDate {
+        self.date
+    }
+
+    #[must_use]
+    pub fn span(&self) -> Range<Timestamp> {
+        self.start..self.end
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Due {
@@ -43,6 +75,16 @@ impl Due {
         match self {
             Self::Date(date) => *date == day,
             Self::DateTime { at, .. } => day_span.contains(at),
+        }
+    }
+
+    /// Fällig an `day` oder früher (also heute fällig oder überfällig)? Grundlage der
+    /// „Heute"-Ansicht; das Gegenteil ist „Demnächst".
+    #[must_use]
+    pub fn is_due_by(&self, day: &LocalDay) -> bool {
+        match self {
+            Self::Date(date) => *date <= day.date,
+            Self::DateTime { at, .. } => *at < day.end,
         }
     }
 
@@ -108,6 +150,30 @@ mod tests {
             !due(200).is_due_on(day(17), &span),
             "nächster Tag beginnt bei 200"
         );
+    }
+
+    #[test]
+    fn local_day_requires_start_before_end() {
+        let t = Timestamp::from_millis;
+        assert!(LocalDay::new(day(17), t(100), t(200)).is_ok());
+        assert!(LocalDay::new(day(17), t(200), t(200)).is_err());
+        assert!(LocalDay::new(day(17), t(300), t(200)).is_err());
+    }
+
+    #[test]
+    fn due_by_includes_today_and_overdue() {
+        let t = Timestamp::from_millis;
+        let today = LocalDay::new(day(17), t(100), t(200)).unwrap();
+        assert!(Due::Date(day(16)).is_due_by(&today), "überfällig");
+        assert!(Due::Date(day(17)).is_due_by(&today), "heute");
+        assert!(!Due::Date(day(18)).is_due_by(&today), "morgen");
+        let at = |ms| Due::DateTime {
+            at: t(ms),
+            tz: "UTC".into(),
+        };
+        assert!(at(50).is_due_by(&today));
+        assert!(at(199).is_due_by(&today));
+        assert!(!at(200).is_due_by(&today), "Beginn des Folgetags");
     }
 
     #[test]

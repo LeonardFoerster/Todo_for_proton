@@ -10,7 +10,7 @@ mod task_list;
 mod text;
 mod timestamp;
 
-pub use due::{Due, NaiveDate, DUE_TZ_MAX_CHARS};
+pub use due::{Due, LocalDay, NaiveDate, DUE_TZ_MAX_CHARS};
 pub use ids::{DeviceId, ParseIdError, TagId, TaskId, TaskListId};
 pub use sort_key::SortKey;
 pub use task::{Priority, Task, TaskStatus, TASK_TITLE_MAX_CHARS};
