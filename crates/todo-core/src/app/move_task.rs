@@ -1,9 +1,9 @@
 //! Task umsortieren und/oder in eine andere Liste verschieben.
 
-use super::{collect_all, key_after, load_task, Deps};
+use super::{collect_all, load_task, Deps};
 use crate::{
     domain::{SortKey, Task, TaskId, TaskListId},
-    ports::{ChangeSet, SmartView, TaskQuery, TaskSummary},
+    ports::{Change, ChangeSet, SmartView, TaskQuery, TaskSummary},
     CoreError, CoreResult,
 };
 
@@ -23,6 +23,10 @@ pub struct MoveTaskInput {
 }
 
 /// Verschiebt eine Task. Ändert nur deren `list_id`/`sort_key` (konfliktarm im Sync).
+///
+/// Ausnahme: Haben die beiden Nachbarn denselben Sort-Key (parallele Verschiebungen auf zwei
+/// Geräten; Reihenfolge dann nach `TaskId`), bekommt der obere Nachbar samt allen folgenden
+/// Tasks mit diesem Key neue, aufsteigende Keys – sonst gäbe es keinen Platz dazwischen.
 #[derive(Debug, Clone)]
 pub struct MoveTask {
     deps: Deps,
@@ -63,32 +67,66 @@ impl MoveTask {
                 CoreError::Validation(format!("neighbour {id} is not in list {list_id}"))
             })
         };
-        let key_at = |i: usize| siblings.get(i).map(|s| &s.sort_key);
 
-        let key = match (input.after, input.before) {
-            (Some(after), Some(before)) => {
-                let (a, b) = (index_of(after)?, index_of(before)?);
-                SortKey::between(key_at(a), key_at(b))?
-            }
+        // Indizes der Nachbarn unter- und oberhalb der Zielposition.
+        let (lower, upper) = match (input.after, input.before) {
+            (Some(after), Some(before)) => (Some(index_of(after)?), Some(index_of(before)?)),
             (Some(after), None) => {
                 let a = index_of(after)?;
-                SortKey::between(key_at(a), key_at(a + 1))?
+                (Some(a), (a + 1 < siblings.len()).then_some(a + 1))
             }
             (None, Some(before)) => {
                 let b = index_of(before)?;
-                SortKey::between(b.checked_sub(1).and_then(key_at), key_at(b))?
+                (b.checked_sub(1), Some(b))
             }
-            (None, None) => key_after(siblings.last().map(|s| &s.sort_key))?,
+            (None, None) => (siblings.len().checked_sub(1), None),
         };
 
+        let clock = self.deps.clock.as_ref();
+        let mut changes = ChangeSet::new();
+        let mut upper_key = upper.map(|i| siblings[i].sort_key.clone());
+        if let (Some(l), Some(u)) = (lower, upper) {
+            if l < u && siblings[l].sort_key == siblings[u].sort_key {
+                let rekeyed = spread_equal_keys(&siblings, u)?;
+                upper_key = rekeyed.first().map(|(_, key)| key.clone());
+                for (id, key) in rekeyed {
+                    let mut sibling = load_task(repo, id).await?;
+                    sibling.move_to(list_id, key, clock);
+                    changes.push(Change::UpsertTask(sibling));
+                }
+            }
+        }
+        let key = SortKey::between(lower.map(|i| &siblings[i].sort_key), upper_key.as_ref())?;
+
         let before_move = task.clone();
-        task.move_to(list_id, key, self.deps.clock.as_ref());
+        task.move_to(list_id, key, clock);
         if task != before_move {
-            repo.commit(ChangeSet::new().upsert_task(task.clone()))
-                .await?;
+            changes.push(Change::UpsertTask(task.clone()));
+        }
+        if !changes.is_empty() {
+            repo.commit(changes).await?;
         }
         Ok(task)
     }
+}
+
+/// Neue, aufsteigende Keys für die Tasks ab `start`, die denselben Key wie `start` haben – alle
+/// oberhalb dieses Keys und unterhalb des nächsten größeren. Reihenfolge bleibt erhalten.
+fn spread_equal_keys(siblings: &[TaskSummary], start: usize) -> CoreResult<Vec<(TaskId, SortKey)>> {
+    let key = &siblings[start].sort_key;
+    let end = siblings[start..]
+        .iter()
+        .position(|s| &s.sort_key != key)
+        .map_or(siblings.len(), |offset| start + offset);
+    let next = siblings.get(end).map(|s| &s.sort_key);
+    let mut previous = key.clone();
+    let mut keys = Vec::with_capacity(end - start);
+    for sibling in &siblings[start..end] {
+        let new_key = SortKey::between(Some(&previous), next)?;
+        keys.push((sibling.id, new_key.clone()));
+        previous = new_key;
+    }
+    Ok(keys)
 }
 
 #[cfg(test)]
@@ -238,5 +276,44 @@ mod tests {
         }));
         assert!(matches!(unknown, Err(CoreError::NotFound(_))));
         assert_eq!(s.order(s.inbox), "abcd", "nichts verändert");
+    }
+
+    /// FIX-02: Nach parallelen Verschiebungen auf zwei Geräten können Nachbarn denselben Key
+    /// haben (Reihenfolge nach `TaskId`). Dazwischen einfügen muss trotzdem gehen.
+    #[test]
+    fn moves_between_neighbours_with_equal_keys() {
+        let s = setup();
+        let clock = crate::ports::FixedClock(crate::domain::Timestamp::from_millis(9));
+        let mut c = s.tasks[2].clone();
+        c.move_to(s.inbox, s.tasks[1].sort_key().clone(), &clock);
+        let mut d = s.tasks[3].clone();
+        d.move_to(s.inbox, s.tasks[1].sort_key().clone(), &clock);
+        block_on(
+            s.repo
+                .commit(ChangeSet::new().upsert_task(c).upsert_task(d)),
+        )
+        .unwrap();
+        assert_eq!(
+            s.order(s.inbox),
+            "abcd",
+            "b, c, d mit gleichem Key, nach ID"
+        );
+
+        s.mv(0, None, Some(1), Some(2)).unwrap(); // a zwischen b und c
+        assert_eq!(s.order(s.inbox), "bacd");
+        let keys: Vec<SortKey> = block_on(collect_all(
+            s.repo.as_ref(),
+            &TaskQuery::view(SmartView::List(s.inbox)),
+        ))
+        .unwrap()
+        .into_iter()
+        .map(|t| t.sort_key)
+        .collect();
+        assert!(
+            keys.windows(2).all(|w| w[0] < w[1]),
+            "Keys wieder eindeutig: {keys:?}"
+        );
+        s.mv(3, None, Some(1), None).unwrap(); // d direkt hinter b
+        assert_eq!(s.order(s.inbox), "bdac");
     }
 }
