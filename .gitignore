@@ -1,0 +1,24 @@
+# Planungsdokumente – bewusst nicht versioniert
+/development/
+
+# Rust
+/target/
+
+# Node
+node_modules/
+dist/
+.svelte-kit/
+*.tsbuildinfo
+
+# Tauri
+apps/desktop/src-tauri/target/
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Lokale Secrets
+.env
+.env.*

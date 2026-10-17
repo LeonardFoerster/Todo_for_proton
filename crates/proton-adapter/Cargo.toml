@@ -1,0 +1,12 @@
+[package]
+name = "proton-adapter"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+description = "Proton Auth + Drive hinter den Ports AuthProvider/RemoteStore. Einziger Ort für Proton-Code."
+
+[dependencies]
+todo-core.workspace = true
+
+[lints]
+workspace = true

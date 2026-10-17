@@ -1,0 +1,49 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+# apps/desktop/src-tauri kommt hinzu, sobald die Tauri-Shell angelegt ist.
+
+[workspace.package]
+edition = "2021"
+publish = false
+
+[workspace.dependencies]
+todo-core = { path = "crates/todo-core" }
+todo-sync = { path = "crates/todo-sync" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# Ausgewählte pedantic-Lints (bewusst nicht die ganze Gruppe):
+cast_lossless = "warn"
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+cloned_instead_of_copied = "warn"
+explicit_iter_loop = "warn"
+implicit_clone = "warn"
+inefficient_to_string = "warn"
+manual_let_else = "warn"
+map_unwrap_or = "warn"
+needless_pass_by_value = "warn"
+redundant_closure_for_method_calls = "warn"
+semicolon_if_nothing_returned = "warn"
+uninlined_format_args = "warn"
+unnested_or_patterns = "warn"
+unused_self = "warn"
+# Aus der restriction-Gruppe: keine Debug-Reste im Code.
+dbg_macro = "warn"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.release-wasm]
+inherits = "release"
+opt-level = "z"

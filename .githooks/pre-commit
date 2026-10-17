@@ -1,0 +1,11 @@
+#!/bin/sh
+# Pre-commit: Standard-Prüfung. Aktivieren mit `git config core.hooksPath .githooks`.
+# Notfalls überspringen: `git commit --no-verify`.
+set -e
+
+if ! command -v just >/dev/null 2>&1; then
+    echo "pre-commit: 'just' nicht gefunden (pacman -S just oder cargo install just)." >&2
+    exit 1
+fi
+
+exec just check

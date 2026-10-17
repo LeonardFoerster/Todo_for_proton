@@ -1,0 +1,16 @@
+[package]
+name = "todo-wasm"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+description = "wasm-bindgen Composition Root für die Web-App."
+
+[dependencies]
+todo-core.workspace = true
+todo-sync.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true

@@ -1,0 +1,11 @@
+[package]
+name = "todo-core"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+description = "Domain, Use-Cases und Ports (Interfaces). Kein IO."
+
+[dependencies]
+
+[lints]
+workspace = true

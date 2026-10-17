@@ -1,0 +1,3 @@
+# Nur stable-fähige Optionen (imports_granularity ist nightly-only).
+edition = "2021"
+max_width = 100

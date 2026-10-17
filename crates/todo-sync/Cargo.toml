@@ -1,0 +1,12 @@
+[package]
+name = "todo-sync"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+description = "Offline-first Sync-Engine: Op-Log, HLC, Merge."
+
+[dependencies]
+todo-core.workspace = true
+
+[lints]
+workspace = true
