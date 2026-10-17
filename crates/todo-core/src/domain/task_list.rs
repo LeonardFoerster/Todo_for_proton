@@ -22,7 +22,34 @@ pub struct TaskList {
     is_inbox: bool,
 }
 
+/// Alle Felder einer gespeicherten Liste, zum Wiederherstellen per [`TaskList::from_parts`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskListParts {
+    pub id: TaskListId,
+    pub name: String,
+    pub sort_key: SortKey,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+    pub is_inbox: bool,
+}
+
 impl TaskList {
+    /// Stellt eine Liste aus gespeicherten Feldern wieder her; der Name wird wie bei der Eingabe
+    /// geprüft und normalisiert.
+    ///
+    /// # Errors
+    /// `CoreError::Validation` bei ungültigem Namen.
+    pub fn from_parts(parts: TaskListParts) -> CoreResult<Self> {
+        Ok(Self {
+            id: parts.id,
+            name: normalize_list_name(&parts.name)?,
+            sort_key: parts.sort_key,
+            created_at: parts.created_at,
+            updated_at: parts.updated_at,
+            is_inbox: parts.is_inbox,
+        })
+    }
+
     /// Legt eine normale Liste an.
     ///
     /// # Errors
@@ -185,6 +212,31 @@ mod tests {
         list.rename("Zuhause", &clock).unwrap();
         assert_eq!(list.name(), "Zuhause");
         assert!(list.updated_at() > list.created_at());
+    }
+
+    #[test]
+    fn from_parts_roundtrips_and_validates_name() {
+        let clock = clock();
+        for list in [
+            TaskList::new("Arbeit", SortKey::first(), &clock).unwrap(),
+            TaskList::inbox(SortKey::first(), &clock),
+        ] {
+            let parts = TaskListParts {
+                id: list.id(),
+                name: list.name().to_owned(),
+                sort_key: list.sort_key().clone(),
+                created_at: list.created_at(),
+                updated_at: list.updated_at(),
+                is_inbox: list.is_inbox(),
+            };
+            assert_eq!(TaskList::from_parts(parts.clone()).unwrap(), list);
+            let err = TaskList::from_parts(TaskListParts {
+                name: "  ".into(),
+                ..parts
+            })
+            .unwrap_err();
+            assert!(matches!(err, CoreError::Validation(_)));
+        }
     }
 
     #[test]

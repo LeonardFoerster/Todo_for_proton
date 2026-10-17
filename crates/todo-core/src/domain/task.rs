@@ -1,7 +1,7 @@
 //! Die zentrale Entity `Task`.
 
 use super::{text::normalize_name, Due, SortKey, TagId, TaskId, TaskListId, Timestamp};
-use crate::{ports::Clock, CoreResult};
+use crate::{ports::Clock, CoreError, CoreResult};
 
 /// Maximale Titellänge in Unicode-Zeichen.
 pub const TASK_TITLE_MAX_CHARS: usize = 500;
@@ -43,7 +43,58 @@ pub struct Task {
     completed_at: Option<Timestamp>,
 }
 
+/// Alle Felder einer gespeicherten Task, zum Wiederherstellen per [`Task::from_parts`]
+/// (Speicher-Adapter, später Sync).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskParts {
+    pub id: TaskId,
+    pub list_id: TaskListId,
+    pub parent_id: Option<TaskId>,
+    pub title: String,
+    pub notes: String,
+    pub status: TaskStatus,
+    pub priority: Priority,
+    pub due: Option<Due>,
+    pub tags: Vec<TagId>,
+    pub sort_key: SortKey,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+    pub completed_at: Option<Timestamp>,
+}
+
 impl Task {
+    /// Stellt eine Task aus gespeicherten Feldern wieder her und prüft dabei die Invarianten
+    /// (Titel, Zeitzone, `completed_at` genau dann gesetzt, wenn erledigt). Titel und Zeitzone
+    /// werden wie bei der Eingabe normalisiert.
+    ///
+    /// # Errors
+    /// `CoreError::Validation`, wenn eine Invariante verletzt ist.
+    pub fn from_parts(parts: TaskParts) -> CoreResult<Self> {
+        let title = normalize_title(&parts.title)?;
+        let due = parts.due.map(Due::normalized).transpose()?;
+        if (parts.status == TaskStatus::Done) != parts.completed_at.is_some() {
+            return Err(CoreError::Validation(format!(
+                "task {}: completed_at must be set exactly when the task is done",
+                parts.id
+            )));
+        }
+        Ok(Self {
+            id: parts.id,
+            list_id: parts.list_id,
+            parent_id: parts.parent_id,
+            title,
+            notes: parts.notes,
+            status: parts.status,
+            priority: parts.priority,
+            due,
+            tags: parts.tags,
+            sort_key: parts.sort_key,
+            created_at: parts.created_at,
+            updated_at: parts.updated_at,
+            completed_at: parts.completed_at,
+        })
+    }
+
     /// Legt eine neue, offene Task an.
     ///
     /// # Errors
@@ -436,6 +487,79 @@ mod tests {
         assert!(Priority::None < Priority::Low);
         assert!(Priority::Low < Priority::Medium);
         assert!(Priority::Medium < Priority::High);
+    }
+
+    fn parts_of(t: &Task) -> TaskParts {
+        TaskParts {
+            id: t.id(),
+            list_id: t.list_id(),
+            parent_id: t.parent_id(),
+            title: t.title().to_owned(),
+            notes: t.notes().to_owned(),
+            status: t.status(),
+            priority: t.priority(),
+            due: t.due().cloned(),
+            tags: t.tags().to_vec(),
+            sort_key: t.sort_key().clone(),
+            created_at: t.created_at(),
+            updated_at: t.updated_at(),
+            completed_at: t.completed_at(),
+        }
+    }
+
+    #[test]
+    fn from_parts_roundtrips() {
+        let clock = clock();
+        let mut t = task(&clock);
+        t.set_notes("n", &clock);
+        t.set_priority(Priority::Medium, &clock);
+        t.set_due(
+            Some(Due::DateTime {
+                at: Timestamp::from_millis(9),
+                tz: "UTC".into(),
+            }),
+            &clock,
+        )
+        .unwrap();
+        t.complete(&clock);
+        let mut parts = parts_of(&t);
+        assert_eq!(Task::from_parts(parts.clone()).unwrap(), t);
+        parts.tags = vec![TagId::new()];
+        parts.parent_id = Some(TaskId::new());
+        let restored = Task::from_parts(parts.clone()).unwrap();
+        assert_eq!(restored.tags(), parts.tags.as_slice());
+        assert_eq!(restored.parent_id(), parts.parent_id);
+    }
+
+    #[test]
+    fn from_parts_checks_invariants() {
+        let clock = clock();
+        let t = task(&clock);
+        let invalid = [
+            TaskParts {
+                title: " ".into(),
+                ..parts_of(&t)
+            },
+            TaskParts {
+                status: TaskStatus::Done,
+                ..parts_of(&t)
+            },
+            TaskParts {
+                completed_at: Some(Timestamp::EPOCH),
+                ..parts_of(&t)
+            },
+            TaskParts {
+                due: Some(Due::DateTime {
+                    at: Timestamp::EPOCH,
+                    tz: String::new(),
+                }),
+                ..parts_of(&t)
+            },
+        ];
+        for parts in invalid {
+            let err = Task::from_parts(parts.clone()).unwrap_err();
+            assert!(matches!(err, CoreError::Validation(_)), "{parts:?}");
+        }
     }
 
     #[test]

@@ -8,12 +8,15 @@ description = "TaskRepository-Implementierung auf SQLite."
 [dependencies]
 todo-core.workspace = true
 async-trait.workspace = true
+# Nur `Datelike` für die Abbildung `NaiveDate` ↔ Tageszahl (gleiche Version wie todo-core).
+chrono.workspace = true
 # Nur `channel::oneshot`: Antworten des Datenbank-Threads, ohne Bindung an eine Async-Runtime.
 futures.workspace = true
 # `bundled`: gleiche SQLite-Version überall (auch später Android), kein System-SQLite nötig.
 rusqlite.workspace = true
 
 [dev-dependencies]
+todo-core = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 
 [lints]

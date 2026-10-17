@@ -25,3 +25,8 @@ fn is_foreign_key(err: &rusqlite::Error) -> bool {
             if e.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY
     )
 }
+
+/// Gespeicherte Daten passen nicht zum Domain-Modell (manuell editiert, Bug in einer Migration …).
+pub(crate) fn corrupt(what: &str, detail: impl std::fmt::Display) -> CoreError {
+    CoreError::Storage(format!("corrupt {what}: {detail}"))
+}

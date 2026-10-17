@@ -13,6 +13,6 @@ mod timestamp;
 pub use due::{Due, LocalDay, NaiveDate, DUE_TZ_MAX_CHARS};
 pub use ids::{DeviceId, ParseIdError, TagId, TaskId, TaskListId};
 pub use sort_key::SortKey;
-pub use task::{Priority, Task, TaskStatus, TASK_TITLE_MAX_CHARS};
-pub use task_list::{TaskList, INBOX_NAME, TASK_LIST_NAME_MAX_CHARS};
+pub use task::{Priority, Task, TaskParts, TaskStatus, TASK_TITLE_MAX_CHARS};
+pub use task_list::{TaskList, TaskListParts, INBOX_NAME, TASK_LIST_NAME_MAX_CHARS};
 pub use timestamp::Timestamp;
