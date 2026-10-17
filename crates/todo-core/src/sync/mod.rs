@@ -6,8 +6,13 @@
 
 mod diff;
 mod hlc;
+mod merge;
 mod op;
 
 pub use diff::{list_fields, ops_for, task_fields, OpClock};
 pub use hlc::{ClockSkew, Hlc, HlcState, MAX_CLOCK_DRIFT_MS};
+pub use merge::{
+    list_id, materialize_list, materialize_task, merge, EntityState, MergeResult, Register,
+    Registers,
+};
 pub use op::{decode_ops, encode_ops, FieldMap, FieldName, FieldValue, Op, OpId, OpKind};
