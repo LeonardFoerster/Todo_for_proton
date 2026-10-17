@@ -23,7 +23,7 @@ use futures::channel::oneshot;
 use rusqlite::Connection;
 use todo_core::{CoreError, CoreResult};
 
-use crate::error::storage;
+use crate::{error::storage, migrations};
 
 /// Wartezeit, wenn ein anderer Prozess (z. B. die Dev-CLI) die Datei gerade sperrt.
 pub(crate) const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -47,17 +47,19 @@ impl fmt::Debug for Database {
 }
 
 impl Database {
-    /// Öffnet (oder erzeugt) die Datei, konfiguriert sie und startet den Thread.
+    /// Öffnet (oder erzeugt) die Datei, konfiguriert und migriert sie und startet den Thread.
     pub(crate) fn open(path: &Path) -> CoreResult<Self> {
-        let conn = Connection::open(path).map_err(storage)?;
+        let mut conn = Connection::open(path).map_err(storage)?;
         configure(&conn, true)?;
+        migrations::migrate(&mut conn)?;
         Self::start(conn)
     }
 
     /// Flüchtige Datenbank für Tests (kein WAL – SQLite unterstützt es im Speicher nicht).
     pub(crate) fn open_in_memory() -> CoreResult<Self> {
-        let conn = Connection::open_in_memory().map_err(storage)?;
+        let mut conn = Connection::open_in_memory().map_err(storage)?;
         configure(&conn, false)?;
+        migrations::migrate(&mut conn)?;
         Self::start(conn)
     }
 
@@ -177,6 +179,29 @@ mod tests {
                 busy_timeout: 5_000,
             }
         );
+    }
+
+    #[test]
+    fn open_migrates_and_reopen_keeps_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("todo.sqlite3");
+        let db = Database::open(&path).unwrap();
+        block_on(db.call(|conn| {
+            conn.execute("INSERT INTO meta VALUES ('k', 'v')", [])
+                .map_err(storage)
+        }))
+        .unwrap();
+        drop(db);
+        let db = Database::open(&path).unwrap();
+        let (version, value) = block_on(db.call(|conn| {
+            let value: String = conn
+                .query_row("SELECT value FROM meta WHERE key = 'k'", [], |r| r.get(0))
+                .map_err(storage)?;
+            Ok((migrations::version(conn)?, value))
+        }))
+        .unwrap();
+        assert_eq!(version, migrations::MIGRATIONS.len());
+        assert_eq!(value, "v");
     }
 
     #[test]
