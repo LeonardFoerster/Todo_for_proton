@@ -39,13 +39,14 @@ CREATE TABLE tasks (
 
 -- Listenansicht (List/Inbox): Filter auf list_id, sortiert nach sort_key, id.
 CREATE INDEX tasks_by_list ON tasks (list_id, sort_key, id);
--- „Alle": sortiert über alle Listen.
+-- „Alle": sortiert über alle Listen, ohne bzw. mit Statusfilter.
 CREATE INDEX tasks_by_sort_key ON tasks (sort_key, id);
+CREATE INDEX tasks_by_status_sort_key ON tasks (status, sort_key, id);
 -- Heute/Demnächst.
 CREATE INDEX tasks_by_status_due_date ON tasks (status, due_date);
 CREATE INDEX tasks_by_status_due_at ON tasks (status, due_at);
--- Erledigt: neueste zuerst.
-CREATE INDEX tasks_by_status_completed ON tasks (status, completed_at);
+-- Erledigt: neueste zuerst, Gleichstand nach id – passt exakt zu ORDER BY, kein Sortierschritt.
+CREATE INDEX tasks_by_status_completed ON tasks (status, completed_at DESC, id);
 
 -- Kleine Schlüssel/Wert-Ablage (z. B. Geräte-ID ab P5).
 CREATE TABLE meta (

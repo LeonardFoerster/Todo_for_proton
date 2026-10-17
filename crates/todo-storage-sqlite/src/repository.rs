@@ -6,15 +6,15 @@ use rusqlite::{params_from_iter, Connection, TransactionBehavior};
 use todo_core::{
     domain::{Task, TaskId, TaskList, TaskListId},
     ports::{
-        Change, ChangeSet, CommitReceipt, EntityRef, Page, PageRequest, TaskQuery, TaskRepository,
-        TaskSummary, PAGE_LIMIT_MAX,
+        Change, ChangeSet, CommitReceipt, EntityRef, Page, PageRequest, SmartView, TaskQuery,
+        TaskRepository, TaskSummary, PAGE_LIMIT_MAX,
     },
     CoreError, CoreResult,
 };
 
 use crate::{
     connection::Database,
-    error::storage,
+    error::{corrupt, storage},
     mapping::{
         read_list, read_summary, read_task, write_list, write_task, LIST_COLUMNS, TASK_COLUMNS,
     },
@@ -113,12 +113,18 @@ impl TaskRepository for SqliteTaskRepository {
             .as_deref()
             .map(|c| Position::decode(c, &query.view))
             .transpose()?;
-        let view = query.view;
+        let query = *query;
         let limit = page.limit as usize;
-        // Eine Zeile mehr holen, um zu wissen, ob es eine weitere Seite gibt.
-        let (sql, params) = list_tasks_sql(query, after.as_ref(), page.limit + 1);
         self.db
             .call(move |conn| {
+                let Some(query) = resolve_inbox(conn, query)? else {
+                    return Ok(Page {
+                        items: Vec::new(),
+                        next_cursor: None,
+                    });
+                };
+                // Eine Zeile mehr holen, um zu wissen, ob es eine weitere Seite gibt.
+                let (sql, params) = list_tasks_sql(&query, after.as_ref(), page.limit + 1);
                 let mut stmt = conn.prepare_cached(&sql).map_err(storage)?;
                 let mut rows = stmt.query(params_from_iter(params)).map_err(storage)?;
                 let mut items = Vec::with_capacity(limit + 1);
@@ -127,7 +133,7 @@ impl TaskRepository for SqliteTaskRepository {
                 }
                 let next_cursor = (items.len() > limit).then(|| {
                     items.truncate(limit);
-                    Position::of(&items[limit - 1], &view).encode()
+                    Position::of(&items[limit - 1], &query.view).encode()
                 });
                 Ok(Page { items, next_cursor })
             })
@@ -153,6 +159,32 @@ impl TaskRepository for SqliteTaskRepository {
     }
 }
 
+/// Ersetzt die Inbox-Ansicht durch die Ansicht der (einen) Inbox-Liste: `list_id = ?` liefert
+/// die Zeilen direkt in Index-Reihenfolge, `list_id IN (…)` bräuchte einen Sortierschritt über
+/// alle Treffer. `None`, wenn es keine Inbox gibt (leeres Ergebnis).
+fn resolve_inbox(conn: &Connection, query: TaskQuery) -> CoreResult<Option<TaskQuery>> {
+    if query.view != SmartView::Inbox {
+        return Ok(Some(query));
+    }
+    let mut stmt = conn
+        .prepare_cached("SELECT id FROM task_lists WHERE is_inbox = 1 LIMIT 2")
+        .map_err(storage)?;
+    let ids = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(storage)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(storage)?;
+    match ids.as_slice() {
+        [] => Ok(None),
+        [id] => Ok(Some(TaskQuery {
+            view: SmartView::List(TaskListId::parse(id).map_err(|e| corrupt("list id", e))?),
+            ..query
+        })),
+        // Mehrere Inboxen (z. B. nach einem Sync-Konflikt): allgemeine, langsamere Form.
+        _ => Ok(Some(query)),
+    }
+}
+
 fn apply(conn: &Connection, change: &Change) -> CoreResult<()> {
     match change {
         Change::UpsertTask(task) => write_task(conn, task),
@@ -175,7 +207,7 @@ mod tests {
     use tempfile::TempDir;
     use todo_core::{
         domain::{SortKey, Timestamp},
-        ports::{FixedClock, SmartView},
+        ports::FixedClock,
     };
 
     use super::*;
@@ -300,6 +332,94 @@ mod tests {
         let page =
             block_on(repo.list_tasks(&TaskQuery::view(SmartView::All), PageRequest::first(10)));
         assert!(matches!(page, Err(CoreError::Storage(_))), "{page:?}");
+    }
+
+    /// Die häufigen Listenabfragen lesen in Index-Reihenfolge – kein Sortierschritt, kein
+    /// Tabellen-Scan (Frühwarnung, falls ein Schema- oder Abfrageumbau das bricht).
+    #[test]
+    fn hot_queries_use_indexes_without_sorting() {
+        use todo_core::domain::TaskStatus;
+
+        use crate::query::list_tasks_sql;
+
+        let repo = SqliteTaskRepository::open_in_memory().unwrap();
+        let clock = FixedClock(Timestamp::EPOCH);
+        let (inbox, task) = inbox_with_task(&clock);
+        block_on(
+            repo.commit(
+                ChangeSet::new()
+                    .upsert_list(inbox.clone())
+                    .upsert_task(task),
+            ),
+        )
+        .unwrap();
+        let open = Some(TaskStatus::Open);
+        let sort_cursor = Position::BySortKey(SortKey::first(), TaskId::new());
+        let done_cursor = Position::ByCompletion(Timestamp::EPOCH, TaskId::new());
+        let cases = [
+            (SmartView::Inbox, None, None),
+            (SmartView::Inbox, open, Some(&sort_cursor)),
+            (SmartView::List(inbox.id()), open, Some(&sort_cursor)),
+            (SmartView::All, None, Some(&sort_cursor)),
+            (SmartView::All, open, None),
+            (SmartView::Completed, None, None),
+            (SmartView::Completed, None, Some(&done_cursor)),
+        ];
+        for (view, status, cursor) in cases {
+            let cursor = cursor.cloned();
+            let plan = block_on(repo.db.call(move |conn| {
+                let query = TaskQuery {
+                    view,
+                    status,
+                    tag: None,
+                };
+                let query = resolve_inbox(conn, query)?.expect("inbox exists");
+                let (sql, params) = list_tasks_sql(&query, cursor.as_ref(), 51);
+                let mut stmt = conn
+                    .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+                    .map_err(storage)?;
+                let rows = stmt
+                    .query_map(params_from_iter(params), |r| r.get::<_, String>(3))
+                    .map_err(storage)?;
+                rows.collect::<Result<Vec<_>, _>>().map_err(storage)
+            }))
+            .unwrap();
+            let text = plan.join(" | ");
+            assert!(text.contains("USING INDEX"), "{view:?} {status:?}: {text}");
+            assert!(!text.contains("TEMP B-TREE"), "{view:?} {status:?}: {text}");
+            assert!(
+                !text.contains("SCAN task_lists"),
+                "{view:?} {status:?}: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn inbox_view_without_inbox_is_empty_and_with_two_inboxes_shows_both() {
+        let repo = SqliteTaskRepository::open_in_memory().unwrap();
+        let clock = FixedClock(Timestamp::EPOCH);
+        let inbox_view = || {
+            block_on(repo.list_tasks(&TaskQuery::view(SmartView::Inbox), PageRequest::first(10)))
+                .unwrap()
+                .items
+        };
+        assert!(inbox_view().is_empty());
+        let (a, task_a) = inbox_with_task(&clock);
+        let (b, task_b) = inbox_with_task(&clock);
+        block_on(
+            repo.commit(
+                ChangeSet::new()
+                    .upsert_list(a)
+                    .upsert_list(b)
+                    .upsert_task(task_a.clone())
+                    .upsert_task(task_b.clone()),
+            ),
+        )
+        .unwrap();
+        let mut expected = [task_a.id(), task_b.id()];
+        expected.sort();
+        let ids: Vec<TaskId> = inbox_view().iter().map(|s| s.id).collect();
+        assert_eq!(ids, expected);
     }
 
     #[test]
