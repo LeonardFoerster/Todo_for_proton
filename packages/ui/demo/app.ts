@@ -25,3 +25,11 @@ if (typed) {
     input.focus();
   }, 300);
 }
+// ?menu=1: Kontextmenü der zweiten Zeile öffnen (Screenshots).
+if (params.has("menu")) {
+  setTimeout(() => {
+    const row = document.querySelectorAll<HTMLElement>('[role="option"]')[1];
+    const r = row.getBoundingClientRect();
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.left + 220, clientY: r.top + 24 }));
+  }, 400);
+}

@@ -16,11 +16,28 @@
     /** Inhalt unterhalb der Zeilen (z. B. Abschnitt „Erledigt“). */
     footer?: Snippet;
     label?: string;
+    /** Über den Zeilen, im Koordinatensystem der Liste (z. B. Einfügelinie beim Ziehen). */
+    overlay?: Snippet;
+    onkeydown?: (e: KeyboardEvent) => void;
+    oncontextmenu?: (e: MouseEvent) => void;
     /** ARIA-Rolle des Containers (`list` oder `listbox`). */
     role?: "list" | "listbox";
   }
 
-  let { items, key, row, rowHeight = 36, overscan = 8, onEndReached, footer, label, role = "list" }: Props = $props();
+  let {
+    items,
+    key,
+    row,
+    rowHeight = 36,
+    overscan = 8,
+    onEndReached,
+    footer,
+    overlay,
+    onkeydown,
+    oncontextmenu,
+    label,
+    role = "list",
+  }: Props = $props();
 
   let viewport: HTMLDivElement;
   let scrollTop = $state(0);
@@ -33,6 +50,10 @@
   $effect(() => {
     if (onEndReached && last >= items.length - overscan && items.length > 0) onEndReached();
   });
+
+  export function element(): HTMLDivElement {
+    return viewport;
+  }
 
   /** Scrollt so wenig wie nötig, damit Zeile `index` sichtbar ist. */
   export function scrollToIndex(index: number) {
@@ -50,6 +71,8 @@
   bind:this={viewport}
   bind:clientHeight={height}
   onscroll={() => (scrollTop = viewport.scrollTop)}
+  {onkeydown}
+  {oncontextmenu}
   {role}
   aria-label={label}
   tabindex="-1"
@@ -60,6 +83,7 @@
         {@render row(item, first + i)}
       {/each}
     </div>
+    {#if overlay}{@render overlay()}{/if}
   </div>
   {#if footer}{@render footer()}{/if}
 </div>

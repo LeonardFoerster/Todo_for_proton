@@ -229,7 +229,81 @@ const p708b: Step[] = [
   ],
 ];
 
-const SUITES: Record<string, Step[]> = { base, p707, p708a, p708b };
+const order = () =>
+  [...document.querySelectorAll('[role="listbox"] [role="option"]')].map((r) => r.getAttribute("aria-label"));
+
+async function openList(name: string) {
+  await click("link", new RegExp(`^${name}`));
+  await until(`h1 ${name}`, () => heading() === name);
+  await until("Zeilen", () => document.querySelector('[role="listbox"] [role="option"]'));
+}
+
+// P7-09 Teil 1: Tasten, Ziehen, Löschen (danach Neustart → p709b).
+const p709a: Step[] = [
+  [
+    "Liste „Sortierung“ mit S1–S4",
+    async (client) => {
+      const list = await client.createTaskList("Sortierung");
+      for (const t of ["S1", "S2", "S3", "S4"]) await client.createTask({ title: t, listId: list.id });
+      await openList("Sortierung");
+      await until("4 Zeilen", () => order().length === 4);
+    },
+  ],
+  [
+    "Alt+↑ ×3 schiebt S4 nach oben",
+    async () => {
+      (await until("S4", () => byRole("option", "S4"))).click();
+      for (let i = 0; i < 3; i++) {
+        key(document.activeElement ?? document.body, "ArrowUp", { altKey: true });
+        await sleep(150);
+      }
+      await until("S4 oben", () => order().join() === "S4,S1,S2,S3");
+      return order().join(" ");
+    },
+  ],
+  [
+    "S1 ans Ende ziehen",
+    async () => {
+      const row = (await until("S1", () => byRole("option", "S1")))!;
+      const grip = row.querySelector<HTMLElement>(".grip")!;
+      const r = row.getBoundingClientRect();
+      const listBottom = document.querySelector('[role="listbox"]')!.getBoundingClientRect().top + 4 * 36;
+      grip.dispatchEvent(new PointerEvent("pointerdown", { button: 0, clientX: r.left + 8, clientY: r.top + 18, bubbles: true }));
+      for (const y of [r.top + 40, r.top + 80, listBottom - 2]) {
+        dispatchEvent(new PointerEvent("pointermove", { clientX: r.left + 8, clientY: y, bubbles: true }));
+        await frame();
+        await frame();
+      }
+      dispatchEvent(new PointerEvent("pointerup", { button: 0, clientX: r.left + 8, clientY: listBottom - 2, bubbles: true }));
+      await until("S1 unten", () => order().join() === "S4,S2,S3,S1");
+      return order().join(" ");
+    },
+  ],
+  [
+    "S2 mit Entf löschen",
+    async () => {
+      (await until("S2", () => byRole("option", "S2"))).click();
+      key(document.activeElement ?? document.body, "Delete");
+      await until("S2 weg", () => order().join() === "S4,S3,S1");
+      await until("Toast", () => document.querySelector('[role="status"]')?.textContent?.includes("gelöscht"));
+      await sleep(400);
+      return order().join(" ");
+    },
+  ],
+];
+
+const p709b: Step[] = [
+  [
+    "Nach Neustart: Reihenfolge S4 S3 S1",
+    async () => {
+      await openList("Sortierung");
+      await until("Reihenfolge", () => order().join() === "S4,S3,S1", 4000);
+      return order().join(" ");
+    },
+  ],
+];
+
+const SUITES: Record<string, Step[]> = { base, p707, p708a, p708b, p709a, p709b };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */
 export async function runSelftest(client: CoreClient, selection: string): Promise<void> {

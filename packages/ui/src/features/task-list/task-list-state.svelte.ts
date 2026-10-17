@@ -126,6 +126,17 @@ export class TaskListState {
     void this.refresh(id);
   }
 
+  /** Optimistisch an Einfügeposition `to` (Index vor dem Entfernen) schieben; liefert die Nachbarn. */
+  reorder(id: string, to: number): { after?: string; before?: string } | null {
+    const from = this.items.findIndex((t) => t.id === id);
+    if (from < 0) return null;
+    const rest = this.items.filter((t) => t.id !== id);
+    const at = Math.max(0, Math.min(rest.length, to > from ? to - 1 : to));
+    if (at === from) return null;
+    this.items = [...rest.slice(0, at), this.items[from], ...rest.slice(at)];
+    return { after: rest[at - 1]?.id, before: rest[at]?.id };
+  }
+
   replace(task: TaskSummaryDto): void {
     this.items = this.items.map((t) => (t.id === task.id ? task : t));
   }

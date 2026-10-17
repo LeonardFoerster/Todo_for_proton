@@ -16,6 +16,7 @@
   import { SyncState } from "./lib/sync.svelte";
   import { todayPlus } from "./lib/format-date";
   import { routeListId, routeTitle } from "./lib/views";
+  import { deleteWithUndo } from "./lib/task-actions";
   import { followSystemTheme } from "./theme/theme";
   import "./tokens/tokens.css";
 
@@ -39,6 +40,7 @@
   let ready = $state(false);
   let selectedId = $state<string | null>(null);
   let quickAdd = $state<QuickAdd>();
+  let taskList = $state<TaskList>();
   let reportedReady = false;
 
   const route = $derived(router.route);
@@ -101,6 +103,14 @@
   function closeDetail() {
     selectedId = null;
   }
+
+  /** Über die Liste löschen (kennt die Nachbarn für „Rückgängig“), sonst direkt. */
+  function deleteFromDetail(id: string) {
+    const task = taskList?.items().find((t) => t.id === id);
+    selectedId = null;
+    if (task && taskList) void taskList.deleteTask(task);
+    else void deleteWithUndo(client, id);
+  }
 </script>
 
 <div class="app" class:collapsed class:drawer-open={drawerOpen} class:detail-open={selectedId !== null}>
@@ -141,7 +151,7 @@
             />
           {/if}
           <div class="list-slot">
-            <TaskList {route} {lists} bind:selectedId onready={listReady} />
+            <TaskList bind:this={taskList} {route} {lists} bind:selectedId onready={listReady} />
           </div>
         {/key}
       {/if}
@@ -150,7 +160,7 @@
 
   {#if selectedId}
     <aside class="detail-slot">
-      <TaskDetail taskId={selectedId} {lists} onclose={closeDetail} />
+      <TaskDetail taskId={selectedId} {lists} onclose={closeDetail} ondelete={deleteFromDetail} />
     </aside>
   {/if}
 </div>

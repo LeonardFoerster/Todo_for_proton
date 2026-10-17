@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { TaskSummaryDto } from "@tasks/core-client";
   import Checkbox from "../../components/Checkbox.svelte";
-  import { Flag, Hash, Trash } from "../../icons";
+  import { Flag, GripVertical, Hash, Trash } from "../../icons";
   import { dueLabel } from "../../lib/format-date";
 
   interface Props {
@@ -12,9 +12,12 @@
     ontoggle: (task: TaskSummaryDto, done: boolean) => void;
     onopen: (task: TaskSummaryDto) => void;
     ondelete?: (task: TaskSummaryDto) => void;
+    /** Ziehen am Griff beginnt (nur in sortierbaren Ansichten gesetzt). */
+    ondragstart?: (e: PointerEvent, task: TaskSummaryDto) => void;
+    dragging?: boolean;
   }
 
-  let { task, listName, selected = false, ontoggle, onopen, ondelete }: Props = $props();
+  let { task, listName, selected = false, ontoggle, onopen, ondelete, ondragstart, dragging = false }: Props = $props();
 
   const done = $derived(task.status === "done");
   const due = $derived(task.due ? dueLabel(task.due) : null);
@@ -25,16 +28,30 @@
   class="row"
   class:done
   class:selected
+  class:dragging
   role="option"
   aria-selected={selected}
   aria-label={[task.title, done ? "erledigt" : null, due?.long].filter(Boolean).join(", ")}
   tabindex={selected ? 0 : -1}
   data-task-id={task.id}
-  onclick={() => onopen(task)}
+  onclick={(e) => {
+    e.currentTarget.focus({ preventScroll: true });
+    onopen(task);
+  }}
   onkeydown={(e) => {
     if (e.key === "Enter" && e.target === e.currentTarget) onopen(task);
   }}
 >
+  {#if ondragstart}
+    <span
+      class="grip"
+      aria-hidden="true"
+      onpointerdown={(e) => ondragstart(e, task)}
+      onclick={(e) => e.stopPropagation()}
+    >
+      <GripVertical size={14} strokeWidth={1.75} />
+    </span>
+  {/if}
   <Checkbox
     checked={done}
     label={done ? `Wieder öffnen: ${task.title}` : `Erledigt: ${task.title}`}
@@ -99,6 +116,31 @@
     bottom: 0;
     width: 3px;
     background: var(--color-accent);
+  }
+  .grip {
+    position: absolute;
+    left: 4px;
+    top: 50%;
+    display: grid;
+    place-items: center;
+    width: 16px;
+    height: 24px;
+    border-radius: var(--radius-sm);
+    color: var(--color-text-muted);
+    opacity: 0;
+    transform: translateY(-50%);
+    cursor: grab;
+    touch-action: none;
+  }
+  .row:hover .grip {
+    opacity: 1;
+  }
+  .grip:hover {
+    background: var(--color-bg-active);
+  }
+  .row.dragging {
+    background: var(--color-bg-selected);
+    opacity: 0.6;
   }
   .row:focus-visible {
     outline: 2px solid var(--color-focus-ring);

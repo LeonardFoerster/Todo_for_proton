@@ -4,7 +4,7 @@
   import Checkbox from "../../components/Checkbox.svelte";
   import IconButton from "../../components/IconButton.svelte";
   import { toasts } from "../../components/toasts.svelte";
-  import { CalendarDays, Flag, Hash, X } from "../../icons";
+  import { CalendarDays, Flag, Hash, Trash, X } from "../../icons";
   import { useCoreClient } from "../../lib/context";
   import { dueLabel, dueToInputDate, todayPlus } from "../../lib/format-date";
   import type { ListsState } from "../../lib/lists.svelte";
@@ -14,9 +14,10 @@
     taskId: string;
     lists: ListsState;
     onclose: () => void;
+    ondelete: (id: string) => void;
   }
 
-  let { taskId, lists, onclose }: Props = $props();
+  let { taskId, lists, onclose, ondelete }: Props = $props();
 
   const client = useCoreClient();
   const SAVE_DELAY_MS = 600;
@@ -139,6 +140,7 @@
         <Hash size={14} strokeWidth={1.75} aria-hidden="true" />
         {listName(lists.lists.find((l) => l.id === task!.listId) ?? { id: "", name: "Liste", isInbox: false, sortKey: "" })}
       </span>
+      <IconButton label="Löschen" shortcut="Entf" icon={Trash} size={28} onclick={() => ondelete(task!.id)} />
       <IconButton label="Schließen" shortcut="Esc" icon={X} size={28} onclick={onclose} />
     </header>
 
