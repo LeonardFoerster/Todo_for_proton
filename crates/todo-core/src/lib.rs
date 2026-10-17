@@ -8,6 +8,8 @@ pub mod domain;
 pub mod error;
 pub mod ports;
 
+pub use error::{CoreError, CoreResult};
+
 #[cfg(test)]
 mod tests {
     #[test]

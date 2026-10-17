@@ -7,7 +7,12 @@ description = "Domain, Use-Cases und Ports (Interfaces). Kein IO."
 
 [dependencies]
 serde.workspace = true
+thiserror.workspace = true
 uuid.workspace = true
+
+[features]
+# Test-Doubles (z. B. `FixedClock`, `SteppingClock`) für Tests anderer Crates.
+test-support = []
 
 [lints]
 workspace = true
