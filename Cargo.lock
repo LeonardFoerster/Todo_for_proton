@@ -877,6 +877,7 @@ dependencies = [
 name = "todo-sync"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "futures",
  "proptest",
  "ruzstd",

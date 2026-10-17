@@ -22,6 +22,7 @@ zstd = { version = "0.14.3", default-features = false, optional = true }
 ruzstd = { version = "0.9.0", default-features = false, features = ["std"], optional = true }
 
 [dev-dependencies]
+async-trait.workspace = true
 todo-core = { workspace = true, features = ["test-support"] }
 todo-crypto.workspace = true
 todo-remote-fs.workspace = true
