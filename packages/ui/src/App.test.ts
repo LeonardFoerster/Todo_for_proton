@@ -4,14 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import App from "./App.svelte";
 
-// jsdom kennt matchMedia/rAF nicht vollständig.
 beforeEach(() => {
-  window.matchMedia ??= ((query: string) => ({
-    matches: false,
-    media: query,
-    addEventListener() {},
-    removeEventListener() {},
-  })) as unknown as typeof window.matchMedia;
   location.hash = "";
   localStorage.clear();
 });

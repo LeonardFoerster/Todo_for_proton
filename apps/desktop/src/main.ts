@@ -10,5 +10,5 @@ addEventListener("online", () => void client.setOnline(true));
 addEventListener("offline", () => void client.setOnline(false));
 
 if (import.meta.env.VITE_TASKS_SELFTEST) {
-  void import("./selftest").then((m) => setTimeout(() => void m.runSelftest(), 500));
+  void import("./selftest").then((m) => setTimeout(() => void m.runSelftest(client), 500));
 }

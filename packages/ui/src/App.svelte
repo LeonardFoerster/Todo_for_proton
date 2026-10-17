@@ -1,17 +1,18 @@
 <script lang="ts">
   import type { CoreClient } from "@tasks/core-client";
-  import { onMount, tick } from "svelte";
+  import { onMount } from "svelte";
   import IconButton from "./components/IconButton.svelte";
   import Toaster from "./components/Toaster.svelte";
   import { toasts } from "./components/toasts.svelte";
   import Sidebar from "./features/sidebar/Sidebar.svelte";
+  import TaskList from "./features/task-list/TaskList.svelte";
   import { PanelLeft } from "./icons";
   import { setCoreClient } from "./lib/context";
   import { ListsState } from "./lib/lists.svelte";
   import { readFlag, writeFlag } from "./lib/preferences";
-  import { Router } from "./lib/router.svelte";
+  import { routeHash, Router } from "./lib/router.svelte";
   import { SyncState } from "./lib/sync.svelte";
-  import { routeTitle, SMART_VIEWS } from "./lib/views";
+  import { routeTitle } from "./lib/views";
   import { followSystemTheme } from "./theme/theme";
   import "./tokens/tokens.css";
 
@@ -33,6 +34,8 @@
   let collapsed = $state(readFlag(COLLAPSED_KEY));
   let drawerOpen = $state(false);
   let ready = $state(false);
+  let selectedId = $state<string | null>(null);
+  let reportedReady = false;
 
   const route = $derived(router.route);
   const title = $derived(routeTitle(route, lists.lists));
@@ -47,8 +50,6 @@
       }
       stops.push(lists.start(), sync.start());
       ready = true;
-      await tick();
-      requestAnimationFrame(() => requestAnimationFrame(() => void client.ready()));
     })();
     return () => stops.forEach((stop) => stop());
   });
@@ -59,6 +60,13 @@
       router.navigate({ view: "inbox" }, { replace: true });
     }
   });
+
+  /** Erste Liste steht: Startzeit melden und Sync anstoßen (einmal). */
+  function listReady() {
+    if (reportedReady) return;
+    reportedReady = true;
+    void client.ready();
+  }
 
   function toggleCollapse() {
     if (matchMedia("(max-width: 699px)").matches) {
@@ -115,9 +123,9 @@
     </header>
     <div class="pane-body">
       {#if ready}
-        <div class="empty">
-          <p>{SMART_VIEWS.find((v) => v.kind === route.view)?.empty ?? "Diese Liste ist leer."}</p>
-        </div>
+        {#key routeHash(route)}
+          <TaskList {route} {lists} bind:selectedId onready={listReady} />
+        {/key}
       {/if}
     </div>
   </main>
@@ -185,14 +193,6 @@
     flex: 1;
     min-height: 0;
     position: relative;
-  }
-  .empty {
-    display: grid;
-    place-items: center;
-    height: 100%;
-    padding: var(--space-8);
-    color: var(--color-text-muted);
-    text-align: center;
   }
   .scrim {
     display: none;

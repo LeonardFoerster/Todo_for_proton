@@ -16,9 +16,11 @@
     /** Inhalt unterhalb der Zeilen (z. B. Abschnitt „Erledigt“). */
     footer?: Snippet;
     label?: string;
+    /** ARIA-Rolle des Containers (`list` oder `listbox`). */
+    role?: "list" | "listbox";
   }
 
-  let { items, key, row, rowHeight = 36, overscan = 8, onEndReached, footer, label }: Props = $props();
+  let { items, key, row, rowHeight = 36, overscan = 8, onEndReached, footer, label, role = "list" }: Props = $props();
 
   let viewport: HTMLDivElement;
   let scrollTop = $state(0);
@@ -34,6 +36,7 @@
 
   /** Scrollt so wenig wie nötig, damit Zeile `index` sichtbar ist. */
   export function scrollToIndex(index: number) {
+    if (!viewport) return;
     const top = index * rowHeight;
     if (top < viewport.scrollTop) viewport.scrollTop = top;
     else if (top + rowHeight > viewport.scrollTop + viewport.clientHeight) {
@@ -47,8 +50,9 @@
   bind:this={viewport}
   bind:clientHeight={height}
   onscroll={() => (scrollTop = viewport.scrollTop)}
-  role="list"
+  {role}
   aria-label={label}
+  tabindex="-1"
 >
   <div class="spacer" style:height="{items.length * rowHeight}px">
     <div class="window" style:transform="translateY({first * rowHeight}px)">
