@@ -3,22 +3,34 @@
 //! Muster: Ein Use-Case ist ein Struct mit seinen Abhängigkeiten ([`Deps`]) und einer Methode
 //! `execute(&self, input) -> CoreResult<Output>`.
 
+mod complete_task;
+mod create_task;
 mod create_task_list;
+mod delete_task;
 mod delete_task_list;
 mod ensure_inbox;
+mod move_task;
 mod rename_task_list;
+mod reopen_task;
+mod update_task;
 
 use std::{fmt, sync::Arc};
 
+pub use complete_task::{CompleteTask, CompleteTaskInput};
+pub use create_task::{CreateTask, CreateTaskInput};
 pub use create_task_list::{CreateTaskList, CreateTaskListInput};
+pub use delete_task::{DeleteTask, DeleteTaskInput};
 pub use delete_task_list::{DeleteTaskList, DeleteTaskListInput, DeleteTaskListOutput};
 pub use ensure_inbox::EnsureInbox;
+pub use move_task::{MoveTask, MoveTaskInput};
 pub use rename_task_list::{RenameTaskList, RenameTaskListInput};
+pub use reopen_task::{ReopenTask, ReopenTaskInput};
+pub use update_task::{TaskPatch, UpdateTask, UpdateTaskInput};
 
 use crate::{
-    domain::SortKey,
+    domain::{SortKey, Task, TaskId},
     ports::{Clock, PageRequest, TaskQuery, TaskRepository, TaskSummary, PAGE_LIMIT_MAX},
-    CoreResult,
+    CoreError, CoreResult,
 };
 
 /// Gemeinsame Abhängigkeiten aller Use-Cases. Günstig zu klonen.
@@ -56,6 +68,13 @@ pub(crate) async fn collect_all(
             None => return Ok(items),
         }
     }
+}
+
+/// Lädt eine Task oder liefert `CoreError::NotFound`.
+pub(crate) async fn load_task(repo: &dyn TaskRepository, id: TaskId) -> CoreResult<Task> {
+    repo.get_task(id)
+        .await?
+        .ok_or_else(|| CoreError::NotFound(format!("task {id}")))
 }
 
 /// Schlüssel für eine neue Position direkt hinter `last` (bzw. den ersten, wenn leer).
