@@ -14,3 +14,8 @@ crate-type = ["cdylib", "rlib"]
 
 [lints]
 workspace = true
+
+# Zufallsquelle für UUIDv7-IDs im Browser (crypto.getRandomValues). Gehört in die
+# Composition Root, damit todo-core frei von wasm-bindgen bleibt.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = { workspace = true, features = ["js"] }
