@@ -9,7 +9,8 @@
   import TaskDetail from "./features/task-detail/TaskDetail.svelte";
   import TaskList from "./features/task-list/TaskList.svelte";
   import ShortcutHelp from "./features/shell/ShortcutHelp.svelte";
-  import { Keyboard, PanelLeft } from "./icons";
+  import { Keyboard, PanelLeft, Settings } from "./icons";
+  import type SettingsDialogType from "./features/account/SettingsDialog.svelte";
   import { setCoreClient } from "./lib/context";
   import { ListsState } from "./lib/lists.svelte";
   import { readFlag, writeFlag } from "./lib/preferences";
@@ -45,6 +46,9 @@
   /** Im Detail-Panel geöffnete Task; folgt der Auswahl, solange das Panel offen ist. */
   let openId = $state<string | null>(null);
   let showShortcuts = $state(false);
+  let showSettings = $state(false);
+  /** Einstellungen/Login werden erst bei Bedarf geladen (eigener Chunk). */
+  let SettingsDialog = $state<typeof SettingsDialogType | null>(null);
   let quickAdd = $state<QuickAdd>();
   let taskList = $state<TaskList>();
   let reportedReady = false;
@@ -106,6 +110,12 @@
     quickAdd?.focus();
   }
 
+  async function openSettings() {
+    drawerOpen = false;
+    SettingsDialog ??= (await import("./features/account/SettingsDialog.svelte")).default;
+    showSettings = true;
+  }
+
   function closeDetail() {
     openId = null;
     void taskList?.focusSelected();
@@ -163,13 +173,14 @@
   function escape(e: KeyboardEvent) {
     const target = e.target as HTMLElement | null;
     if (showShortcuts) showShortcuts = false;
+    else if (showSettings) showSettings = false;
     else if (target && target.matches("input, textarea, select")) target.blur();
     else if (openId) closeDetail();
     else if (drawerOpen) drawerOpen = false;
     else selectedId = null;
   }
 
-  shortcuts.setModal(() => showShortcuts);
+  shortcuts.setModal(() => showShortcuts || showSettings);
   shortcuts.register(
     { keys: ["n"], description: "Neue Task", group: "Allgemein", run: newTask },
     { keys: ["ctrl+n"], description: "Neue Task (auch beim Tippen)", group: "Allgemein", inInputs: true, run: newTask },
@@ -226,7 +237,8 @@
       oncreatelist={createList}
       ontogglecollapse={toggleCollapse}
       onnavigate={() => (drawerOpen = false)}
-      onsync={() => void client.sync.now()}
+      onlogin={() => void openSettings()}
+      onsync={() => void openSettings()}
     />
   </aside>
   {#if drawerOpen}
@@ -241,6 +253,7 @@
       <h1 id="view-title">{title}</h1>
       <span class="header-actions">
         <IconButton label="Tastaturkürzel" shortcut="?" icon={Keyboard} onclick={() => (showShortcuts = true)} />
+        <IconButton label="Einstellungen" icon={Settings} onclick={() => void openSettings()} />
       </span>
     </header>
     <div class="pane-body">
@@ -271,6 +284,16 @@
 <Toaster />
 {#if showShortcuts}
   <ShortcutHelp shortcuts={shortcuts.list()} onclose={() => (showShortcuts = false)} />
+{/if}
+{#if showSettings && SettingsDialog}
+  <SettingsDialog
+    {sync}
+    onclose={() => (showSettings = false)}
+    onshortcuts={() => {
+      showSettings = false;
+      showShortcuts = true;
+    }}
+  />
 {/if}
 
 <style>
@@ -318,6 +341,8 @@
     flex: none;
   }
   .header-actions {
+    display: flex;
+    gap: var(--space-1);
     margin-left: auto;
   }
   h1 {

@@ -28,3 +28,6 @@ export { default as ArrowDown } from "@lucide/svelte/icons/arrow-down";
 export { default as ArrowUp } from "@lucide/svelte/icons/arrow-up";
 export { default as PanelRight } from "@lucide/svelte/icons/panel-right";
 export { default as Keyboard } from "@lucide/svelte/icons/keyboard";
+export { default as Copy } from "@lucide/svelte/icons/copy";
+export { default as ExternalLink } from "@lucide/svelte/icons/external-link";
+export { default as ShieldCheck } from "@lucide/svelte/icons/shield-check";

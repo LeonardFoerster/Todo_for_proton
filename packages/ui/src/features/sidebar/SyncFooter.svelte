@@ -37,7 +37,12 @@
   });
   const needsLogin = $derived(status.state === "disabled" || status.state === "authRequired");
   const tooltip = $derived(
-    [view.text, account, status.lastSuccess ? `Zuletzt: ${new Date(status.lastSuccess).toLocaleString()}` : null]
+    [
+      view.text,
+      account,
+      status.lastSuccess ? `Zuletzt synchronisiert: ${new Date(status.lastSuccess).toLocaleString("de-DE")}` : null,
+      status.state !== "disabled" && pending > 0 ? `${pending} lokale Änderung${pending === 1 ? "" : "en"} ausstehend` : null,
+    ]
       .filter(Boolean)
       .join("\n"),
   );

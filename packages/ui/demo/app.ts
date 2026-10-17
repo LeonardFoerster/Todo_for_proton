@@ -10,7 +10,7 @@ const params = new URLSearchParams(location.search);
 const theme = params.get("theme");
 if (theme === "dark" || theme === "light") setThemePreference(theme);
 if (params.has("collapsed")) localStorage.setItem("tasks.sidebar-collapsed", params.get("collapsed") === "1" ? "1" : "0");
-const client = new FakeCoreClient({ latencyMs: Number(params.get("latency") ?? 0) });
+const client = new FakeCoreClient({ latencyMs: Number(params.get("latency") ?? 0), loginPolls: Number(params.get("polls") ?? 1) });
 await seed(client, Number(params.get("n") ?? 0));
 mount(App, { target: document.getElementById("app")!, props: { client } });
 
@@ -31,5 +31,21 @@ if (params.has("menu")) {
     const row = document.querySelectorAll<HTMLElement>('[role="option"]')[1];
     const r = row.getBoundingClientRect();
     row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.left + 220, clientY: r.top + 24 }));
+  }, 400);
+}
+// ?settings=1: Einstellungen öffnen; &login=1: Anmeldung starten (Fake: wartet einen Poll, dann angemeldet).
+if (params.has("settings")) {
+  setTimeout(async () => {
+    document.querySelector<HTMLElement>('[aria-label="Einstellungen"]')?.click();
+    if (params.has("login")) {
+      for (let i = 0; i < 20; i++) {
+        const button = [...document.querySelectorAll<HTMLButtonElement>("dialog button")].find((b) => /anmelden/i.test(b.textContent ?? ""));
+        if (button && !button.disabled) {
+          button.click();
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
   }, 400);
 }

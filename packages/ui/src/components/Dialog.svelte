@@ -19,6 +19,8 @@
     // Ohne showModal (ältere Engines, jsdom) wenigstens sichtbar öffnen.
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "");
+    // Fokus auf den Dialog selbst statt auf den ersten Button (sonst erscheint dessen Tooltip).
+    dialog.focus();
     return () => (typeof dialog.close === "function" ? dialog.close() : dialog.removeAttribute("open"));
   });
 </script>
@@ -27,6 +29,7 @@
   bind:this={dialog}
   style:--width="{width}px"
   aria-labelledby="dialog-title"
+  tabindex="-1"
   oncancel={(e) => {
     e.preventDefault();
     onclose();
@@ -53,6 +56,9 @@
     color: var(--color-text);
     box-shadow: var(--shadow-popover);
     animation: dialog-in var(--duration-base) var(--ease);
+  }
+  dialog:focus {
+    outline: none;
   }
   dialog::backdrop {
     background: rgb(0 0 0 / 0.35);

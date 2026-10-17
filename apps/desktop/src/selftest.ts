@@ -380,7 +380,75 @@ const p710: Step[] = [
   ],
 ];
 
-const SUITES: Record<string, Step[]> = { base, p707, p708a, p708b, p709a, p709b, p710 };
+const syncLabel = () => document.querySelector('[aria-label^="Sync-Status:"]')?.getAttribute("aria-label") ?? "";
+
+// P7-11 ohne Konto: Einstellungen, Anbieter-Hinweis, App bleibt lokal nutzbar.
+const p711: Step[] = [
+  [
+    "Ohne Login: Status „Nur auf diesem Gerät“",
+    async () => void (await until("Status", () => syncLabel().includes("Nur auf diesem Gerät"))),
+  ],
+  [
+    "Einstellungen (lazy) mit Anbieter und Pflichthinweis",
+    async () => {
+      await click("button", "Einstellungen");
+      const dialog = await until("Dialog", () => document.querySelector<HTMLDialogElement>("dialog[open]"), 5000);
+      const login = await until("Login-Button", () =>
+        [...dialog.querySelectorAll("button")].find((b) => b.textContent?.includes("Mit Proton anmelden")),
+      );
+      if ((login as HTMLButtonElement).disabled) throw new Error("Login nicht verfügbar (Schlüsselbund?)");
+      if (!dialog.textContent?.includes("not officially supported by Proton")) throw new Error("Hinweis fehlt");
+      press("Escape");
+      await until("Dialog zu", () => !document.querySelector("dialog[open]"));
+    },
+  ],
+];
+
+// P7-11 live: wartet auf den Login im Browser (durch den Menschen), dann Statuswechsel.
+const seen: string[] = [];
+const p711live: Step[] = [
+  [
+    "Anmeldung abwarten (bis 10 min) – bitte in den Einstellungen anmelden",
+    async (client) => {
+      client.onSyncStatus((st) => {
+        if (seen.at(-1) !== st.state) seen.push(st.state);
+      });
+      const end = Date.now() + 10 * 60_000;
+      for (;;) {
+        const session = await client.auth.current();
+        if (session) return session.accountLabel.replace(/(.).*(@.*)/, "$1…$2");
+        if (Date.now() > end) throw new Error("kein Login");
+        await sleep(2000);
+      }
+    },
+  ],
+  [
+    "Status: Synchronisiert",
+    async () => {
+      await until("Synchronisiert", () => /Synchronisiert|ausstehend/.test(syncLabel()), 120_000);
+      return `${syncLabel()} · Verlauf ${seen.join(" → ")}`;
+    },
+  ],
+  [
+    "Offline (WebView-Ereignis) → Status Offline",
+    async () => {
+      dispatchEvent(new Event("offline"));
+      await until("Offline", () => syncLabel().includes("Offline"), 10_000);
+      return syncLabel();
+    },
+  ],
+  [
+    "Wieder online → Synchronisiere → Synchronisiert",
+    async () => {
+      const before = seen.length;
+      dispatchEvent(new Event("online"));
+      await until("Synchronisiert", () => seen.length > before && /Synchronisiert/.test(syncLabel()), 120_000);
+      return `Verlauf ${seen.join(" → ")}`;
+    },
+  ],
+];
+
+const SUITES: Record<string, Step[]> = { base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */
 export async function runSelftest(client: CoreClient, selection: string): Promise<void> {
