@@ -235,6 +235,20 @@ impl Op {
     }
 }
 
+impl FieldValue {
+    /// Kodiert einen einzelnen Wert (Register im Speicher).
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        postcard::to_allocvec(self).expect("serializing to a Vec cannot fail")
+    }
+
+    /// # Errors
+    /// `CoreError::Validation` bei ungültigen Daten.
+    pub fn decode(bytes: &[u8]) -> CoreResult<Self> {
+        postcard::from_bytes(bytes).map_err(invalid_op)
+    }
+}
+
 /// Kodiert eine Op-Liste (Inhalt eines Segments, vor Kompression und Verschlüsselung).
 #[must_use]
 pub fn encode_ops(ops: &[Op]) -> Vec<u8> {
@@ -455,6 +469,10 @@ mod tests {
             assert_eq!(&Op::decode(&op.encode()).unwrap(), op);
         }
         assert_eq!(decode_ops(&encode_ops(&ops)).unwrap(), ops);
+        for (_, value) in sample_values() {
+            assert_eq!(FieldValue::decode(&value.encode()).unwrap(), value);
+        }
+        assert!(FieldValue::decode(&[0xff]).is_err());
     }
 
     #[test]

@@ -13,6 +13,8 @@
 
 use futures::executor::block_on;
 
+pub use super::sync_contract::*;
+
 use crate::{
     domain::{Due, LocalDay, NaiveDate, SortKey, Task, TaskId, TaskList, TaskListId, Timestamp},
     ports::{
@@ -46,7 +48,23 @@ macro_rules! repository_contract_tests {
             filter_today_and_upcoming,
             filter_completed_newest_first,
             filter_status_and_tag,
-            summary_matches_task
+            summary_matches_task,
+            sync_device_id_is_stable,
+            commit_writes_ops_to_outbox,
+            update_writes_only_changed_fields,
+            delete_writes_tombstone_and_op,
+            failed_commit_writes_neither_state_nor_ops,
+            mark_ops_pushed_removes_prefix,
+            entity_state_tracks_field_clocks,
+            apply_remote_creates_entities_and_sets_cursor,
+            apply_remote_is_idempotent,
+            apply_remote_merges_field_wise_with_local,
+            apply_remote_delete_wins,
+            apply_remote_task_without_list_goes_to_inbox,
+            apply_remote_incomplete_entity_is_not_materialized,
+            apply_remote_advances_local_hlc,
+            inboxes_of_two_devices_merge,
+            sync_cursors_and_values_roundtrip,
         );
     };
     (@cases $make:expr; $($case:ident),* $(,)?) => {
@@ -81,18 +99,34 @@ pub fn run_all<R: TaskRepository>(make: impl Fn() -> R) {
     filter_completed_newest_first(make());
     filter_status_and_tag(make());
     summary_matches_task(make());
+    sync_device_id_is_stable(make());
+    commit_writes_ops_to_outbox(make());
+    update_writes_only_changed_fields(make());
+    delete_writes_tombstone_and_op(make());
+    failed_commit_writes_neither_state_nor_ops(make());
+    mark_ops_pushed_removes_prefix(make());
+    entity_state_tracks_field_clocks(make());
+    apply_remote_creates_entities_and_sets_cursor(make());
+    apply_remote_is_idempotent(make());
+    apply_remote_merges_field_wise_with_local(make());
+    apply_remote_delete_wins(make());
+    apply_remote_task_without_list_goes_to_inbox(make());
+    apply_remote_incomplete_entity_is_not_materialized(make());
+    apply_remote_advances_local_hlc(make());
+    inboxes_of_two_devices_merge(make());
+    sync_cursors_and_values_roundtrip(make());
 }
 
 // --- Hilfen ------------------------------------------------------------------------------------
 
-struct Fixture<R> {
-    repo: R,
-    clock: SteppingClock,
-    inbox: TaskList,
-    work: TaskList,
+pub(super) struct Fixture<R> {
+    pub(super) repo: R,
+    pub(super) clock: SteppingClock,
+    pub(super) inbox: TaskList,
+    pub(super) work: TaskList,
 }
 
-fn setup<R: TaskRepository>(repo: R) -> Fixture<R> {
+pub(super) fn setup<R: TaskRepository>(repo: R) -> Fixture<R> {
     let clock = SteppingClock::new(Timestamp::from_millis(1_700_000_000_000), 1);
     let inbox = TaskList::inbox(SortKey::first(), &clock);
     let work = TaskList::new("Arbeit", after(&SortKey::first()), &clock).expect("list");
@@ -121,12 +155,12 @@ fn date(day: u32) -> NaiveDate {
 }
 
 impl<R: TaskRepository> Fixture<R> {
-    fn task(&self, list: TaskListId, title: &str, key: SortKey) -> Task {
+    pub(super) fn task(&self, list: TaskListId, title: &str, key: SortKey) -> Task {
         Task::new(list, title, key, &self.clock).expect("task")
     }
 
     /// `n` Tasks mit aufsteigenden Sort-Keys, in dieser Reihenfolge gespeichert und zurückgegeben.
-    fn add_tasks(&self, list: TaskListId, n: usize) -> Vec<Task> {
+    pub(super) fn add_tasks(&self, list: TaskListId, n: usize) -> Vec<Task> {
         let mut key = SortKey::first();
         let mut tasks = Vec::with_capacity(n);
         for i in 0..n {
@@ -137,7 +171,7 @@ impl<R: TaskRepository> Fixture<R> {
         tasks
     }
 
-    fn save(&self, tasks: &[Task]) {
+    pub(super) fn save(&self, tasks: &[Task]) {
         let set = tasks
             .iter()
             .cloned()
@@ -168,7 +202,7 @@ impl<R: TaskRepository> Fixture<R> {
         }
     }
 
-    fn get(&self, id: TaskId) -> Option<Task> {
+    pub(super) fn get(&self, id: TaskId) -> Option<Task> {
         block_on(self.repo.get_task(id)).expect("get_task")
     }
 }

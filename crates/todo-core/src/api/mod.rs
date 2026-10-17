@@ -21,11 +21,12 @@ use crate::{
         Deps, EnsureInbox, MoveTask, MoveTaskInput, RenameTaskList, RenameTaskListInput,
         ReopenTask, ReopenTaskInput, TaskPatch, UpdateTask, UpdateTaskInput,
     },
-    domain::{Task, TaskId, TaskList, TaskListId},
+    domain::{DeviceId, Task, TaskId, TaskList, TaskListId},
     ports::{
         ChangeSet, Clock, CommitReceipt, EntityRef, MaybeSend, MaybeSync, Page, PageRequest,
         TaskQuery, TaskRepository, TaskSummary,
     },
+    sync::{EntityState, Op, RemoteBatch, RemoteReceipt},
     CoreError, CoreResult,
 };
 
@@ -71,12 +72,21 @@ impl CoreApi {
         let sinks: Sinks = Arc::default();
         let repo = Arc::new(NotifyingRepository {
             inner: repo,
+            clock: clock.clone(),
             sinks: sinks.clone(),
         });
         Self {
             deps: Deps::new(repo, clock),
             sinks,
         }
+    }
+
+    /// Das Repository, wie die Use-Cases es sehen: Jeder Commit bekommt die aktuelle Zeit
+    /// (HLC der Ops), jede Änderung – auch durch `apply_remote` – wird als Event gemeldet.
+    /// Die Sync-Engine muss **dieses** Repository verwenden, damit die UI Remote-Änderungen sieht.
+    #[must_use]
+    pub fn repository(&self) -> Arc<dyn TaskRepository> {
+        self.deps.repo.clone()
     }
 
     /// Registriert einen Empfänger für alle folgenden Events.
@@ -248,12 +258,12 @@ fn write_sinks(sinks: &Sinks) -> std::sync::RwLockWriteGuard<'_, Vec<Box<dyn Eve
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-fn emit(sinks: &Sinks, receipt: &CommitReceipt) {
-    if receipt.changed.is_empty() {
+fn emit(sinks: &Sinks, changed: &[EntityRef]) {
+    if changed.is_empty() {
         return;
     }
     let (mut tasks, mut lists) = (Vec::new(), Vec::new());
-    for entity in &receipt.changed {
+    for entity in changed {
         match entity {
             EntityRef::Task(id) => tasks.push(id.to_string()),
             EntityRef::TaskList(id) => lists.push(id.to_string()),
@@ -268,9 +278,11 @@ fn emit(sinks: &Sinks, receipt: &CommitReceipt) {
     }
 }
 
-/// Decorator: meldet jeden erfolgreichen Commit an die Sinks. So muss kein Use-Case Events kennen.
+/// Decorator: stempelt Commits mit der aktuellen Zeit und meldet jede erfolgreiche Änderung an
+/// die Sinks. So muss kein Use-Case Events oder Sync kennen.
 struct NotifyingRepository {
     inner: Arc<dyn TaskRepository>,
+    clock: Arc<dyn Clock>,
     sinks: Sinks,
 }
 
@@ -298,9 +310,131 @@ impl TaskRepository for NotifyingRepository {
     }
 
     async fn commit(&self, changes: ChangeSet) -> CoreResult<CommitReceipt> {
+        let changes = changes.at(self.clock.now());
         let receipt = self.inner.commit(changes).await?;
-        emit(&self.sinks, &receipt);
+        emit(&self.sinks, &receipt.changed);
         Ok(receipt)
+    }
+
+    async fn device_id(&self) -> CoreResult<DeviceId> {
+        self.inner.device_id().await
+    }
+
+    async fn pending_ops(&self, limit: u32) -> CoreResult<Vec<Op>> {
+        self.inner.pending_ops(limit).await
+    }
+
+    async fn pending_op_count(&self) -> CoreResult<u64> {
+        self.inner.pending_op_count().await
+    }
+
+    async fn mark_ops_pushed(&self, up_to: u64) -> CoreResult<()> {
+        self.inner.mark_ops_pushed(up_to).await
+    }
+
+    async fn apply_remote(&self, batch: RemoteBatch) -> CoreResult<RemoteReceipt> {
+        let receipt = self.inner.apply_remote(batch).await?;
+        emit(&self.sinks, &receipt.changed);
+        Ok(receipt)
+    }
+
+    async fn sync_cursor(&self, device: DeviceId) -> CoreResult<Option<u64>> {
+        self.inner.sync_cursor(device).await
+    }
+
+    async fn set_sync_cursor(&self, device: DeviceId, seq: u64) -> CoreResult<()> {
+        self.inner.set_sync_cursor(device, seq).await
+    }
+
+    async fn entity_state(&self, entity: EntityRef) -> CoreResult<Option<EntityState>> {
+        self.inner.entity_state(entity).await
+    }
+
+    async fn sync_value(&self, key: &str) -> CoreResult<Option<String>> {
+        self.inner.sync_value(key).await
+    }
+
+    async fn set_sync_value(&self, key: &str, value: String) -> CoreResult<()> {
+        self.inner.set_sync_value(key, value).await
+    }
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use std::sync::Mutex;
+
+    use futures::executor::block_on;
+
+    use super::*;
+    use crate::{
+        domain::{DeviceId, SortKey, Timestamp},
+        ports::FixedClock,
+        sync::{task_fields, HlcState, OpClock, OpKind},
+        testing::InMemoryTaskRepository,
+    };
+
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<CoreEvent>>);
+
+    impl EventSink for Recorder {
+        fn emit(&self, event: CoreEvent) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
+    fn api() -> (CoreApi, Arc<Recorder>) {
+        let api = CoreApi::new(
+            Arc::new(InMemoryTaskRepository::new()),
+            Arc::new(FixedClock(Timestamp::from_millis(1_234))),
+        );
+        let recorder = Arc::new(Recorder::default());
+        api.subscribe(Box::new(recorder.clone()));
+        (api, recorder)
+    }
+
+    #[test]
+    fn commits_are_stamped_with_the_api_clock() {
+        let (api, _) = api();
+        block_on(api.ensure_inbox()).unwrap();
+        let ops = block_on(api.repository().pending_ops(10)).unwrap();
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].hlc.wall_ms, 1_234);
+    }
+
+    #[test]
+    fn remote_changes_are_reported_as_events() {
+        let (api, recorder) = api();
+        let inbox = block_on(api.ensure_inbox()).unwrap();
+        recorder.0.lock().unwrap().clear();
+
+        let clock = FixedClock(Timestamp::from_millis(5));
+        let task = Task::new(TaskListId::INBOX, "von B", SortKey::first(), &clock).unwrap();
+        let mut remote = OpClock::new(HlcState::new(DeviceId::new()), 0);
+        let op = remote.stamp(
+            Timestamp::from_millis(10),
+            EntityRef::Task(task.id()),
+            OpKind::Create {
+                fields: task_fields(&task),
+            },
+        );
+        let batch = RemoteBatch {
+            ops: vec![op],
+            cursors: Vec::new(),
+            now: Timestamp::from_millis(20),
+        };
+        block_on(api.repository().apply_remote(batch)).unwrap();
+        assert_eq!(
+            *recorder.0.lock().unwrap(),
+            [CoreEvent::Changed {
+                tasks: vec![task.id().to_string()],
+                lists: Vec::new(),
+            }]
+        );
+        assert_eq!(inbox.id, TaskListId::INBOX.to_string());
+        assert_eq!(
+            block_on(api.get_task(task.id().to_string())).unwrap().title,
+            "von B"
+        );
     }
 }
 

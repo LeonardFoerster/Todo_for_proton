@@ -23,7 +23,7 @@ use futures::channel::oneshot;
 use rusqlite::Connection;
 use todo_core::{CoreError, CoreResult};
 
-use crate::{error::storage, migrations};
+use crate::{error::storage, migrations, sync_store};
 
 /// Wartezeit, wenn ein anderer Prozess (z. B. die Dev-CLI) die Datei gerade sperrt.
 pub(crate) const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -52,6 +52,7 @@ impl Database {
         let mut conn = Connection::open(path).map_err(storage)?;
         configure(&conn, true)?;
         migrations::migrate(&mut conn)?;
+        sync_store::init(&mut conn)?;
         Self::start(conn)
     }
 
@@ -60,6 +61,7 @@ impl Database {
         let mut conn = Connection::open_in_memory().map_err(storage)?;
         configure(&conn, false)?;
         migrations::migrate(&mut conn)?;
+        sync_store::init(&mut conn)?;
         Self::start(conn)
     }
 

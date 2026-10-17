@@ -10,7 +10,10 @@ use todo_core::{CoreError, CoreResult};
 use crate::error::storage;
 
 /// Alle Migrationen in Reihenfolge.
-pub(crate) const MIGRATIONS: &[&str] = &[include_str!("../migrations/0001_init.sql")];
+pub(crate) const MIGRATIONS: &[&str] = &[
+    include_str!("../migrations/0001_init.sql"),
+    include_str!("../migrations/0002_sync.sql"),
+];
 
 /// Bringt das Schema auf den neuesten Stand. Mehrfacher Aufruf ist harmlos.
 ///
@@ -21,7 +24,7 @@ pub(crate) fn migrate(conn: &mut Connection) -> CoreResult<()> {
     run(conn, MIGRATIONS)
 }
 
-fn run(conn: &mut Connection, migrations: &[&str]) -> CoreResult<()> {
+pub(crate) fn run(conn: &mut Connection, migrations: &[&str]) -> CoreResult<()> {
     let current = version(conn)?;
     let latest = migrations.len();
     if current > latest {
@@ -75,7 +78,19 @@ mod tests {
         assert_eq!(version(&conn).unwrap(), 0);
         migrate(&mut conn).unwrap();
         assert_eq!(version(&conn).unwrap(), MIGRATIONS.len());
-        assert_eq!(tables(&conn), ["meta", "task_lists", "tasks"]);
+        assert_eq!(
+            tables(&conn),
+            [
+                "field_clocks",
+                "meta",
+                "outbox_ops",
+                "remote_cursors",
+                "sync_meta",
+                "task_lists",
+                "tasks",
+                "tombstones"
+            ]
+        );
     }
 
     #[test]

@@ -4,11 +4,12 @@ use std::path::Path;
 
 use rusqlite::{params_from_iter, Connection, TransactionBehavior};
 use todo_core::{
-    domain::{Task, TaskId, TaskList, TaskListId},
+    domain::{DeviceId, Task, TaskId, TaskList, TaskListId},
     ports::{
         Change, ChangeSet, CommitReceipt, EntityRef, Page, PageRequest, SmartView, TaskQuery,
         TaskRepository, TaskSummary, PAGE_LIMIT_MAX,
     },
+    sync::{self, EntityState, Op, RemoteBatch, RemoteReceipt, ReplicaStore},
     CoreError, CoreResult,
 };
 
@@ -19,6 +20,7 @@ use crate::{
         read_list, read_summary, read_task, write_list, write_task, LIST_COLUMNS, TASK_COLUMNS,
     },
     query::{list_tasks_sql, Position},
+    sync_store::{self, SqliteReplica},
 };
 
 /// Lokaler Speicher auf einer SQLite-Datei (WAL). Alle Zugriffe laufen über einen eigenen
@@ -147,14 +149,81 @@ impl TaskRepository for SqliteTaskRepository {
                 let tx = conn
                     .transaction_with_behavior(TransactionBehavior::Immediate)
                     .map_err(storage)?;
-                for change in changes {
+                for change in sync::record_local(&mut SqliteReplica::new(&tx), changes)? {
                     apply(&tx, &change)?;
                 }
                 // Aufgeschobene Fremdschlüssel werden hier geprüft; bei Verstoß rollt der Drop
-                // der Transaktion alles zurück.
+                // der Transaktion alles zurück – Zustand, Outbox und Register gemeinsam.
                 tx.commit().map_err(storage)?;
                 Ok(CommitReceipt { changed })
             })
+            .await
+    }
+
+    async fn device_id(&self) -> CoreResult<DeviceId> {
+        self.db.call(|conn| sync_store::device_id(conn)).await
+    }
+
+    async fn pending_ops(&self, limit: u32) -> CoreResult<Vec<Op>> {
+        self.db
+            .call(move |conn| sync_store::pending_ops(conn, limit))
+            .await
+    }
+
+    async fn pending_op_count(&self) -> CoreResult<u64> {
+        self.db
+            .call(|conn| sync_store::pending_op_count(conn))
+            .await
+    }
+
+    async fn mark_ops_pushed(&self, up_to: u64) -> CoreResult<()> {
+        self.db
+            .call(move |conn| sync_store::mark_ops_pushed(conn, up_to))
+            .await
+    }
+
+    async fn apply_remote(&self, batch: RemoteBatch) -> CoreResult<RemoteReceipt> {
+        self.db
+            .call(move |conn| {
+                let tx = conn
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .map_err(storage)?;
+                let receipt = sync::apply_remote(&mut SqliteReplica::new(&tx), &batch)?;
+                tx.commit().map_err(storage)?;
+                Ok(receipt)
+            })
+            .await
+    }
+
+    async fn sync_cursor(&self, device: DeviceId) -> CoreResult<Option<u64>> {
+        self.db
+            .call(move |conn| sync_store::sync_cursor(conn, device))
+            .await
+    }
+
+    async fn set_sync_cursor(&self, device: DeviceId, seq: u64) -> CoreResult<()> {
+        self.db
+            .call(move |conn| sync_store::set_cursor(conn, device, seq))
+            .await
+    }
+
+    async fn entity_state(&self, entity: EntityRef) -> CoreResult<Option<EntityState>> {
+        self.db
+            .call(move |conn| SqliteReplica::new(conn).entity_state(entity))
+            .await
+    }
+
+    async fn sync_value(&self, key: &str) -> CoreResult<Option<String>> {
+        let key = key.to_owned();
+        self.db
+            .call(move |conn| sync_store::engine_value(conn, &key))
+            .await
+    }
+
+    async fn set_sync_value(&self, key: &str, value: String) -> CoreResult<()> {
+        let key = key.to_owned();
+        self.db
+            .call(move |conn| sync_store::set_engine_value(conn, &key, &value))
             .await
     }
 }
@@ -257,6 +326,36 @@ mod tests {
         }
         async fn commit(&self, changes: ChangeSet) -> CoreResult<CommitReceipt> {
             self.repo.commit(changes).await
+        }
+        async fn device_id(&self) -> CoreResult<DeviceId> {
+            self.repo.device_id().await
+        }
+        async fn pending_ops(&self, limit: u32) -> CoreResult<Vec<Op>> {
+            self.repo.pending_ops(limit).await
+        }
+        async fn pending_op_count(&self) -> CoreResult<u64> {
+            self.repo.pending_op_count().await
+        }
+        async fn mark_ops_pushed(&self, up_to: u64) -> CoreResult<()> {
+            self.repo.mark_ops_pushed(up_to).await
+        }
+        async fn apply_remote(&self, batch: RemoteBatch) -> CoreResult<RemoteReceipt> {
+            self.repo.apply_remote(batch).await
+        }
+        async fn sync_cursor(&self, device: DeviceId) -> CoreResult<Option<u64>> {
+            self.repo.sync_cursor(device).await
+        }
+        async fn set_sync_cursor(&self, device: DeviceId, seq: u64) -> CoreResult<()> {
+            self.repo.set_sync_cursor(device, seq).await
+        }
+        async fn entity_state(&self, entity: EntityRef) -> CoreResult<Option<EntityState>> {
+            self.repo.entity_state(entity).await
+        }
+        async fn sync_value(&self, key: &str) -> CoreResult<Option<String>> {
+            self.repo.sync_value(key).await
+        }
+        async fn set_sync_value(&self, key: &str, value: String) -> CoreResult<()> {
+            self.repo.set_sync_value(key, value).await
         }
     }
 
@@ -396,6 +495,8 @@ mod tests {
 
     #[test]
     fn inbox_view_without_inbox_is_empty_and_with_two_inboxes_shows_both() {
+        use todo_core::domain::TaskListParts;
+
         let repo = SqliteTaskRepository::open_in_memory().unwrap();
         let clock = FixedClock(Timestamp::EPOCH);
         let inbox_view = || {
@@ -405,7 +506,17 @@ mod tests {
         };
         assert!(inbox_view().is_empty());
         let (a, task_a) = inbox_with_task(&clock);
-        let (b, task_b) = inbox_with_task(&clock);
+        // Zweite Inbox mit eigener ID (z. B. aus einer App-Version vor der festen Inbox-ID).
+        let b = TaskList::from_parts(TaskListParts {
+            id: TaskListId::new(),
+            name: a.name().to_owned(),
+            sort_key: a.sort_key().clone(),
+            created_at: a.created_at(),
+            updated_at: a.updated_at(),
+            is_inbox: true,
+        })
+        .unwrap();
+        let task_b = Task::new(b.id(), "Brot", SortKey::first(), &clock).unwrap();
         block_on(
             repo.commit(
                 ChangeSet::new()
@@ -420,6 +531,110 @@ mod tests {
         expected.sort();
         let ids: Vec<TaskId> = inbox_view().iter().map(|s| s.id).collect();
         assert_eq!(ids, expected);
+    }
+
+    /// Bricht der Commit mitten im Schreiben ab (hier: Outbox-Insert scheitert), bleibt weder
+    /// Zustand noch Op noch Register zurück.
+    #[test]
+    fn aborted_commit_writes_neither_state_nor_ops() {
+        let repo = SqliteTaskRepository::open_in_memory().unwrap();
+        let clock = FixedClock(Timestamp::from_millis(5));
+        let (inbox, task) = inbox_with_task(&clock);
+        block_on(repo.commit(ChangeSet::new().upsert_list(inbox))).unwrap();
+        let before = block_on(repo.pending_ops(100)).unwrap();
+        block_on(repo.db.call(|conn| {
+            conn.execute_batch(
+                "CREATE TRIGGER fail_outbox BEFORE INSERT ON outbox_ops
+                 BEGIN SELECT RAISE(ABORT, 'simulierter Absturz'); END;",
+            )
+            .map_err(storage)
+        }))
+        .unwrap();
+
+        let result = block_on(repo.commit(ChangeSet::new().upsert_task(task.clone())));
+        assert!(matches!(result, Err(CoreError::Storage(_))), "{result:?}");
+        assert_eq!(block_on(repo.get_task(task.id())).unwrap(), None);
+        assert_eq!(block_on(repo.pending_ops(100)).unwrap(), before);
+        assert_eq!(
+            block_on(repo.entity_state(EntityRef::Task(task.id()))).unwrap(),
+            None
+        );
+    }
+
+    /// Geräte-ID, HLC, Op-Nummer, Outbox und Cursor überstehen einen Neustart.
+    #[test]
+    fn sync_state_survives_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("todo.sqlite3");
+        let clock = FixedClock(Timestamp::from_millis(42));
+        let (inbox, task) = inbox_with_task(&clock);
+        let remote = DeviceId::new();
+        let (device, ops) = {
+            let repo = SqliteTaskRepository::open(&path).unwrap();
+            block_on(repo.commit(ChangeSet::new().upsert_list(inbox).upsert_task(task))).unwrap();
+            block_on(repo.set_sync_cursor(remote, 4)).unwrap();
+            block_on(repo.set_sync_value("feed", "abc".into())).unwrap();
+            (
+                block_on(repo.device_id()).unwrap(),
+                block_on(repo.pending_ops(10)).unwrap(),
+            )
+        };
+        let repo = SqliteTaskRepository::open(&path).unwrap();
+        assert_eq!(block_on(repo.device_id()).unwrap(), device);
+        assert_eq!(block_on(repo.pending_ops(10)).unwrap(), ops);
+        assert_eq!(block_on(repo.sync_cursor(remote)).unwrap(), Some(4));
+        assert_eq!(
+            block_on(repo.sync_value("feed")).unwrap().as_deref(),
+            Some("abc")
+        );
+        let list = TaskList::new("Neu", SortKey::first(), &FixedClock(Timestamp::EPOCH)).unwrap();
+        block_on(repo.commit(ChangeSet::new().upsert_list(list))).unwrap();
+        let next = block_on(repo.pending_ops(10)).unwrap().pop().unwrap();
+        assert_eq!(next.id.seq, 3, "Nummer läuft weiter");
+        assert!(
+            next.hlc > ops[1].hlc,
+            "HLC läuft weiter, obwohl die Uhr zurückliegt"
+        );
+    }
+
+    /// Daten aus einer Datenbank vor dem Sync (Schema 1) landen beim ersten Öffnen als
+    /// `Create`-Ops in der Outbox.
+    #[test]
+    fn data_from_before_sync_is_queued_for_upload() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("todo.sqlite3");
+        {
+            let mut conn = Connection::open(&path).unwrap();
+            crate::migrations::run(&mut conn, &crate::migrations::MIGRATIONS[..1]).unwrap();
+            conn.execute_batch(
+                "INSERT INTO task_lists VALUES ('0192f0c4-7a3b-7c2d-8e4f-000000000002',
+                                                'Alt', 'a0', 1, 2, 0);
+                 INSERT INTO tasks (id, list_id, title, notes, status, priority, tags,
+                                    sort_key, created_at, updated_at)
+                 VALUES ('0192f0c4-7a3b-7c2d-8e4f-000000000001',
+                         '0192f0c4-7a3b-7c2d-8e4f-000000000002', 'Altlast', '', 0, 0, '',
+                         'a0', 3, 4);",
+            )
+            .unwrap();
+        }
+        let repo = SqliteTaskRepository::open(&path).unwrap();
+        let ops = block_on(repo.pending_ops(10)).unwrap();
+        let entities: Vec<EntityRef> = ops.iter().map(|op| op.entity).collect();
+        assert_eq!(
+            entities,
+            [
+                EntityRef::TaskList(
+                    TaskListId::parse("0192f0c4-7a3b-7c2d-8e4f-000000000002").unwrap()
+                ),
+                EntityRef::Task(TaskId::parse("0192f0c4-7a3b-7c2d-8e4f-000000000001").unwrap()),
+            ]
+        );
+        assert!(ops
+            .iter()
+            .all(|op| matches!(op.kind, sync::OpKind::Create { .. })));
+        drop(repo);
+        let repo = SqliteTaskRepository::open(&path).unwrap();
+        assert_eq!(block_on(repo.pending_ops(10)).unwrap(), ops, "nur einmal");
     }
 
     #[test]

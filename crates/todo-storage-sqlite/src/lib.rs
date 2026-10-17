@@ -17,5 +17,6 @@ mod mapping;
 mod migrations;
 mod query;
 mod repository;
+mod sync_store;
 
 pub use repository::SqliteTaskRepository;

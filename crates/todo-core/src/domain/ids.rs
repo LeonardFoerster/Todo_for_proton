@@ -132,6 +132,12 @@ define_id!(
     /// ID einer Liste ([`TaskList`](crate::domain::TaskList)).
     TaskListId
 );
+
+impl TaskListId {
+    /// Feste ID der Inbox – auf allen Geräten gleich, damit deren Inboxen beim Sync zu einer
+    /// zusammenlaufen statt sich zu verdoppeln (ADR-015).
+    pub const INBOX: Self = Self(Uuid::from_u128(0x0000_0000_0000_7000_8000_0000_0000_0001));
+}
 define_id!(
     /// ID eines `Tag`s.
     TagId

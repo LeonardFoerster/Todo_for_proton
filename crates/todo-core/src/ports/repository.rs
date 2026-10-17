@@ -1,7 +1,8 @@
 //! `TaskRepository`: lokaler Speicher für Tasks und Listen (siehe `development/interfaces.md` §2).
 //!
-//! Sync-Methoden (`pending_ops`, `mark_ops_pushed`, `apply_remote`, Sync-Cursor) kommen erst in P5
-//! dazu; bis dahin schreibt `commit` nur den Zustand. Volltextsuche (`search`) ist nicht Teil des
+//! Neben dem Zustand führt jedes Repository die Sync-Buchhaltung (Outbox, Register, HLC, Cursor)
+//! in denselben Transaktionen – über [`crate::sync::record_local`] und
+//! [`crate::sync::apply_remote`] (ADR-015). Volltextsuche (`search`) ist nicht Teil des
 //! Prototyps und fehlt deshalb bewusst.
 
 use serde::{Deserialize, Serialize};
@@ -9,9 +10,10 @@ use serde::{Deserialize, Serialize};
 use super::{MaybeSend, MaybeSync};
 use crate::{
     domain::{
-        Due, LocalDay, Priority, SortKey, TagId, Task, TaskId, TaskList, TaskListId, TaskStatus,
-        Timestamp,
+        DeviceId, Due, LocalDay, Priority, SortKey, TagId, Task, TaskId, TaskList, TaskListId,
+        TaskStatus, Timestamp,
     },
+    sync::{EntityState, Op, RemoteBatch, RemoteReceipt},
     CoreResult,
 };
 
@@ -53,6 +55,7 @@ impl Change {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ChangeSet {
     changes: Vec<Change>,
+    at: Option<Timestamp>,
 }
 
 impl ChangeSet {
@@ -81,6 +84,29 @@ impl ChangeSet {
 
     pub fn push(&mut self, change: Change) {
         self.changes.push(change);
+    }
+
+    /// Zeitpunkt der Änderung (Basis für die HLC der erzeugten Ops). Setzt die `CoreApi`
+    /// automatisch; ohne Angabe nimmt das Repository das späteste `updated_at` der Entities.
+    #[must_use]
+    pub fn at(mut self, now: Timestamp) -> Self {
+        self.at = Some(now);
+        self
+    }
+
+    /// Siehe [`ChangeSet::at`].
+    #[must_use]
+    pub fn time(&self) -> Option<Timestamp> {
+        self.at.or_else(|| {
+            self.changes
+                .iter()
+                .filter_map(|change| match change {
+                    Change::UpsertTask(task) => Some(task.updated_at()),
+                    Change::UpsertList(list) => Some(list.updated_at()),
+                    Change::Delete(_) => None,
+                })
+                .max()
+        })
     }
 
     #[must_use]
@@ -285,13 +311,46 @@ pub trait TaskRepository: MaybeSend + MaybeSync {
     ) -> CoreResult<Page<TaskSummary>>;
 
     /// Wendet alle Änderungen atomar an (alles oder nichts), in der angegebenen Reihenfolge.
-    /// Ab P5 schreibt dieselbe Transaktion die zugehörigen Ops in die Outbox.
+    /// Dieselbe Transaktion schreibt die zugehörigen Ops in die Outbox und schreibt Register und
+    /// HLC fort ([`crate::sync::record_local`]). Änderungen an gelöschten Entities (Tombstone)
+    /// entfallen.
     ///
     /// # Errors
     /// `CoreError::Validation`, wenn nach Anwendung eine Task auf eine nicht existierende Liste
     /// verweist; `CoreError::Storage` bei Speicherfehlern. In beiden Fällen bleibt der Bestand
-    /// unverändert.
+    /// unverändert – auch Outbox und Register.
     async fn commit(&self, changes: ChangeSet) -> CoreResult<CommitReceipt>;
+
+    // --- Sync ----------------------------------------------------------------------------------
+
+    /// ID dieses Geräts; beim ersten Öffnen des Speichers erzeugt und danach unverändert.
+    async fn device_id(&self) -> CoreResult<DeviceId>;
+
+    /// Noch nicht hochgeladene lokale Ops, aufsteigend nach Nummer, höchstens `limit`.
+    async fn pending_ops(&self, limit: u32) -> CoreResult<Vec<Op>>;
+
+    /// Anzahl der Ops in der Outbox (für den Sync-Status).
+    async fn pending_op_count(&self) -> CoreResult<u64>;
+
+    /// Entfernt alle Ops mit Nummer `<= up_to` aus der Outbox. Idempotent.
+    async fn mark_ops_pushed(&self, up_to: u64) -> CoreResult<()>;
+
+    /// Wendet empfangene Ops an (Merge, Materialisierung) und setzt die Cursor des Batches –
+    /// atomar und idempotent ([`crate::sync::apply_remote`]).
+    async fn apply_remote(&self, batch: RemoteBatch) -> CoreResult<RemoteReceipt>;
+
+    /// Nummer der letzten verarbeiteten Op von `device`; `None` = noch nichts empfangen.
+    async fn sync_cursor(&self, device: DeviceId) -> CoreResult<Option<u64>>;
+
+    async fn set_sync_cursor(&self, device: DeviceId, seq: u64) -> CoreResult<()>;
+
+    /// Sync-Zustand einer Entity: Register (Wert + HLC je Feld, „Field-Clocks") oder Tombstone.
+    async fn entity_state(&self, entity: EntityRef) -> CoreResult<Option<EntityState>>;
+
+    /// Kleine Schlüssel/Wert-Ablage der Sync-Engine (z. B. Feed-Cursor, Snapshot-Stand).
+    async fn sync_value(&self, key: &str) -> CoreResult<Option<String>>;
+
+    async fn set_sync_value(&self, key: &str, value: String) -> CoreResult<()>;
 }
 
 #[cfg(test)]

@@ -57,16 +57,24 @@ impl TaskList {
     /// [`TASK_LIST_NAME_MAX_CHARS`] Zeichen ist.
     pub fn new(name: &str, sort_key: SortKey, clock: &(impl Clock + ?Sized)) -> CoreResult<Self> {
         let name = normalize_list_name(name)?;
-        Ok(Self::build(name, sort_key, clock, false))
+        Ok(Self::build(TaskListId::new(), name, sort_key, clock, false))
     }
 
-    /// Legt die Inbox an. Nur beim Einrichten eines neuen Datenbestands aufrufen.
+    /// Legt die Inbox an (feste ID [`TaskListId::INBOX`]). Nur beim Einrichten eines neuen
+    /// Datenbestands aufrufen.
     #[must_use]
     pub fn inbox(sort_key: SortKey, clock: &(impl Clock + ?Sized)) -> Self {
-        Self::build(INBOX_NAME.to_owned(), sort_key, clock, true)
+        Self::build(
+            TaskListId::INBOX,
+            INBOX_NAME.to_owned(),
+            sort_key,
+            clock,
+            true,
+        )
     }
 
     fn build(
+        id: TaskListId,
         name: String,
         sort_key: SortKey,
         clock: &(impl Clock + ?Sized),
@@ -74,7 +82,7 @@ impl TaskList {
     ) -> Self {
         let now = clock.now();
         Self {
-            id: TaskListId::new(),
+            id,
             name,
             sort_key,
             created_at: now,
@@ -193,6 +201,18 @@ mod tests {
         assert_eq!(inbox.name(), INBOX_NAME);
         assert!(!inbox.can_delete());
         assert!(!inbox.can_rename());
+    }
+
+    #[test]
+    fn inbox_has_the_same_id_everywhere() {
+        let a = TaskList::inbox(SortKey::first(), &clock());
+        let b = TaskList::inbox(SortKey::first(), &clock());
+        assert_eq!(a.id(), TaskListId::INBOX);
+        assert_eq!(a.id(), b.id());
+        assert_eq!(
+            TaskListId::INBOX.to_string(),
+            "00000000-0000-7000-8000-000000000001"
+        );
     }
 
     #[test]

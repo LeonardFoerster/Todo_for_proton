@@ -8,6 +8,7 @@ mod diff;
 mod hlc;
 mod merge;
 mod op;
+mod replica;
 
 pub use diff::{list_fields, ops_for, task_fields, OpClock};
 pub use hlc::{ClockSkew, Hlc, HlcState, MAX_CLOCK_DRIFT_MS};
@@ -16,3 +17,4 @@ pub use merge::{
     Registers,
 };
 pub use op::{decode_ops, encode_ops, FieldMap, FieldName, FieldValue, Op, OpId, OpKind};
+pub use replica::{apply_remote, record_local, RemoteBatch, RemoteReceipt, ReplicaStore};
