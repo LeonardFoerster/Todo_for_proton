@@ -34,3 +34,4 @@ export { default as ShieldCheck } from "@lucide/svelte/icons/shield-check";
 export { default as ListChecks } from "@lucide/svelte/icons/list-checks";
 export { default as FolderInput } from "@lucide/svelte/icons/folder-input";
 export { default as Pencil } from "@lucide/svelte/icons/pencil";
+export { default as ChevronDown } from "@lucide/svelte/icons/chevron-down";

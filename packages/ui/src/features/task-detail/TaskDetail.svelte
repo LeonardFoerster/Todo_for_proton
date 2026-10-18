@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ListPicker from "../lists/ListPicker.svelte";
   import { CoreClientError, type DueDto, type PriorityDto, type TaskDto, type TaskPatchDto } from "@tasks/core-client";
   import { onMount } from "svelte";
   import Checkbox from "../../components/Checkbox.svelte";
@@ -229,16 +230,7 @@
 
         <dt><Hash size={16} strokeWidth={1.75} aria-hidden="true" /><label for="detail-list">Liste</label></dt>
         <dd>
-          <select
-            id="detail-list"
-            class="field"
-            value={task.listId}
-            onchange={(e) => void moveTo((e.currentTarget as HTMLSelectElement).value)}
-          >
-            {#each lists.lists as list (list.id)}
-              <option value={list.id}>{listName(list)}</option>
-            {/each}
-          </select>
+          <ListPicker id="detail-list" {lists} value={task.listId} onchange={(id) => void moveTo(id)} />
         </dd>
       </dl>
     </div>
@@ -364,9 +356,6 @@
     outline: none;
     border-color: var(--color-accent);
     box-shadow: 0 0 0 3px var(--color-focus-ring);
-  }
-  select.field {
-    width: 100%;
   }
   .due-row {
     display: flex;

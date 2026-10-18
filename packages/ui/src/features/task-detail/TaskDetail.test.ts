@@ -1,5 +1,5 @@
 import { FakeCoreClient } from "@tasks/core-client";
-import { render, screen, waitFor } from "@testing-library/svelte";
+import { render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import App from "../../App.svelte";
@@ -91,7 +91,9 @@ describe("TaskDetail", () => {
     await user.click(screen.getByRole("option", { name: /^Bericht/ }));
     await user.click(await screen.findByRole("button", { name: "Morgen" }));
     await user.click(screen.getByRole("radio", { name: "Hoch" }));
-    await user.selectOptions(screen.getByRole("combobox", { name: "Liste" }), work.id);
+    const detail = screen.getByRole("region", { name: "Task-Details" });
+    await user.click(within(detail).getByRole("button", { name: "Liste: Eingang" }));
+    await user.click(within(await screen.findByRole("menu", { name: "Liste wählen" })).getByRole("menuitem", { name: work.name }));
     await waitFor(async () => {
       const t = await client.getTask(task.id);
       expect(t.priority).toBe("high");

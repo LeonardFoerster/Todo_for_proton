@@ -4,22 +4,42 @@
   import { CalendarDays, Plus } from "../../icons";
   import { useCoreClient } from "../../lib/context";
   import { dueLabel } from "../../lib/format-date";
+  import type { ListsState } from "../../lib/lists.svelte";
+  import ListPicker from "../lists/ListPicker.svelte";
   import { parseQuickAdd } from "./parse";
 
   interface Props {
-    /** Zielliste (`undefined` = Eingang). */
+    lists: ListsState;
+    /** Vorausgewählte Zielliste (`undefined` = Eingang); änderbar über den Listen-Picker. */
     listId?: string;
+    /**
+     * Liste, deren Tasks die Ansicht zeigt (Liste/Eingang); `undefined` in Sammelansichten. Landet
+     * eine neue Task woanders, sagt ein Toast wo (mit „Öffnen“).
+     */
+    shownListId?: string;
+    onopenlist?: (listId: string) => void;
     /** Vorgabe ohne Schlüsselwort (z. B. „heute“ in der Heute-Ansicht). */
     defaultDue?: DueDto | null;
     placeholder?: string;
   }
 
-  let { listId, defaultDue = null, placeholder = "Task hinzufügen" }: Props = $props();
+  let {
+    lists,
+    listId,
+    shownListId,
+    onopenlist,
+    defaultDue = null,
+    placeholder = "Task hinzufügen",
+  }: Props = $props();
 
   const client = useCoreClient();
   let value = $state("");
   let input: HTMLInputElement;
   let busy = false;
+  let picker = $state<ListPicker>();
+  /** Im Picker gewählte Liste; gilt bis zum Ansichtswechsel (Quick-Add ist je Ansicht neu). */
+  let chosen = $state<string | undefined>();
+  const target = $derived(chosen ?? listId);
 
   const parsed = $derived(parseQuickAdd(value));
   const due = $derived(parsed.due ?? (value.trim() ? defaultDue : null));
@@ -29,6 +49,28 @@
     input?.focus();
   }
 
+  /** `Alt+L` im Eingabefeld. */
+  export function openListPicker() {
+    picker?.open();
+  }
+
+  function choose(id: string) {
+    chosen = id;
+    input?.focus();
+  }
+
+  /** Neue Task liegt nicht in der angezeigten Liste: sagen, wo, mit Sprung dorthin. */
+  function announce(title: string, targetId: string) {
+    if (shownListId === undefined || targetId === shownListId) return;
+    const list = lists.lists.find((l) => l.id === targetId);
+    const name = list ? (list.isInbox ? "Eingang" : list.name) : "Liste";
+    toasts.show({
+      message: `„${title.length > 40 ? `${title.slice(0, 39)}…` : title}“ in „${name}“ angelegt`,
+      actionLabel: onopenlist ? "Öffnen" : undefined,
+      onAction: onopenlist ? () => onopenlist(targetId) : undefined,
+    });
+  }
+
   async function submit() {
     const { title } = parsed;
     if (!title || busy) return;
@@ -36,8 +78,9 @@
     const dueToSet = due;
     value = "";
     try {
-      const task = await client.createTask({ title, listId });
+      const task = await client.createTask({ title, listId: target });
       if (dueToSet) await client.updateTask(task.id, { due: dueToSet });
+      announce(title, task.listId);
     } catch (e) {
       value = title;
       toasts.show({ message: `Nicht angelegt: ${(e as Error).message}`, tone: "danger" });
@@ -76,6 +119,7 @@
     </span>
   {/if}
   {#if value.trim()}<kbd>Enter</kbd>{/if}
+  <ListPicker bind:this={picker} {lists} value={target} onchange={choose} shortcut="Alt+L" />
 </div>
 
 <style>

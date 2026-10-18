@@ -27,7 +27,7 @@
   } from "./icons";
   import Menu, { type MenuItem } from "./components/Menu.svelte";
   import DeleteListDialog from "./features/lists/DeleteListDialog.svelte";
-  import RenameListDialog from "./features/lists/RenameListDialog.svelte";
+  import ListNameDialog from "./features/lists/ListNameDialog.svelte";
   import type { TaskListDto } from "@tasks/core-client";
   import type SettingsDialogType from "./features/account/SettingsDialog.svelte";
   import { setCoreClient } from "./lib/context";
@@ -330,6 +330,14 @@
       },
     },
     { keys: ["n"], description: "Neue Task", group: "Allgemein", run: newTask },
+    {
+      keys: ["alt+l"],
+      description: "Liste für neue Tasks wählen (im Eingabefeld)",
+      group: "Allgemein",
+      inInputs: true,
+      when: () => (document.activeElement as HTMLElement | null)?.getAttribute("aria-label") === "Neue Task",
+      run: () => quickAdd?.openListPicker(),
+    },
     { keys: ["ctrl+n"], description: "Neue Task (auch beim Tippen)", group: "Allgemein", inInputs: true, run: newTask },
     {
       keys: ["?"],
@@ -546,7 +554,11 @@
           {#if route.view !== "completed"}
             <QuickAdd
               bind:this={quickAdd}
+              {lists}
               listId={routeListId(route)}
+              shownListId={route.view === "list" ? route.listId : route.view === "inbox" ? lists.inbox?.id : undefined}
+              onopenlist={(id) =>
+                router.navigate(id === lists.inbox?.id ? { view: "inbox" } : { view: "list", listId: id })}
               defaultDue={route.view === "today" ? todayPlus(0) : null}
               placeholder={route.view === "today" ? "Task für heute hinzufügen" : "Task hinzufügen – z. B. „Zahnarzt anrufen morgen“"}
             />
@@ -580,9 +592,11 @@
   <DeleteListDialog list={deleteTarget} {lists} onconfirm={() => void confirmDelete()} onclose={() => (deleteTarget = null)} />
 {/if}
 {#if renameDialog}
-  <RenameListDialog
-    list={renameDialog}
-    onrename={(name) => renameList(renameDialog!, name)}
+  <ListNameDialog
+    title="Liste umbenennen"
+    submitLabel="Umbenennen"
+    initial={renameDialog.name}
+    onsubmit={(name) => renameList(renameDialog!, name)}
     onclose={() => (renameDialog = null)}
   />
 {/if}

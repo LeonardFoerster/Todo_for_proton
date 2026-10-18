@@ -240,10 +240,9 @@ const p708a: Step[] = [
   [
     "In Liste „Projekt“ verschieben",
     async () => {
-      const select = await until("Listenauswahl", () => document.querySelector<HTMLSelectElement>("#detail-list"));
-      const option = [...select.options].find((o) => o.textContent === "Projekt")!;
-      select.value = option.value;
-      select.dispatchEvent(new Event("change", { bubbles: true }));
+      // P2-04: Listen-Picker statt <select>.
+      (await until("Listenauswahl", () => document.querySelector<HTMLElement>("#detail-list"))).click();
+      await click("menuitem", "Projekt");
       await until("aus Eingang verschwunden", () => !byRole("option", /^Persistenz prüfen/));
     },
   ],

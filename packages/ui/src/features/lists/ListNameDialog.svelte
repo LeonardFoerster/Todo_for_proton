@@ -1,25 +1,30 @@
 <script lang="ts">
-  /** Umbenennen, wenn die Seitenleiste eingeklappt/verborgen ist (sonst inline dort). */
-  import type { TaskListDto } from "@tasks/core-client";
+  /**
+   * Namen einer Liste erfragen: Umbenennen, wenn die Seitenleiste eingeklappt/verborgen ist (sonst
+   * inline dort), und „Neue Liste…“ im Listen-Picker.
+   */
   import { onMount } from "svelte";
   import Button from "../../components/Button.svelte";
   import Dialog from "../../components/Dialog.svelte";
 
   interface Props {
-    list: TaskListDto;
-    onrename: (name: string) => Promise<void>;
+    title: string;
+    submitLabel: string;
+    /** Bisheriger Name (Umbenennen); leer = neue Liste. */
+    initial?: string;
+    onsubmit: (name: string) => Promise<void>;
     onclose: () => void;
   }
 
-  let { list, onrename, onclose }: Props = $props();
+  let { title, submitLabel, initial = "", onsubmit, onclose }: Props = $props();
   // svelte-ignore state_referenced_locally
-  let name = $state(list.name);
+  let name = $state(initial);
   let error = $state<string | null>(null);
   let input: HTMLInputElement;
 
   onMount(() => {
     input.focus();
-    input.select();
+    if (initial) input.select();
   });
 
   async function submit(e: SubmitEvent) {
@@ -29,9 +34,9 @@
       error = "Der Name darf nicht leer sein.";
       return;
     }
-    if (value === list.name) return onclose();
+    if (value === initial) return onclose();
     try {
-      await onrename(value);
+      await onsubmit(value);
       onclose();
     } catch (err) {
       error = (err as Error).message;
@@ -39,13 +44,13 @@
   }
 </script>
 
-<Dialog title="Liste umbenennen" {onclose} width={400}>
+<Dialog {title} {onclose} width={400}>
   <form onsubmit={submit}>
-    <input bind:this={input} bind:value={name} maxlength="100" aria-label="Neuer Name der Liste" />
+    <input bind:this={input} bind:value={name} maxlength="100" aria-label={initial ? "Neuer Name der Liste" : "Name der neuen Liste"} />
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <div class="actions">
       <Button variant="ghost" onclick={onclose}>Abbrechen</Button>
-      <Button variant="primary" type="submit">Umbenennen</Button>
+      <Button variant="primary" type="submit">{submitLabel}</Button>
     </div>
   </form>
 </Dialog>
