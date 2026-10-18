@@ -4,7 +4,7 @@
  * oben rechts (PASS/FAIL je Schritt). In normalen Builds nicht enthalten.
  */
 
-import type { CoreClient } from "@tasks/core-client";
+import type { CoreClient, TaskSummaryDto } from "@tasks/core-client";
 
 /** Ein Schritt; ein zurückgegebener Text erscheint als Messwert hinter PASS. */
 type Step = [name: string, run: (client: CoreClient) => Promise<string | void>];
@@ -448,10 +448,234 @@ const p711live: Step[] = [
   ],
 ];
 
-const SUITES: Record<string, Step[]> = { base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live };
+// P8-02: Zwei-Geräte-Abnahme mit zwei Profilen (`tools/acceptance-two-devices.sh`). Jede Suite ist ein
+// App-Lauf eines Geräts; das Skript startet/beendet die Läufe und vergleicht die Berichte beider Geräte.
+
+/** Markierungen für das Skript (z. B. Zeitpunkt für `kill -9`). */
+let mark: (line: string) => void = () => {};
+
+const ABNAHME = "Abnahme";
+
+async function listId(client: CoreClient, name: string): Promise<string> {
+  const list = (await client.listTaskLists()).find((l) => l.name === name);
+  if (!list) throw new Error(`Liste ${name} fehlt`);
+  return list.id;
+}
+
+async function allIn(client: CoreClient, listId: string): Promise<TaskSummaryDto[]> {
+  const items: TaskSummaryDto[] = [];
+  let cursor: string | null = null;
+  do {
+    const page = await client.listTasks({ view: { kind: "list", listId } }, { cursor, limit: 500 });
+    items.push(...page.items);
+    cursor = page.nextCursor;
+  } while (cursor);
+  return items;
+}
+
+async function byTitle(client: CoreClient, list: string, title: RegExp): Promise<TaskSummaryDto> {
+  const task = (await allIn(client, await listId(client, list))).find((t) => title.test(t.title));
+  if (!task) throw new Error(`Task ${title} fehlt`);
+  return task;
+}
+
+/** Löst einen Sync aus und wartet, bis ein Lauf danach erfolgreich und ohne Ausstehendes endet. */
+async function syncedNow(client: CoreClient, timeoutMs = 120_000): Promise<string> {
+  let started = false;
+  let done = false;
+  const stop = client.onSyncStatus((st) => {
+    if (st.state === "syncing" && !started) {
+      started = true;
+      mark("SYNC_STARTED");
+    }
+    if (started && st.state === "idle" && st.pendingOps === 0) done = true;
+  });
+  const t0 = performance.now();
+  const before = await client.sync.status();
+  if (before.state === "syncing") {
+    started = true;
+    mark("SYNC_STARTED");
+  }
+  try {
+    await client.sync.now();
+    await until("Sync fertig", () => done, timeoutMs);
+  } finally {
+    stop();
+  }
+  await until("Anzeige Synchronisiert", () => syncLabel() === "Sync-Status: Synchronisiert", 5000);
+  return `${Math.round(performance.now() - t0)} ms, vorher ${before.pendingOps} ausstehend`;
+}
+
+const online = async () => {
+  dispatchEvent(new Event("online"));
+  await sleep(100);
+};
+
+const offline: Step = [
+  "Netz getrennt (WebView-Ereignis) → Status Offline",
+  async () => {
+    dispatchEvent(new Event("offline"));
+    await until("Offline", () => syncLabel().includes("Offline"), 10_000);
+  },
+];
+
+/** Zustand der Abnahme-Liste + Konflikt-Task als eine vergleichbare Zeile. */
+async function state(client: CoreClient): Promise<string> {
+  const tasks = await allIn(client, await listId(client, ABNAHME));
+  const t = tasks.find((x) => x.title.startsWith("T"));
+  const due = t?.due && "date" in t.due ? t.due.date : "-";
+  return `Reihenfolge ${tasks.map((x) => x.title).join(" | ")} · T=${t?.title ?? "fehlt"} fällig ${due}`;
+}
+
+// 1. Gerät B läuft schon und wartet; A legt an → erscheint auf B (periodischer Pull/Fokus).
+const p802wait: Step[] = [
+  ["B bereit: synchronisiert", async (client) => syncedNow(client)],
+  [
+    "„Von A“ erscheint im Eingang (ohne Zutun, bis 150 s)",
+    async () => {
+      mark("WAITING");
+      const t0 = performance.now();
+      await until("Zeile Von A", () => byRole("option", /^Von A/), 150_000);
+      return `nach ${Math.round((performance.now() - t0) / 1000)} s`;
+    },
+  ],
+  ["Abnahme-Liste ebenfalls da", async (client) => state(client)],
+];
+
+const p802create: Step[] = [
+  [
+    "Quick-Add „Von A“ im Eingang",
+    async () => {
+      await until("h1 Eingang", () => heading() === "Eingang");
+      const input = await field("Neue Task");
+      type(input, "Von A");
+      key(input, "Enter");
+      await until("Zeile", () => byRole("option", /^Von A/));
+    },
+  ],
+  [
+    "Liste „Abnahme“ mit T, X, S1–S4",
+    async (client) => {
+      const list = await client.createTaskList(ABNAHME);
+      for (const title of ["T Konflikt", "X Löschen", "S1", "S2", "S3", "S4"]) {
+        await client.createTask({ title, listId: list.id });
+      }
+    },
+  ],
+  ["Hochgeladen", async (client) => syncedNow(client)],
+  ["Zustand", async (client) => state(client)],
+];
+
+// 2. Beide offline, widersprüchliche Änderungen; danach p802sync auf A, B, A.
+const p802offA: Step[] = [
+  offline,
+  [
+    "A: T umbenennen, X löschen, S4 nach oben",
+    async (client) => {
+      const t = await byTitle(client, ABNAHME, /^T /);
+      await client.updateTask(t.id, { title: "T neu von A" });
+      await client.deleteTask((await byTitle(client, ABNAHME, /^X /)).id);
+      const first = (await allIn(client, await listId(client, ABNAHME)))[0];
+      await client.moveTask((await byTitle(client, ABNAHME, /^S4$/)).id, { before: first.id });
+      await sleep(4000); // Debounce verstreicht – offline darf nichts hochgehen
+      const st = await client.sync.status();
+      if (st.state !== "offline" || st.pendingOps < 3) throw new Error(`${st.state}, ${st.pendingOps} ausstehend`);
+      return `${st.pendingOps} ausstehend`;
+    },
+  ],
+  ["Zustand A (offline)", async (client) => state(client)],
+];
+
+const p802offB: Step[] = [
+  offline,
+  [
+    "B: T fällig setzen, X bearbeiten, S1 ans Ende",
+    async (client) => {
+      const t = await byTitle(client, ABNAHME, /^T /);
+      await client.updateTask(t.id, { due: { kind: "date", date: "2026-10-25" } });
+      await client.updateTask((await byTitle(client, ABNAHME, /^X /)).id, { title: "X bearbeitet von B" });
+      await client.moveTask((await byTitle(client, ABNAHME, /^S1$/)).id, {});
+      await sleep(4000);
+      const st = await client.sync.status();
+      if (st.state !== "offline" || st.pendingOps < 3) throw new Error(`${st.state}, ${st.pendingOps} ausstehend`);
+      return `${st.pendingOps} ausstehend`;
+    },
+  ],
+  ["Zustand B (offline)", async (client) => state(client)],
+];
+
+const p802sync: Step[] = [
+  [
+    "Online, synchronisieren",
+    async (client) => {
+      await online();
+      return syncedNow(client);
+    },
+  ],
+  ["Zustand", async (client) => state(client)],
+];
+
+// 3. Viele Tasks offline anlegen, dann online: Der Push dauert (Backend mit Verzögerung) und wird von
+// außen hart beendet.
+const BULK = 2500;
+const p802bulk: Step[] = [
+  offline,
+  [
+    `${BULK} Tasks in Liste „Masse“ (offline)`,
+    async (client) => {
+      const list = await client.createTaskList("Masse");
+      for (let i = 0; i < BULK; i += 50) {
+        await Promise.all(
+          Array.from({ length: 50 }, (_, j) => client.createTask({ title: `M${String(i + j + 1).padStart(4, "0")}`, listId: list.id })),
+        );
+      }
+      mark("BULK_CREATED");
+    },
+  ],
+  [
+    "Online, synchronisieren (wird abgeschossen)",
+    async (client) => {
+      await online();
+      return syncedNow(client);
+    },
+  ],
+];
+
+// 4. Sitzung abgelaufen: App bleibt lokal nutzbar.
+const p802auth: Step[] = [
+  [
+    "Status „Anmeldung erforderlich“",
+    async (client) => {
+      await client.sync.now();
+      await until("Anmeldung erforderlich", () => syncLabel().includes("Anmeldung erforderlich"), 30_000);
+      return syncLabel();
+    },
+  ],
+  [
+    "Lokal weiterarbeiten: Quick-Add „Ohne Sitzung“",
+    async (client) => {
+      const input = await field("Neue Task");
+      type(input, "Ohne Sitzung");
+      key(input, "Enter");
+      await until("Zeile", () => byRole("option", /^Ohne Sitzung/));
+      await sleep(4000);
+      const st = await client.sync.status();
+      if (st.state !== "authRequired") throw new Error(`Status ${st.state}`);
+      return `${st.pendingOps} ausstehend, Status bleibt ${st.state}`;
+    },
+  ],
+];
+
+const SUITES: Record<string, Step[]> = { base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
+  p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */
-export async function runSelftest(client: CoreClient, selection: string): Promise<void> {
+export async function runSelftest(
+  client: CoreClient,
+  selection: string,
+  report?: (line: string, exit?: boolean) => Promise<void>,
+): Promise<void> {
+  if (report) mark = (line) => void report(line);
   const names = selection === "1" ? ["base", "p707"] : selection.split(",").map((n) => n.trim());
   const steps = names.flatMap((n) => SUITES[n] ?? [[`Suite ${n}`, async () => Promise.reject(new Error("unbekannt"))] as Step]);
   const box = document.createElement("pre");
@@ -468,9 +692,11 @@ export async function runSelftest(client: CoreClient, selection: string): Promis
       failed++;
       lines.push(`FAIL ${name}: ${(e as Error).message}`);
     }
+    await report?.(lines.at(-1)!);
     box.textContent = lines.join("\n");
   }
   lines.push(failed ? `${failed} FEHLGESCHLAGEN` : "ALLE BESTANDEN");
   box.textContent = lines.join("\n");
   box.style.background = failed ? "#a00e" : "#060e";
+  await report?.(lines.at(-1)!, true);
 }

@@ -2,6 +2,7 @@
 //! die Fassade `todo_core::api::CoreApi` als dünne `async`-Commands an die UI durch.
 
 mod commands;
+mod dev;
 pub mod dto;
 mod events;
 pub mod state;
@@ -79,6 +80,8 @@ pub fn builder<R: Runtime>(base: tauri::Builder<R>, options: Options) -> tauri::
         commands::sync_now,
         commands::set_online,
         commands::app_ready,
+        commands::dev_selftest,
+        commands::dev_selftest_report,
     ])
 }
 

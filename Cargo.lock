@@ -5731,6 +5731,7 @@ dependencies = [
  "todo-core",
  "todo-crypto",
  "todo-keystore-secret-service",
+ "todo-remote-fs",
  "todo-storage-sqlite",
  "todo-sync",
  "tokio",

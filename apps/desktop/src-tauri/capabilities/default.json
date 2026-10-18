@@ -30,6 +30,8 @@
     "allow-sync-status",
     "allow-sync-now",
     "allow-set-online",
-    "allow-app-ready"
+    "allow-app-ready",
+    "allow-dev-selftest",
+    "allow-dev-selftest-report"
   ]
 }

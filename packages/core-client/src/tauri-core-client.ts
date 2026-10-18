@@ -65,3 +65,11 @@ export class TauriCoreClient implements CoreClient {
   onChange = (cb: (e: ChangedEventDto) => void) => subscribe("core://changed", cb);
   onSyncStatus = (cb: (s: SyncStatusDto) => void) => subscribe("core://sync-status", cb);
 }
+
+/** Nur Debug-Builds der Desktop-Shell: Selbsttest von außen steuern (`src-tauri/src/dev.rs`). */
+export const devSelftest = {
+  /** Suiten aus `TASKS_SELFTEST` (Release: `null`). */
+  suites: (): Promise<string | null> => invoke("dev_selftest"),
+  /** Zeile auf stdout der App; `exit` beendet sie danach. */
+  report: (line: string, exit = false): Promise<void> => invoke("dev_selftest_report", { line, exit }),
+};

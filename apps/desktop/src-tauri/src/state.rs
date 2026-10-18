@@ -105,9 +105,17 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, options: &Options) -> Result<AppStat
             let _ = emitter.emit(SYNC_STATUS_EVENT, status);
         }),
     );
+    // Dev-Build mit `TODO_REMOTE_DIR`: Verzeichnis statt Konto (Zwei-Geräte-Abnahme).
+    let dev_remote = crate::dev::dir_runner(&api, &clock)
+        .transpose()
+        .map_err(|e| e.to_string())?;
+    let accounts = options.accounts && dev_remote.is_none();
+    if dev_remote.is_some() {
+        sync.set_runner(dev_remote);
+    }
     let keyring_id = keyring_app_id(options.data_dir.as_deref());
-    let account = Arc::new(Account::new(clock, options.accounts, keyring_id));
-    if options.accounts {
+    let account = Arc::new(Account::new(clock, accounts, keyring_id));
+    if accounts {
         let (account, api, sync) = (Arc::clone(&account), Arc::clone(&api), sync.clone());
         tauri::async_runtime::spawn(async move { account.restore(&api, &sync).await });
     }

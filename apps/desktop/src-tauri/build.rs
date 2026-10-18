@@ -24,6 +24,8 @@ const COMMANDS: &[&str] = &[
     "sync_now",
     "set_online",
     "app_ready",
+    "dev_selftest",
+    "dev_selftest_report",
 ];
 
 fn main() {

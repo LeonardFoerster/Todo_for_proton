@@ -19,6 +19,8 @@ todo-storage-sqlite.workspace = true
 todo-sync = { workspace = true, features = ["zstd-native"] }
 todo-crypto.workspace = true
 proton-adapter.workspace = true
+# Nur Debug-Builds: Verzeichnis-Backend für die Zwei-Geräte-Abnahme (`src/dev.rs`).
+todo-remote-fs.workspace = true
 async-trait.workspace = true
 serde.workspace = true
 # Tauri läuft auf tokio; hier nur Kanal, Timer und `select!` für den Sync-Scheduler.
