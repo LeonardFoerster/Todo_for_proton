@@ -329,6 +329,75 @@
     addEventListener("keydown", escape, true);
   }
 
+  // --- Spalten umsortieren (P2-08) -------------------------------------------------------------
+
+  /** Ziehen einer Spalte: Liste, Startindex unter den Benutzerlisten, Einfügeposition, Linie (px). */
+  let columnDrag = $state<{ id: string; from: number; to: number; line: number } | null>(null);
+
+  const userColumns = () => board.columns.filter((c) => !c.list.isInbox);
+
+  /** Einfügeposition unter den Benutzerlisten aus der Zeiger-X und die Linie im Board (px). */
+  function columnDropTarget(x: number): { to: number; line: number } {
+    const sections = userColumns().map((c) =>
+      boardEl?.querySelector<HTMLElement>(`[data-column-id="${CSS.escape(c.list.id)}"]`)?.getBoundingClientRect(),
+    );
+    const origin = (boardEl?.getBoundingClientRect().left ?? 0) - (boardEl?.scrollLeft ?? 0);
+    for (const [i, r] of sections.entries()) {
+      if (r && x < r.left + r.width / 2) return { to: i, line: r.left - origin - 7 };
+    }
+    const last = sections.at(-1);
+    return { to: sections.length, line: last ? last.right - origin + 5 : 0 };
+  }
+
+  function startColumnDrag(e: PointerEvent, column: Column) {
+    if (e.button !== 0) return;
+    const start = e.clientX;
+    const from = userColumns().indexOf(column);
+    const move = (ev: PointerEvent) => {
+      if (!columnDrag && Math.abs(ev.clientX - start) < DRAG_THRESHOLD) return;
+      columnDrag = { id: column.list.id, from, ...columnDropTarget(ev.clientX) };
+    };
+    const end = (ev: PointerEvent) => {
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", end);
+      removeEventListener("pointercancel", end);
+      const done = columnDrag;
+      columnDrag = null;
+      if (done && ev.type === "pointerup" && done.to !== done.from && done.to !== done.from + 1) {
+        void moveColumn(done.id, done.to);
+      }
+    };
+    addEventListener("pointermove", move);
+    addEventListener("pointerup", end);
+    addEventListener("pointercancel", end);
+  }
+
+  /** Benutzerliste an Einfügeposition `to` – Board und Seitenleiste folgen derselben Reihenfolge. */
+  async function moveColumn(id: string, to: number) {
+    try {
+      await lists.move(id, to);
+    } catch (e) {
+      toasts.show({ message: `Liste nicht verschoben: ${(e as Error).message}`, tone: "danger" });
+    }
+  }
+
+  /** Fokussierter Spaltenkopf (für `Alt+←/→`). */
+  export function focusedColumn(): string | undefined {
+    return (document.activeElement as HTMLElement | null)?.dataset?.columnHeader;
+  }
+
+  /** `Alt+←/→` auf einem Spaltenkopf: Spalte um eine Position; Fokus bleibt auf dem Kopf. */
+  export async function moveFocusedColumn(dx: -1 | 1) {
+    const id = focusedColumn();
+    const i = userColumns().findIndex((c) => c.list.id === id);
+    if (!id || i < 0) return;
+    const to = dx < 0 ? i - 1 : i + 2;
+    if (to < 0 || to > userColumns().length) return;
+    await moveColumn(id, to);
+    await tick();
+    boardEl?.querySelector<HTMLElement>(`[data-column-header="${CSS.escape(id)}"]`)?.focus();
+  }
+
   /** Einfügelinie der Spalte, außer das Ablegen ließe die Karte, wo sie ist. */
   function dropIndexFor(column: Column): number | null {
     if (!drag || drag.over !== column.list.id) return null;
@@ -351,9 +420,13 @@
       oncardpointerdown={startCardDrag}
       dropIndex={dropIndexFor(column)}
       dragging={drag ? new Set([drag.task.id]) : undefined}
+      onheaderpointerdown={column.list.isInbox ? undefined : (e) => startColumnDrag(e, column)}
       onmenu={column.list.isInbox || !oncolumnmenu ? undefined : (x, y) => oncolumnmenu(column.list, x, y)}
     />
   {/each}
+  {#if columnDrag && columnDrag.to !== columnDrag.from && columnDrag.to !== columnDrag.from + 1}
+    <div class="column-drop" style:left="{columnDrag.line}px" aria-hidden="true"></div>
+  {/if}
 </div>
 {#if drag}
   <div class="ghost" style:left="{drag.x + 12}px" style:top="{drag.y + 8}px" aria-hidden="true">{drag.task.title}</div>
@@ -383,7 +456,17 @@
     clip-path: inset(50%);
     white-space: nowrap;
   }
+  .column-drop {
+    position: absolute;
+    top: var(--space-3);
+    bottom: var(--space-4);
+    width: 2px;
+    border-radius: 1px;
+    background: var(--color-accent);
+    pointer-events: none;
+  }
   .board {
+    position: relative;
     display: flex;
     gap: var(--space-3);
     height: 100%;

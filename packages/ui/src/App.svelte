@@ -488,6 +488,16 @@
       run: () => void board?.deleteCursor(),
     },
     ...([
+      ["alt+arrowleft", "Spalte nach links (Spaltenkopf fokussiert)", -1],
+      ["alt+arrowright", "Spalte nach rechts (Spaltenkopf fokussiert)", 1],
+    ] as const).map(([key, description, dx]) => ({
+      keys: [key],
+      description,
+      group: "Board",
+      when: () => showBoard && !!board?.focusedColumn(),
+      run: () => void board?.moveFocusedColumn(dx),
+    })),
+    ...([
       ["alt+arrowleft", "Karte in die Spalte links", -1, 0],
       ["alt+arrowright", "Karte in die Spalte rechts", 1, 0],
       ["alt+arrowup", "Karte nach oben", 0, -1],

@@ -230,3 +230,57 @@ describe("moving cards", () => {
     await waitFor(() => expect(cards("Eingang")).toEqual(["Brot", "E1", "E2"]));
   });
 });
+
+describe("reordering columns", () => {
+  function layoutColumns() {
+    const cols = [...document.querySelectorAll<HTMLElement>('[aria-label="Kanban-Board"] > section')];
+    cols.forEach((section, i) => {
+      const left = i * 292;
+      section.getBoundingClientRect = () => ({ left, right: left + 280, width: 280, top: 0, bottom: 700 }) as DOMRect;
+    });
+    board().getBoundingClientRect = () => ({ left: 0, right: 2000, top: 0, bottom: 700 }) as DOMRect;
+  }
+  const sidebar = () =>
+    [...screen.getByRole("navigation", { name: "Navigation" }).querySelectorAll("a[data-list-id]")].map((a) =>
+      a.textContent?.trim(),
+    );
+
+  it("drags a column header; board and sidebar share the new order, the inbox stays first", async () => {
+    const { client } = await setup();
+    await client.createTaskList("Garten");
+    await waitFor(() => expect(columns()).toEqual(["Eingang", "Einkaufen", "Arbeit", "Garten"]));
+    layoutColumns();
+    const header = column("Garten").querySelector("header")!;
+    await fireEvent.pointerDown(header, { button: 0, clientX: 900 });
+    await fireEvent.pointerMove(window, { clientX: 300 }); // vor „Einkaufen“ (Mitte 432)
+    expect(board().querySelector(".column-drop")).toBeTruthy();
+    await fireEvent.pointerUp(window, { clientX: 300 });
+    await waitFor(() => expect(columns()).toEqual(["Eingang", "Garten", "Einkaufen", "Arbeit"]));
+    expect(sidebar()).toEqual(["Garten", "Einkaufen", "Arbeit"]);
+    expect((await client.listTaskLists()).map((l) => l.name)).toEqual(["Inbox", "Garten", "Einkaufen", "Arbeit"]);
+    expect(column("Eingang").querySelector("[data-column-header]"), "Eingang nicht verschiebbar").toBeNull();
+  });
+
+  it("Alt+Left/Right on a focused column header", async () => {
+    const { client, user } = await setup();
+    const header = column("Einkaufen").querySelector<HTMLElement>("[data-column-header]")!;
+    header.focus();
+    await user.keyboard("{Alt>}{ArrowRight}{/Alt}");
+    await waitFor(() => expect(columns()).toEqual(["Eingang", "Arbeit", "Einkaufen"]));
+    expect(document.activeElement?.getAttribute("data-column-header")).toBe(header.dataset.columnHeader);
+    await user.keyboard("{Alt>}{ArrowRight}{/Alt}");
+    expect(columns(), "schon am Ende").toEqual(["Eingang", "Arbeit", "Einkaufen"]);
+    await user.keyboard("{Alt>}{ArrowLeft}{/Alt}");
+    await waitFor(() => expect(columns()).toEqual(["Eingang", "Einkaufen", "Arbeit"]));
+    expect((await client.listTaskLists()).map((l) => l.name)).toEqual(["Inbox", "Einkaufen", "Arbeit"]);
+  });
+
+  it("puts the column back when saving fails", async () => {
+    const { client, user } = await setup();
+    vi.spyOn(client, "moveTaskList").mockRejectedValueOnce(new Error("kaputt"));
+    column("Arbeit").querySelector<HTMLElement>("[data-column-header]")!.focus();
+    await user.keyboard("{Alt>}{ArrowLeft}{/Alt}");
+    await screen.findByText(/Liste nicht verschoben: kaputt/);
+    await waitFor(() => expect(columns()).toEqual(["Eingang", "Einkaufen", "Arbeit"]));
+  });
+});

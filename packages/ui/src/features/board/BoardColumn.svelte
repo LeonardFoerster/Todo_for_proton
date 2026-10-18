@@ -58,8 +58,15 @@
 </script>
 
 <section class="column" class:highlighted aria-label={name} data-column-id={column.list.id}>
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <header class:grab={!!onheaderpointerdown} onpointerdown={onheaderpointerdown}>
+  <!-- Fokussierbar zum Umsortieren per Alt+←/→ (Kürzel in App); Ziehen per Zeiger. -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_static_element_interactions -->
+  <header
+    class:grab={!!onheaderpointerdown}
+    tabindex={onheaderpointerdown ? 0 : undefined}
+    data-column-header={onheaderpointerdown ? column.list.id : undefined}
+    aria-label={onheaderpointerdown ? `Spalte ${name} – mit Alt+←/→ verschieben` : undefined}
+    onpointerdown={onheaderpointerdown}
+  >
     {#if column.list.isInbox}
       <Inbox size={16} strokeWidth={1.75} aria-hidden="true" />
     {:else}
@@ -135,6 +142,11 @@
   }
   header.grab {
     cursor: grab;
+  }
+  header:focus-visible {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: -2px;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   }
   .name {
     flex: 1;

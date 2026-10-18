@@ -1348,6 +1348,28 @@ const p2board: Step[] = [
       await until("zurück", () => boardCards("Einkaufen").includes("Käse"));
       return boardCards("Einkaufen");
     },
+  ],  [
+    "Spalte „Arbeit“ am Kopf vor „Einkaufen“ ziehen → Board, Seitenleiste und Core gleich",
+    async (client) => {
+      const header = boardColumn("Arbeit")!.querySelector<HTMLElement>("[data-column-header]")!;
+      const h = header.getBoundingClientRect();
+      const target = boardColumn("Einkaufen")!.getBoundingClientRect();
+      const ev = (type: string, x: number) =>
+        new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 1, clientX: x, clientY: h.top + 10 });
+      header.dispatchEvent(ev("pointerdown", h.left + 60));
+      dispatchEvent(ev("pointermove", target.left + 20));
+      await frame();
+      dispatchEvent(ev("pointerup", target.left + 20));
+      const names = () =>
+        [...document.querySelectorAll<HTMLElement>('[aria-label="Kanban-Board"] > section')]
+          .map((c) => c.getAttribute("aria-label"))
+          .join(",");
+      await until("Board", () => names() === "Eingang,Arbeit,Einkaufen");
+      const side = [...document.querySelectorAll<HTMLElement>("aside a[data-list-id]")].map((a) => a.textContent?.trim()).join(",");
+      const core = (await client.listTaskLists()).map((l) => l.name).join(",");
+      if (side !== "Arbeit,Einkaufen" || core !== "Inbox,Arbeit,Einkaufen") throw new Error(`Seitenleiste ${side}, Core ${core}`);
+      return names();
+    },
   ],
 ];
 
