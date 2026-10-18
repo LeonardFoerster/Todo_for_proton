@@ -353,6 +353,17 @@ pub struct MoveTargetDto {
     pub before: Option<String>,
 }
 
+/// Ziel beim Umsortieren einer Liste (Semantik wie `MoveTaskListInput`; Nachbarn sind Listen-IDs).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct MoveListTargetDto {
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub after: Option<String>,
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub before: Option<String>,
+}
+
 /// Lokaler Tag, von der Shell in der Zeitzone des Nutzers berechnet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]

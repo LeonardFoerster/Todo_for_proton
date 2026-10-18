@@ -9,7 +9,7 @@ use common::{assert_converged, Device, Flaky, T0};
 use futures::executor::block_on;
 use tempfile::TempDir;
 use todo_core::{
-    api::dto::{DueDto, MoveTargetDto, TaskPatchDto},
+    api::dto::{DueDto, MoveListTargetDto, MoveTargetDto, TaskPatchDto},
     ports::RemoteStore,
 };
 use todo_remote_fs::FsRemoteStore;
@@ -184,6 +184,41 @@ fn block_move_and_concurrent_edit_converge() {
             .collect();
         assert_eq!(inbox, ["fünf", "eins"]);
     }
+}
+
+/// Szenario 3c (P2-01): A und B sortieren parallel verschiedene Listen um → gleiche Reihenfolge.
+#[test]
+fn concurrent_list_reorders_converge() {
+    let world = World::new();
+    let a = world.device("a");
+    let b = world.device("b");
+    let ids: Vec<String> = ["L1", "L2", "L3", "L4"]
+        .iter()
+        .map(|n| a.list(n).id)
+        .collect();
+    a.sync();
+    b.sync();
+
+    let target = |before: &str| MoveListTargetDto {
+        after: None,
+        before: Some(before.to_owned()),
+    };
+    block_on(a.api.move_task_list(ids[3].clone(), target(&ids[0]))).expect("A");
+    b.clock.advance(50);
+    block_on(b.api.move_task_list(ids[2].clone(), target(&ids[0]))).expect("B");
+
+    a.sync();
+    b.sync();
+    a.sync();
+    assert_converged(&[&a, &b]);
+    let names: Vec<String> = a.lists().into_iter().map(|l| l.name).collect();
+    assert_eq!(names[0], "Inbox");
+    assert_eq!(names.len(), 5);
+    assert_eq!(
+        names[3..],
+        ["L1", "L2"],
+        "beide nach vorn verschoben, L1/L2 dahinter"
+    );
 }
 
 /// Szenario 4: Push bricht mitten ab (zweites von drei Segmenten; danach eine verlorene Antwort) →

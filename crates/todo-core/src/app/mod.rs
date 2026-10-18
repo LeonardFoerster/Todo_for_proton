@@ -12,6 +12,7 @@ mod delete_task_list;
 mod delete_tasks;
 mod ensure_inbox;
 mod move_task;
+mod move_task_list;
 mod move_tasks;
 mod rename_task_list;
 mod reopen_task;
@@ -29,6 +30,7 @@ pub use delete_task_list::{DeleteTaskList, DeleteTaskListInput, DeleteTaskListOu
 pub use delete_tasks::{DeleteTasks, DeleteTasksInput};
 pub use ensure_inbox::EnsureInbox;
 pub use move_task::{MoveTask, MoveTaskInput};
+pub use move_task_list::{MoveTaskList, MoveTaskListInput};
 pub use move_tasks::{MoveTasks, MoveTasksInput};
 pub use rename_task_list::{RenameTaskList, RenameTaskListInput};
 pub use reopen_task::{ReopenTask, ReopenTaskInput};

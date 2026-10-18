@@ -133,6 +133,20 @@ impl TaskList {
         !self.is_inbox
     }
 
+    /// Die Inbox steht immer zuerst und lässt sich nicht umsortieren (ADR-023).
+    #[must_use]
+    pub fn can_move(&self) -> bool {
+        !self.is_inbox
+    }
+
+    /// Setzt die Position (`sort_key`) unter den Listen; `updated_at` nur bei Änderung.
+    pub fn move_to(&mut self, sort_key: SortKey, clock: &(impl Clock + ?Sized)) {
+        if sort_key != self.sort_key {
+            self.sort_key = sort_key;
+            self.updated_at = clock.now();
+        }
+    }
+
     /// Ändert den Namen (gleiche Regeln wie in [`TaskList::new`]). Ob umbenannt werden
     /// darf ([`TaskList::can_rename`]), prüft der Use-Case.
     ///
@@ -162,6 +176,21 @@ mod tests {
 
     fn clock() -> SteppingClock {
         SteppingClock::new(Timestamp::from_millis(500), 1)
+    }
+
+    #[test]
+    fn move_to_changes_key_and_touches_only_on_change() {
+        let c = clock();
+        let mut list = TaskList::new("A", SortKey::first(), &c).unwrap();
+        let before = list.clone();
+        list.move_to(SortKey::first(), &c);
+        assert_eq!(list, before, "gleicher Key: unverändert");
+        let key = SortKey::between(Some(&SortKey::first()), None).unwrap();
+        list.move_to(key.clone(), &c);
+        assert_eq!(list.sort_key(), &key);
+        assert!(list.updated_at() > before.updated_at());
+        assert!(list.can_move());
+        assert!(!TaskList::inbox(SortKey::first(), &c).can_move());
     }
 
     #[test]

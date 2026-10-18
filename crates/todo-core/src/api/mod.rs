@@ -11,17 +11,17 @@ use std::{
 };
 
 use self::dto::{
-    list_id, task_id, CreateTaskDto, MoveTargetDto, PageDto, PageRequestDto, TaskDto, TaskListDto,
-    TaskPatchDto, TaskQueryDto, TaskSummaryDto,
+    list_id, task_id, CreateTaskDto, MoveListTargetDto, MoveTargetDto, PageDto, PageRequestDto,
+    TaskDto, TaskListDto, TaskPatchDto, TaskQueryDto, TaskSummaryDto,
 };
 use crate::{
     app::{
         check_bulk_len, CompleteTask, CompleteTaskInput, CompleteTasks, CompleteTasksInput,
         CreateTask, CreateTaskInput, CreateTaskList, CreateTaskListInput, DeleteTask,
         DeleteTaskInput, DeleteTaskList, DeleteTaskListInput, DeleteTasks, DeleteTasksInput, Deps,
-        EnsureInbox, MoveTask, MoveTaskInput, MoveTasks, MoveTasksInput, RenameTaskList,
-        RenameTaskListInput, ReopenTask, ReopenTaskInput, RestoreTasks, RestoreTasksInput,
-        TaskPatch, UpdateTask, UpdateTaskInput,
+        EnsureInbox, MoveTask, MoveTaskInput, MoveTaskList, MoveTaskListInput, MoveTasks,
+        MoveTasksInput, RenameTaskList, RenameTaskListInput, ReopenTask, ReopenTaskInput,
+        RestoreTasks, RestoreTasksInput, TaskPatch, UpdateTask, UpdateTaskInput,
     },
     domain::{DeviceId, Task, TaskId, TaskList, TaskListId, TaskParts},
     ports::{
@@ -106,17 +106,15 @@ impl CoreApi {
         Ok((&EnsureInbox::new(self.deps.clone()).execute().await?).into())
     }
 
+    /// Alle Listen: die Inbox zuerst, dann die Benutzerlisten nach `sort_key` (ADR-023).
+    ///
     /// # Errors
     /// Fehler des Repositories.
     pub async fn list_task_lists(&self) -> CoreResult<Vec<TaskListDto>> {
-        Ok(self
-            .deps
-            .repo
-            .list_task_lists()
-            .await?
-            .iter()
-            .map(TaskListDto::from)
-            .collect())
+        let mut lists = self.deps.repo.list_task_lists().await?;
+        // Stabil: Reihenfolge der übrigen bleibt die des Repositories.
+        lists.sort_by_key(|l| !l.is_inbox());
+        Ok(lists.iter().map(TaskListDto::from).collect())
     }
 
     /// # Errors
@@ -139,6 +137,23 @@ impl CoreApi {
             .execute(input)
             .await?)
             .into())
+    }
+
+    /// Sortiert eine Liste unter den Benutzerlisten um (die Inbox bleibt vorn).
+    ///
+    /// # Errors
+    /// `NotFound`, `Validation` (Inbox, Nachbarn, ID).
+    pub async fn move_task_list(
+        &self,
+        id: String,
+        target: MoveListTargetDto,
+    ) -> CoreResult<TaskListDto> {
+        let input = MoveTaskListInput {
+            id: list_id(&id)?,
+            after: target.after.as_deref().map(list_id).transpose()?,
+            before: target.before.as_deref().map(list_id).transpose()?,
+        };
+        Ok((&MoveTaskList::new(self.deps.clone()).execute(input).await?).into())
     }
 
     /// Löscht eine Liste; ihre Tasks wandern in die Inbox. Liefert die Zahl verschobener Tasks.
@@ -682,6 +697,60 @@ mod bulk_tests {
     }
 }
 
+#[cfg(test)]
+mod list_order_tests {
+    use futures::executor::block_on;
+
+    use super::*;
+    use crate::{
+        domain::{SortKey, Timestamp},
+        ports::FixedClock,
+        testing::InMemoryTaskRepository,
+    };
+
+    /// ADR-023: Die Inbox steht vorn, auch wenn ihr Sort-Key (z. B. von einem anderen Gerät)
+    /// größer ist als der einer Benutzerliste.
+    #[test]
+    fn inbox_comes_first_and_lists_can_be_reordered() {
+        let api = CoreApi::new(
+            Arc::new(InMemoryTaskRepository::new()),
+            Arc::new(FixedClock(Timestamp::from_millis(1_234))),
+        );
+        let a = block_on(api.create_task_list("A".into())).unwrap();
+        let b = block_on(api.create_task_list("B".into())).unwrap();
+        let clock = FixedClock(Timestamp::from_millis(5));
+        let late = SortKey::parse("b00").unwrap();
+        block_on(
+            api.repository()
+                .commit(ChangeSet::new().upsert_list(TaskList::inbox(late, &clock))),
+        )
+        .unwrap();
+        let names = || -> Vec<String> {
+            block_on(api.list_task_lists())
+                .unwrap()
+                .into_iter()
+                .map(|l| l.name)
+                .collect()
+        };
+        assert_eq!(names(), ["Inbox", "A", "B"]);
+
+        let moved = block_on(api.move_task_list(
+            b.id.clone(),
+            MoveListTargetDto {
+                after: None,
+                before: Some(a.id.clone()),
+            },
+        ))
+        .unwrap();
+        assert_eq!(moved.name, "B");
+        assert_eq!(names(), ["Inbox", "B", "A"]);
+        let inbox = block_on(
+            api.move_task_list(TaskListId::INBOX.to_string(), MoveListTargetDto::default()),
+        );
+        assert!(matches!(inbox, Err(CoreError::Validation(_))));
+    }
+}
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
@@ -700,6 +769,7 @@ mod tests {
         assert_send(api.delete_tasks(Vec::new()));
         assert_send(api.move_tasks(Vec::new(), MoveTargetDto::default()));
         assert_send(api.restore_tasks(Vec::new()));
+        assert_send(api.move_task_list(String::new(), MoveListTargetDto::default()));
         assert_send(api.list_tasks(
             TaskQueryDto {
                 view: dto::ViewDto::All,
