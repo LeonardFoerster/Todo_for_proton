@@ -18,13 +18,16 @@
     Ellipsis,
     FolderInput,
     Keyboard,
+    List,
     ListChecks,
     PanelLeft,
     Pencil,
     Settings,
+    SquareKanban,
     Trash,
     Undo,
   } from "./icons";
+  import Board from "./features/board/Board.svelte";
   import Menu, { type MenuItem } from "./components/Menu.svelte";
   import DeleteListDialog from "./features/lists/DeleteListDialog.svelte";
   import ListNameDialog from "./features/lists/ListNameDialog.svelte";
@@ -32,7 +35,7 @@
   import type SettingsDialogType from "./features/account/SettingsDialog.svelte";
   import { setCoreClient } from "./lib/context";
   import { ListsState } from "./lib/lists.svelte";
-  import { readFlag, writeFlag } from "./lib/preferences";
+  import { readChoice, readFlag, writeChoice, writeFlag } from "./lib/preferences";
   import { routeHash, Router, type SmartViewKind } from "./lib/router.svelte";
   import { ShortcutRegistry } from "./lib/shortcuts";
   import { SyncState } from "./lib/sync.svelte";
@@ -51,6 +54,7 @@
   setCoreClient(client);
 
   const COLLAPSED_KEY = "tasks.sidebar-collapsed";
+  const LAYOUT_KEY = "tasks.layout";
   // svelte-ignore state_referenced_locally
   const lists = new ListsState(client);
   // svelte-ignore state_referenced_locally
@@ -58,6 +62,8 @@
   const router = new Router();
 
   let collapsed = $state(readFlag(COLLAPSED_KEY));
+  /** Darstellung Liste oder Kanban-Board (P2-05), pro Gerät gemerkt. */
+  let layout = $state(readChoice(LAYOUT_KEY, ["list", "board"] as const, "list"));
   let drawerOpen = $state(false);
   let ready = $state(false);
   /** Hervorgehobene Zeile (Tastatur/Klick). */
@@ -79,6 +85,15 @@
 
   const route = $derived(router.route);
   const title = $derived(routeTitle(route, lists.lists));
+  /** Das Board zeigt alle Listen; umschaltbar in Eingang, Listen und „Alle Tasks“. */
+  const boardCapable = $derived(route.view === "inbox" || route.view === "list" || route.view === "all");
+  const showBoard = $derived(boardCapable && layout === "board");
+
+  function setLayout(next: "list" | "board") {
+    if (next === layout) return;
+    layout = next;
+    writeChoice(LAYOUT_KEY, next);
+  }
   /** Mehrfachauswahl der aktuellen Ansicht (gehört der TaskList, endet mit ihr). */
   const selection = $derived(taskList?.selection);
 
@@ -450,6 +465,13 @@
       when: hasList,
       run: () => taskList?.extendSelection(-1),
     },
+    {
+      keys: ["v"],
+      description: "Darstellung Liste/Kanban umschalten",
+      group: "Ansichten",
+      when: () => boardCapable,
+      run: () => setLayout(layout === "list" ? "board" : "list"),
+    },
     { keys: ["g i"], description: "Eingang", group: "Ansichten", run: () => goTo("inbox") },
     { keys: ["g t"], description: "Heute", group: "Ansichten", run: () => goTo("today") },
     { keys: ["g u"], description: "Geplant", group: "Ansichten", run: () => goTo("upcoming") },
@@ -529,11 +551,29 @@
         </SelectionBar>
       {:else}
         <span class="header-actions">
+          {#if boardCapable}
+            <span class="layout-switch" role="group" aria-label="Darstellung">
+              <IconButton
+                label="Liste"
+                shortcut="V"
+                icon={List}
+                pressed={layout === "list"}
+                onclick={() => setLayout("list")}
+              />
+              <IconButton
+                label="Kanban"
+                shortcut="V"
+                icon={SquareKanban}
+                pressed={layout === "board"}
+                onclick={() => setLayout("board")}
+              />
+            </span>
+          {/if}
           <IconButton
-            label="Auswählen"
-            shortcut="Strg+A"
+            label={showBoard ? "Auswählen (nur in der Listenansicht)" : "Auswählen"}
+            shortcut={showBoard ? undefined : "Strg+A"}
             icon={ListChecks}
-            disabled={!hasList()}
+            disabled={showBoard || !hasList()}
             onclick={() => taskList?.startSelection()}
           />
           {#if currentList}
@@ -564,7 +604,11 @@
             />
           {/if}
           <div class="list-slot">
-            <TaskList bind:this={taskList} {route} {lists} bind:selectedId onopen={(id) => (openId = id)} onready={listReady} onnewtask={newTask} />
+            {#if showBoard}
+              <Board onready={listReady} />
+            {:else}
+              <TaskList bind:this={taskList} {route} {lists} bind:selectedId onopen={(id) => (openId = id)} onready={listReady} onnewtask={newTask} />
+            {/if}
           </div>
         {/key}
       {/if}
@@ -657,6 +701,18 @@
     height: 56px;
     padding: 0 var(--space-4) 0 var(--space-6);
     flex: none;
+  }
+  .layout-switch {
+    display: flex;
+    gap: 2px;
+    margin-right: var(--space-2);
+    padding: 2px;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-subtle);
+  }
+  .layout-switch :global(.icon-btn) {
+    width: 28px;
+    height: 28px;
   }
   .header-actions {
     display: flex;
