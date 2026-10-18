@@ -282,14 +282,19 @@ impl ReplicaStore for SqliteReplica<'_> {
         Ok((!registers.is_empty()).then_some(EntityState::Live(registers)))
     }
 
-    fn set_entity_state(&mut self, entity: EntityRef, state: &EntityState) -> CoreResult<()> {
+    fn set_entity_state(
+        &mut self,
+        entity: EntityRef,
+        before: Option<&EntityState>,
+        state: &EntityState,
+    ) -> CoreResult<()> {
         let (id, kind) = entity_key(entity);
-        self.conn
-            .prepare_cached("DELETE FROM field_clocks WHERE entity_id = ?1")
-            .and_then(|mut stmt| stmt.execute([&id]))
-            .map_err(storage)?;
         match state {
             EntityState::Deleted(hlc) => {
+                self.conn
+                    .prepare_cached("DELETE FROM field_clocks WHERE entity_id = ?1")
+                    .and_then(|mut stmt| stmt.execute([&id]))
+                    .map_err(storage)?;
                 self.conn
                     .prepare_cached(
                         "INSERT INTO tombstones (entity_id, entity_kind, hlc) VALUES (?1, ?2, ?3)
@@ -301,14 +306,26 @@ impl ReplicaStore for SqliteReplica<'_> {
                     .map_err(storage)?;
             }
             EntityState::Live(registers) => {
+                // Nur geänderte Register schreiben: ein Feld-Update kostet so ein Statement statt
+                // eines pro Feld (Sammel-Commits mit 1 000 Tasks, P0-01). Register verschwinden
+                // nie aus einem lebenden Zustand, daher genügt ein Upsert.
+                let old = match before {
+                    Some(EntityState::Live(old)) => Some(old),
+                    _ => None,
+                };
                 let mut stmt = self
                     .conn
                     .prepare_cached(
                         "INSERT INTO field_clocks (entity_id, field, entity_kind, hlc, value)
-                         VALUES (:id, :field, :kind, :hlc, :value)",
+                         VALUES (:id, :field, :kind, :hlc, :value)
+                         ON CONFLICT (entity_id, field) DO UPDATE
+                         SET hlc = excluded.hlc, value = excluded.value",
                     )
                     .map_err(storage)?;
                 for (field, register) in registers {
+                    if old.and_then(|old| old.get(field)) == Some(register) {
+                        continue;
+                    }
                     stmt.execute(named_params! {
                         ":id": id,
                         ":field": field.code(),

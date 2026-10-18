@@ -4,27 +4,35 @@
 //! `execute(&self, input) -> CoreResult<Output>`.
 
 mod complete_task;
+mod complete_tasks;
 mod create_task;
 mod create_task_list;
 mod delete_task;
 mod delete_task_list;
+mod delete_tasks;
 mod ensure_inbox;
 mod move_task;
+mod move_tasks;
 mod rename_task_list;
 mod reopen_task;
+mod restore_tasks;
 mod update_task;
 
 use std::{fmt, sync::Arc};
 
 pub use complete_task::{CompleteTask, CompleteTaskInput};
+pub use complete_tasks::{CompleteTasks, CompleteTasksInput};
 pub use create_task::{CreateTask, CreateTaskInput};
 pub use create_task_list::{CreateTaskList, CreateTaskListInput};
 pub use delete_task::{DeleteTask, DeleteTaskInput};
 pub use delete_task_list::{DeleteTaskList, DeleteTaskListInput, DeleteTaskListOutput};
+pub use delete_tasks::{DeleteTasks, DeleteTasksInput};
 pub use ensure_inbox::EnsureInbox;
 pub use move_task::{MoveTask, MoveTaskInput};
+pub use move_tasks::{MoveTasks, MoveTasksInput};
 pub use rename_task_list::{RenameTaskList, RenameTaskListInput};
 pub use reopen_task::{ReopenTask, ReopenTaskInput};
+pub use restore_tasks::{RestoreTasks, RestoreTasksInput};
 pub use update_task::{TaskPatch, UpdateTask, UpdateTaskInput};
 
 use crate::{
@@ -75,6 +83,34 @@ pub(crate) async fn load_task(repo: &dyn TaskRepository, id: TaskId) -> CoreResu
     repo.get_task(id)
         .await?
         .ok_or_else(|| CoreError::NotFound(format!("task {id}")))
+}
+
+/// Höchstzahl an Tasks pro Sammel-Aufruf (`CompleteTasks`, `DeleteTasks`, `MoveTasks`,
+/// `RestoreTasks`).
+pub const BULK_LIMIT_MAX: usize = 2_000;
+
+/// Prüft die Obergrenze und entfernt doppelte IDs (erstes Vorkommen bleibt).
+pub(crate) fn bulk_ids(ids: Vec<TaskId>) -> CoreResult<Vec<TaskId>> {
+    check_bulk_len(ids.len())?;
+    let mut seen = std::collections::HashSet::with_capacity(ids.len());
+    Ok(ids.into_iter().filter(|id| seen.insert(*id)).collect())
+}
+
+pub(crate) fn check_bulk_len(len: usize) -> CoreResult<()> {
+    if len > BULK_LIMIT_MAX {
+        return Err(CoreError::Validation(format!(
+            "at most {BULK_LIMIT_MAX} tasks per call, got {len}"
+        )));
+    }
+    Ok(())
+}
+
+/// Lädt die existierenden Tasks zu `ids` (Reihenfolge wie `ids`); unbekannte IDs entfallen.
+pub(crate) async fn load_existing(
+    repo: &dyn TaskRepository,
+    ids: &[TaskId],
+) -> CoreResult<Vec<Task>> {
+    repo.get_tasks(ids).await
 }
 
 /// Schlüssel für eine neue Position direkt hinter `last` (bzw. den ersten, wenn leer).

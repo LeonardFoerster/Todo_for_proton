@@ -62,41 +62,17 @@ impl MoveTask {
                 .into_iter()
                 .filter(|s| s.id != task.id())
                 .collect();
-        let index_of = |id: TaskId| {
-            siblings.iter().position(|s| s.id == id).ok_or_else(|| {
-                CoreError::Validation(format!("neighbour {id} is not in list {list_id}"))
-            })
-        };
-
-        // Indizes der Nachbarn unter- und oberhalb der Zielposition.
-        let (lower, upper) = match (input.after, input.before) {
-            (Some(after), Some(before)) => (Some(index_of(after)?), Some(index_of(before)?)),
-            (Some(after), None) => {
-                let a = index_of(after)?;
-                (Some(a), (a + 1 < siblings.len()).then_some(a + 1))
-            }
-            (None, Some(before)) => {
-                let b = index_of(before)?;
-                (b.checked_sub(1), Some(b))
-            }
-            (None, None) => (siblings.len().checked_sub(1), None),
-        };
-
         let clock = self.deps.clock.as_ref();
         let mut changes = ChangeSet::new();
-        let mut upper_key = upper.map(|i| siblings[i].sort_key.clone());
-        if let (Some(l), Some(u)) = (lower, upper) {
-            if l < u && siblings[l].sort_key == siblings[u].sort_key {
-                let rekeyed = spread_equal_keys(&siblings, u)?;
-                upper_key = rekeyed.first().map(|(_, key)| key.clone());
-                for (id, key) in rekeyed {
-                    let mut sibling = load_task(repo, id).await?;
-                    sibling.move_to(list_id, key, clock);
-                    changes.push(Change::UpsertTask(sibling));
-                }
-            }
-        }
-        let key = SortKey::between(lower.map(|i| &siblings[i].sort_key), upper_key.as_ref())?;
+        let (lower, upper) = insertion_bounds(
+            &self.deps,
+            list_id,
+            &siblings,
+            (input.after, input.before),
+            &mut changes,
+        )
+        .await?;
+        let key = SortKey::between(lower.as_ref(), upper.as_ref())?;
 
         let before_move = task.clone();
         task.move_to(list_id, key, clock);
@@ -108,6 +84,53 @@ impl MoveTask {
         }
         Ok(task)
     }
+}
+
+/// Schlüssel unter- und oberhalb der Einfügeposition in `siblings` (Zielliste ohne die
+/// verschobenen Tasks) für die Nachbarn `(after, before)` – Semantik wie [`MoveTaskInput`].
+///
+/// Haben beide Nachbarn denselben Key (FIX-02), bekommen der obere und alle folgenden Tasks mit
+/// diesem Key neue Keys; deren Änderungen landen in `changes`.
+pub(super) async fn insertion_bounds(
+    deps: &Deps,
+    list_id: TaskListId,
+    siblings: &[TaskSummary],
+    (after, before): (Option<TaskId>, Option<TaskId>),
+    changes: &mut ChangeSet,
+) -> CoreResult<(Option<SortKey>, Option<SortKey>)> {
+    let index_of = |id: TaskId| {
+        siblings.iter().position(|s| s.id == id).ok_or_else(|| {
+            CoreError::Validation(format!("neighbour {id} is not in list {list_id}"))
+        })
+    };
+
+    // Indizes der Nachbarn unter- und oberhalb der Zielposition.
+    let (lower, upper) = match (after, before) {
+        (Some(after), Some(before)) => (Some(index_of(after)?), Some(index_of(before)?)),
+        (Some(after), None) => {
+            let a = index_of(after)?;
+            (Some(a), (a + 1 < siblings.len()).then_some(a + 1))
+        }
+        (None, Some(before)) => {
+            let b = index_of(before)?;
+            (b.checked_sub(1), Some(b))
+        }
+        (None, None) => (siblings.len().checked_sub(1), None),
+    };
+
+    let mut upper_key = upper.map(|i| siblings[i].sort_key.clone());
+    if let (Some(l), Some(u)) = (lower, upper) {
+        if l < u && siblings[l].sort_key == siblings[u].sort_key {
+            let rekeyed = spread_equal_keys(siblings, u)?;
+            upper_key = rekeyed.first().map(|(_, key)| key.clone());
+            for (id, key) in rekeyed {
+                let mut sibling = load_task(deps.repo.as_ref(), id).await?;
+                sibling.move_to(list_id, key, deps.clock.as_ref());
+                changes.push(Change::UpsertTask(sibling));
+            }
+        }
+    }
+    Ok((lower.map(|i| siblings[i].sort_key.clone()), upper_key))
 }
 
 /// Neue, aufsteigende Keys für die Tasks ab `start`, die denselben Key wie `start` haben – alle

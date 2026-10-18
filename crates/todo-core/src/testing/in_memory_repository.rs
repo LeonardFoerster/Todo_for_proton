@@ -320,7 +320,12 @@ impl ReplicaStore for State {
         Ok(self.entities.get(&entity).cloned())
     }
 
-    fn set_entity_state(&mut self, entity: EntityRef, state: &EntityState) -> CoreResult<()> {
+    fn set_entity_state(
+        &mut self,
+        entity: EntityRef,
+        _before: Option<&EntityState>,
+        state: &EntityState,
+    ) -> CoreResult<()> {
         self.entities.insert(entity, state.clone());
         Ok(())
     }

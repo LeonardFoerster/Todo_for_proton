@@ -4,7 +4,8 @@
 //! cargo run --release -p todo-storage-sqlite --example bench_storage
 //! ```
 //!
-//! Ziele (`architecture.md` §6): erste Seite (50) der Inbox < 5 ms, einzelner Commit < 2 ms.
+//! Ziele (`architecture.md` §6): erste Seite (50) der Inbox < 5 ms, einzelner Commit < 2 ms,
+//! Sammelaktionen mit 1 000 IDs < 50 ms (P0-01).
 
 use std::{
     sync::Arc,
@@ -197,5 +198,57 @@ fn main() {
             );
         }),
         None,
+    );
+
+    // --- Sammelaktionen über CoreApi: 1 000 IDs in der 10k-Inbox (P0-01) -----------------------
+    let block = |i: usize| -> Vec<String> {
+        tasks[i * 1_000..(i + 1) * 1_000]
+            .iter()
+            .map(|t| t.id().to_string())
+            .collect()
+    };
+    let mut to_start = false;
+    report(
+        "CoreApi::move_tasks 1 000 IDs (Inbox mit 10k)",
+        measure(10, || {
+            to_start = !to_start;
+            let target = MoveTargetDto {
+                list_id: None,
+                after: None,
+                before: to_start.then(|| tasks[9_999].id().to_string()),
+            };
+            let moved = block_on(api.move_tasks(block(4), target)).expect("move");
+            assert_eq!(moved.len(), 1_000);
+        }),
+        Some(ms(50)),
+    );
+    let mut round = 0;
+    report(
+        "CoreApi::complete_tasks 1 000 IDs",
+        measure(10, || {
+            round += 1;
+            let done = round % 2 == 1;
+            drop(block_on(api.complete_tasks(block(5), done)).expect("complete"));
+        }),
+        Some(ms(50)),
+    );
+    let mut chunk = 0;
+    let mut snapshots = Vec::new();
+    report(
+        "CoreApi::delete_tasks 1 000 IDs",
+        measure(4, || {
+            chunk += 1;
+            snapshots = block_on(api.delete_tasks(block(chunk))).expect("delete");
+            assert_eq!(snapshots.len(), 1_000);
+        }),
+        Some(ms(50)),
+    );
+    report(
+        "CoreApi::restore_tasks 1 000 Tasks",
+        measure(1, || {
+            let restored = block_on(api.restore_tasks(snapshots.clone())).expect("restore");
+            assert_eq!(restored.len(), 1_000);
+        }),
+        Some(ms(50)),
     );
 }

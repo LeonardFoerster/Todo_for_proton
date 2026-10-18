@@ -16,12 +16,14 @@ use self::dto::{
 };
 use crate::{
     app::{
-        CompleteTask, CompleteTaskInput, CreateTask, CreateTaskInput, CreateTaskList,
-        CreateTaskListInput, DeleteTask, DeleteTaskInput, DeleteTaskList, DeleteTaskListInput,
-        Deps, EnsureInbox, MoveTask, MoveTaskInput, RenameTaskList, RenameTaskListInput,
-        ReopenTask, ReopenTaskInput, TaskPatch, UpdateTask, UpdateTaskInput,
+        check_bulk_len, CompleteTask, CompleteTaskInput, CompleteTasks, CompleteTasksInput,
+        CreateTask, CreateTaskInput, CreateTaskList, CreateTaskListInput, DeleteTask,
+        DeleteTaskInput, DeleteTaskList, DeleteTaskListInput, DeleteTasks, DeleteTasksInput, Deps,
+        EnsureInbox, MoveTask, MoveTaskInput, MoveTasks, MoveTasksInput, RenameTaskList,
+        RenameTaskListInput, ReopenTask, ReopenTaskInput, RestoreTasks, RestoreTasksInput,
+        TaskPatch, UpdateTask, UpdateTaskInput,
     },
-    domain::{DeviceId, Task, TaskId, TaskList, TaskListId},
+    domain::{DeviceId, Task, TaskId, TaskList, TaskListId, TaskParts},
     ports::{
         ChangeSet, Clock, CommitReceipt, EntityRef, MaybeSend, MaybeSync, Page, PageRequest,
         TaskQuery, TaskRepository, TaskSummary,
@@ -234,6 +236,73 @@ impl CoreApi {
             .await
     }
 
+    // --- Sammelaktionen (je ein Commit, ein `Changed`-Event; unbekannte IDs übersprungen) ------
+
+    /// Hakt alle ab (`done = true`) bzw. öffnet alle wieder; liefert die tatsächlich geänderten.
+    ///
+    /// # Errors
+    /// `Validation` (ID, mehr als [`crate::app::BULK_LIMIT_MAX`]).
+    pub async fn complete_tasks(&self, ids: Vec<String>, done: bool) -> CoreResult<Vec<TaskDto>> {
+        let input = CompleteTasksInput {
+            ids: task_ids(&ids)?,
+            done,
+        };
+        Ok(dtos(
+            &CompleteTasks::new(self.deps.clone()).execute(input).await?,
+        ))
+    }
+
+    /// Löscht alle; liefert die gelöschten Tasks im Zustand davor (für `restore_tasks`).
+    ///
+    /// # Errors
+    /// `Validation` (ID, Obergrenze).
+    pub async fn delete_tasks(&self, ids: Vec<String>) -> CoreResult<Vec<TaskDto>> {
+        let input = DeleteTasksInput {
+            ids: task_ids(&ids)?,
+        };
+        Ok(dtos(
+            &DeleteTasks::new(self.deps.clone()).execute(input).await?,
+        ))
+    }
+
+    /// Verschiebt alle als Block (bisherige Anzeigereihenfolge) an `target`; ohne `listId` in die
+    /// gemeinsame bisherige Liste. Liefert die tatsächlich geänderten Tasks in neuer Reihenfolge.
+    ///
+    /// # Errors
+    /// `NotFound` (Liste), `Validation` (ID, Obergrenze, Nachbarn, gemischte Listen ohne Ziel).
+    pub async fn move_tasks(
+        &self,
+        ids: Vec<String>,
+        target: MoveTargetDto,
+    ) -> CoreResult<Vec<TaskDto>> {
+        let input = MoveTasksInput {
+            ids: task_ids(&ids)?,
+            list_id: target.list_id.as_deref().map(list_id).transpose()?,
+            after: target.after.as_deref().map(task_id).transpose()?,
+            before: target.before.as_deref().map(task_id).transpose()?,
+        };
+        Ok(dtos(
+            &MoveTasks::new(self.deps.clone()).execute(input).await?,
+        ))
+    }
+
+    /// Legt Kopien gelöschter Tasks (aus `delete_tasks`) mit **neuen** IDs an, an alter Stelle.
+    ///
+    /// # Errors
+    /// `Validation` (Felder, Obergrenze).
+    pub async fn restore_tasks(&self, tasks: Vec<TaskDto>) -> CoreResult<Vec<TaskDto>> {
+        check_bulk_len(tasks.len())?;
+        let tasks = tasks
+            .iter()
+            .map(TaskParts::try_from)
+            .collect::<CoreResult<_>>()?;
+        Ok(dtos(
+            &RestoreTasks::new(self.deps.clone())
+                .execute(RestoreTasksInput { tasks })
+                .await?,
+        ))
+    }
+
     /// Eine Seite einer Ansicht.
     ///
     /// # Errors
@@ -250,6 +319,15 @@ impl CoreApi {
         };
         Ok(self.deps.repo.list_tasks(&query, page).await?.into())
     }
+}
+
+fn task_ids(ids: &[String]) -> CoreResult<Vec<TaskId>> {
+    check_bulk_len(ids.len())?;
+    ids.iter().map(|id| task_id(id)).collect()
+}
+
+fn dtos(tasks: &[Task]) -> Vec<TaskDto> {
+    tasks.iter().map(TaskDto::from).collect()
 }
 
 fn write_sinks(sinks: &Sinks) -> std::sync::RwLockWriteGuard<'_, Vec<Box<dyn EventSink>>> {
@@ -291,6 +369,10 @@ struct NotifyingRepository {
 impl TaskRepository for NotifyingRepository {
     async fn get_task(&self, id: TaskId) -> CoreResult<Option<Task>> {
         self.inner.get_task(id).await
+    }
+
+    async fn get_tasks(&self, ids: &[TaskId]) -> CoreResult<Vec<Task>> {
+        self.inner.get_tasks(ids).await
     }
 
     async fn get_task_list(&self, id: TaskListId) -> CoreResult<Option<TaskList>> {
@@ -446,6 +528,160 @@ mod sync_tests {
     }
 }
 
+#[cfg(test)]
+mod bulk_tests {
+    use std::sync::Mutex;
+
+    use futures::executor::block_on;
+
+    use super::*;
+    use crate::{
+        domain::Timestamp,
+        ports::FixedClock,
+        sync::{FieldName, OpKind},
+        testing::InMemoryTaskRepository,
+    };
+
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<CoreEvent>>);
+
+    impl EventSink for Recorder {
+        fn emit(&self, event: CoreEvent) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
+    struct Setup {
+        api: CoreApi,
+        events: Arc<Recorder>,
+        ids: Vec<String>,
+    }
+
+    fn setup() -> Setup {
+        let api = CoreApi::new(
+            Arc::new(InMemoryTaskRepository::new()),
+            Arc::new(FixedClock(Timestamp::from_millis(1_234))),
+        );
+        let ids = ["a", "b", "c"]
+            .iter()
+            .map(|t| {
+                block_on(api.create_task(CreateTaskDto {
+                    title: (*t).into(),
+                    list_id: None,
+                }))
+                .unwrap()
+                .id
+            })
+            .collect();
+        block_on(api.repository().mark_ops_pushed(u64::MAX)).unwrap();
+        let events = Arc::new(Recorder::default());
+        api.subscribe(Box::new(events.clone()));
+        Setup { api, events, ids }
+    }
+
+    impl Setup {
+        /// Events und neue Outbox-Ops seit dem letzten Aufruf.
+        fn take(&self) -> (Vec<CoreEvent>, Vec<Op>) {
+            let repo = self.api.repository();
+            let ops = block_on(repo.pending_ops(u32::MAX)).unwrap();
+            block_on(repo.mark_ops_pushed(u64::MAX)).unwrap();
+            (std::mem::take(&mut *self.events.0.lock().unwrap()), ops)
+        }
+    }
+
+    fn changed(ids: &[String]) -> Vec<CoreEvent> {
+        vec![CoreEvent::Changed {
+            tasks: ids.to_vec(),
+            lists: Vec::new(),
+        }]
+    }
+
+    fn fields(ops: &[Op]) -> Vec<Option<FieldName>> {
+        ops.iter()
+            .map(|op| match &op.kind {
+                OpKind::Set { field, .. } => Some(*field),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn each_bulk_call_is_one_commit_with_one_event() {
+        let s = setup();
+        let done = block_on(s.api.complete_tasks(s.ids.clone(), true)).unwrap();
+        assert_eq!(done.len(), 3);
+        let (events, ops) = s.take();
+        assert_eq!(events, changed(&s.ids));
+        assert_eq!(fields(&ops), vec![Some(FieldName::Status); 3]);
+
+        let moved = block_on(s.api.move_tasks(
+            vec![s.ids[0].clone(), s.ids[1].clone()],
+            MoveTargetDto {
+                after: Some(s.ids[2].clone()),
+                ..MoveTargetDto::default()
+            },
+        ))
+        .unwrap();
+        assert_eq!(moved.len(), 2);
+        let (events, ops) = s.take();
+        assert_eq!(events, changed(&s.ids[..2]));
+        assert_eq!(fields(&ops), vec![Some(FieldName::SortKey); 2]);
+
+        let deleted = block_on(s.api.delete_tasks(s.ids.clone())).unwrap();
+        assert_eq!(deleted.len(), 3);
+        let (events, ops) = s.take();
+        assert_eq!(events, changed(&s.ids));
+        assert!(ops.iter().all(|op| op.kind == OpKind::Delete));
+        assert_eq!(ops.len(), 3);
+
+        let restored = block_on(s.api.restore_tasks(deleted.clone())).unwrap();
+        let new_ids: Vec<String> = restored.iter().map(|t| t.id.clone()).collect();
+        let (events, ops) = s.take();
+        assert_eq!(events, changed(&new_ids));
+        assert!(ops
+            .iter()
+            .all(|op| matches!(op.kind, OpKind::Create { .. })));
+        for (old, new) in deleted.iter().zip(&restored) {
+            assert_eq!(
+                (
+                    &old.title,
+                    &old.sort_key,
+                    &old.created_at,
+                    &old.completed_at
+                ),
+                (
+                    &new.title,
+                    &new.sort_key,
+                    &new.created_at,
+                    &new.completed_at
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn noop_and_invalid_calls_emit_nothing() {
+        let s = setup();
+        assert!(block_on(s.api.complete_tasks(Vec::new(), true))
+            .unwrap()
+            .is_empty());
+        assert!(block_on(s.api.complete_tasks(s.ids.clone(), false))
+            .unwrap()
+            .is_empty());
+        assert!(matches!(
+            block_on(s.api.delete_tasks(vec![s.ids[0].clone(), "kaputt".into()])),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(block_on(s.api.restore_tasks(Vec::new()))
+            .unwrap()
+            .is_empty());
+        let (events, ops) = s.take();
+        assert!(events.is_empty());
+        assert!(ops.is_empty());
+        assert!(block_on(s.api.get_task(s.ids[0].clone())).is_ok());
+    }
+}
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
@@ -460,6 +696,10 @@ mod tests {
             Arc::new(crate::ports::FixedClock(crate::domain::Timestamp::EPOCH)),
         );
         assert_send(api.ensure_inbox());
+        assert_send(api.complete_tasks(Vec::new(), true));
+        assert_send(api.delete_tasks(Vec::new()));
+        assert_send(api.move_tasks(Vec::new(), MoveTargetDto::default()));
+        assert_send(api.restore_tasks(Vec::new()));
         assert_send(api.list_tasks(
             TaskQueryDto {
                 view: dto::ViewDto::All,

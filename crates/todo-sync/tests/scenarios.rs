@@ -9,7 +9,7 @@ use common::{assert_converged, Device, Flaky, T0};
 use futures::executor::block_on;
 use tempfile::TempDir;
 use todo_core::{
-    api::dto::{DueDto, TaskPatchDto},
+    api::dto::{DueDto, MoveTargetDto, TaskPatchDto},
     ports::RemoteStore,
 };
 use todo_remote_fs::FsRemoteStore;
@@ -132,6 +132,58 @@ fn concurrent_moves_give_identical_order() {
     assert_eq!(order.len(), 4);
     assert_eq!(order[3], "zwei", "B's Verschiebung ans Ende");
     assert_eq!(order[2], "eins");
+}
+
+/// Szenario 3b (P0-01): A verschiebt einen Block in eine andere Liste, B ändert parallel eine
+/// Task des Blocks und verschiebt eine andere → beide Änderungen bleiben, gleiche Reihenfolge.
+#[test]
+fn block_move_and_concurrent_edit_converge() {
+    let world = World::new();
+    let a = world.device("a");
+    let b = world.device("b");
+    let list = a.list("Arbeit");
+    let ids: Vec<String> = ["eins", "zwei", "drei", "vier", "fünf"]
+        .iter()
+        .map(|t| a.add(t).id)
+        .collect();
+    let anchor = a.add_to("Anker", Some(&list.id)).id;
+    a.sync();
+    b.sync();
+
+    let moved = block_on(a.api.move_tasks(
+        vec![ids[3].clone(), ids[1].clone(), ids[2].clone()],
+        MoveTargetDto {
+            list_id: Some(list.id.clone()),
+            after: None,
+            before: Some(anchor.clone()),
+        },
+    ))
+    .expect("move block");
+    assert_eq!(moved.len(), 3);
+    b.clock.advance(50);
+    b.rename(&ids[2], "drei!");
+    b.move_after(&ids[4], None, Some(&ids[0]));
+
+    a.sync();
+    b.sync();
+    a.sync();
+    assert_converged(&[&a, &b]);
+    for device in [&a, &b] {
+        let in_list: Vec<String> = device
+            .all()
+            .into_iter()
+            .filter(|t| t.list_id == list.id)
+            .map(|t| t.title)
+            .collect();
+        assert_eq!(in_list, ["zwei", "drei!", "vier", "Anker"]);
+        let inbox: Vec<String> = device
+            .all()
+            .into_iter()
+            .filter(|t| t.list_id != list.id)
+            .map(|t| t.title)
+            .collect();
+        assert_eq!(inbox, ["fünf", "eins"]);
+    }
 }
 
 /// Szenario 4: Push bricht mitten ab (zweites von drei Segmenten; danach eine verlorene Antwort) →

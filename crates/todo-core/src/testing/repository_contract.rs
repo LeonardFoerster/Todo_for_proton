@@ -32,6 +32,7 @@ macro_rules! repository_contract_tests {
             upsert_and_get,
             upsert_replaces_entity,
             get_unknown_returns_none,
+            get_tasks_in_order_skipping_unknown,
             delete_task,
             delete_unknown_is_noop,
             commit_is_atomic,
@@ -83,6 +84,7 @@ pub fn run_all<R: TaskRepository>(make: impl Fn() -> R) {
     upsert_and_get(make());
     upsert_replaces_entity(make());
     get_unknown_returns_none(make());
+    get_tasks_in_order_skipping_unknown(make());
     delete_task(make());
     delete_unknown_is_noop(make());
     commit_is_atomic(make());
@@ -265,6 +267,17 @@ pub fn get_unknown_returns_none<R: TaskRepository>(repo: R) {
         block_on(f.repo.get_task_list(TaskListId::new())).expect("get"),
         None
     );
+}
+
+pub fn get_tasks_in_order_skipping_unknown<R: TaskRepository>(repo: R) {
+    let f = setup(repo);
+    let tasks = f.add_tasks(f.inbox.id(), 3);
+    let ids = [tasks[2].id(), TaskId::new(), tasks[0].id()];
+    assert_eq!(
+        block_on(f.repo.get_tasks(&ids)).expect("get_tasks"),
+        [tasks[2].clone(), tasks[0].clone()]
+    );
+    assert!(block_on(f.repo.get_tasks(&[])).expect("empty").is_empty());
 }
 
 pub fn delete_task<R: TaskRepository>(repo: R) {

@@ -55,6 +55,44 @@ impl SortKey {
         Ok(Self(key))
     }
 
+    /// Erzeugt `n` aufsteigende Schlüssel strikt zwischen `a` und `b` (Sammel-Verschieben).
+    ///
+    /// An offenen Enden zählt es wie [`SortKey::between`] den Ganzzahlteil weiter; zwischen zwei
+    /// Schlüsseln wird halbiert (Mitte zuerst), damit die Länge nur logarithmisch in `n` wächst –
+    /// nacheinander eingefügt wüchse sie linear.
+    ///
+    /// # Errors
+    /// `CoreError::Validation`, wenn nicht `a < b` gilt.
+    pub fn n_between(a: Option<&SortKey>, b: Option<&SortKey>, n: usize) -> CoreResult<Vec<Self>> {
+        let mut keys = Vec::with_capacity(n);
+        match (a, b) {
+            _ if n == 0 => {
+                if let (Some(a), Some(b)) = (a, b) {
+                    Self::between(Some(a), Some(b))?;
+                }
+            }
+            (_, None) => {
+                let mut last = a.cloned();
+                for _ in 0..n {
+                    let key = Self::between(last.as_ref(), None)?;
+                    keys.push(key.clone());
+                    last = Some(key);
+                }
+            }
+            (None, Some(_)) => {
+                let mut first = b.cloned();
+                for _ in 0..n {
+                    let key = Self::between(None, first.as_ref())?;
+                    keys.push(key.clone());
+                    first = Some(key);
+                }
+                keys.reverse();
+            }
+            (Some(a), Some(b)) => bisect(a, b, n, &mut keys)?,
+        }
+        Ok(keys)
+    }
+
     /// Liest einen gespeicherten Schlüssel und prüft sein Format.
     ///
     /// # Errors
@@ -77,6 +115,24 @@ impl fmt::Display for SortKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
+}
+
+/// `n` Schlüssel zwischen `a` und `b` (beide gesetzt) in `out`, aufsteigend.
+fn bisect(a: &SortKey, b: &SortKey, n: usize, out: &mut Vec<SortKey>) -> CoreResult<()> {
+    let mid = SortKey::between(Some(a), Some(b))?;
+    if n == 0 {
+        return Ok(());
+    }
+    let left = (n - 1) / 2;
+    if left > 0 {
+        bisect(a, &mid, left, out)?;
+    }
+    out.push(mid.clone());
+    let right = n - 1 - left;
+    if right > 0 {
+        bisect(&mid, b, right, out)?;
+    }
+    Ok(())
 }
 
 fn digit_value(c: u8) -> u8 {
@@ -369,6 +425,30 @@ mod tests {
         assert!(keys.windows(2).all(|w| w[0] < w[1]));
         let max = keys.iter().map(|k| k.as_str().len()).max().unwrap();
         assert!(max <= 3, "max key length {max}");
+    }
+
+    #[test]
+    fn n_between_is_sorted_short_and_inside_bounds() {
+        let (a, b) = (key("a0"), key("a1"));
+        let bounds = [
+            (None, None),
+            (Some(&a), None),
+            (None, Some(&b)),
+            (Some(&a), Some(&b)),
+        ];
+        for (lo, hi) in bounds {
+            for n in [0, 1, 2, 3, 7, 1_000] {
+                let keys = SortKey::n_between(lo, hi, n).unwrap();
+                assert_eq!(keys.len(), n);
+                assert!(keys.windows(2).all(|w| w[0] < w[1]), "{lo:?}..{hi:?} n={n}");
+                assert!(keys.iter().all(|k| lo.is_none_or(|lo| lo < k)));
+                assert!(keys.iter().all(|k| hi.is_none_or(|hi| k < hi)));
+                let max = keys.iter().map(|k| k.as_str().len()).max().unwrap_or(0);
+                assert!(max <= 6, "{lo:?}..{hi:?} n={n}: max key length {max}");
+            }
+        }
+        assert!(SortKey::n_between(Some(&b), Some(&a), 0).is_err());
+        assert!(SortKey::n_between(Some(&b), Some(&a), 2).is_err());
     }
 
     #[test]

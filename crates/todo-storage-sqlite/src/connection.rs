@@ -132,6 +132,11 @@ fn configure(conn: &Connection, wal: bool) -> CoreResult<()> {
         .map_err(storage)?;
     conn.pragma_update(None, "foreign_keys", "ON")
         .map_err(storage)?;
+    // Wegen des Fremdschlüssels `tasks.list_id` braucht jedes Schreib-Statement ein
+    // Statement-Journal; als Temp-Datei kostet das ~45 µs je Task-Zeile (1 000 Upserts: 62 statt
+    // 12 ms, P0-01). Die Journale sind klein und leben nur bis zum Ende des Statements.
+    conn.pragma_update(None, "temp_store", "MEMORY")
+        .map_err(storage)?;
     conn.busy_timeout(BUSY_TIMEOUT).map_err(storage)?;
     conn.set_prepared_statement_cache_capacity(STATEMENT_CACHE_CAPACITY);
     Ok(())
@@ -150,6 +155,7 @@ mod tests {
         journal_mode: String,
         synchronous: i64,
         foreign_keys: i64,
+        temp_store: i64,
         busy_timeout: i64,
     }
 
@@ -162,6 +168,7 @@ mod tests {
                     .map_err(storage)?,
                 synchronous: get("synchronous").map_err(storage)?,
                 foreign_keys: get("foreign_keys").map_err(storage)?,
+                temp_store: get("temp_store").map_err(storage)?,
                 busy_timeout: get("busy_timeout").map_err(storage)?,
             })
         }))
@@ -178,6 +185,7 @@ mod tests {
                 journal_mode: "wal".into(),
                 synchronous: 1, // NORMAL
                 foreign_keys: 1,
+                temp_store: 2, // MEMORY
                 busy_timeout: 5_000,
             }
         );

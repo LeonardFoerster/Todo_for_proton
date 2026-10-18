@@ -67,6 +67,25 @@ impl TaskRepository for SqliteTaskRepository {
             .await
     }
 
+    async fn get_tasks(&self, ids: &[TaskId]) -> CoreResult<Vec<Task>> {
+        let ids: Vec<String> = ids.iter().map(ToString::to_string).collect();
+        self.db
+            .call(move |conn| {
+                let mut stmt = conn
+                    .prepare_cached(&format!("SELECT {TASK_COLUMNS} FROM tasks WHERE id = ?1"))
+                    .map_err(storage)?;
+                let mut tasks = Vec::with_capacity(ids.len());
+                for id in &ids {
+                    let mut rows = stmt.query([id]).map_err(storage)?;
+                    if let Some(row) = rows.next().map_err(storage)? {
+                        tasks.push(read_task(row)?);
+                    }
+                }
+                Ok(tasks)
+            })
+            .await
+    }
+
     async fn get_task_list(&self, id: TaskListId) -> CoreResult<Option<TaskList>> {
         self.db
             .call(move |conn| {
@@ -318,6 +337,9 @@ mod tests {
     impl TaskRepository for OnDisk {
         async fn get_task(&self, id: TaskId) -> CoreResult<Option<Task>> {
             self.repo.get_task(id).await
+        }
+        async fn get_tasks(&self, ids: &[TaskId]) -> CoreResult<Vec<Task>> {
+            self.repo.get_tasks(ids).await
         }
         async fn get_task_list(&self, id: TaskListId) -> CoreResult<Option<TaskList>> {
             self.repo.get_task_list(id).await

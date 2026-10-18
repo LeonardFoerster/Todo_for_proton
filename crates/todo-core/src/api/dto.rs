@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     domain::{
-        Due, LocalDay, NaiveDate, Priority, TagId, Task, TaskId, TaskList, TaskListId, TaskStatus,
-        Timestamp,
+        Due, LocalDay, NaiveDate, Priority, SortKey, TagId, Task, TaskId, TaskList, TaskListId,
+        TaskParts, TaskStatus, Timestamp,
     },
     ports::{Page, SmartView, TaskQuery, TaskSummary},
     CoreError, CoreResult,
@@ -206,6 +206,30 @@ impl From<&Task> for TaskDto {
             updated_at: iso(task.updated_at()),
             completed_at: task.completed_at().map(iso),
         }
+    }
+}
+
+/// Für `restore_tasks`: alle Felder zurück in Domain-Form (Prüfung der Invarianten erst in
+/// [`Task::from_parts`]). Unterteilungen und Tags kennt das DTO noch nicht – leer.
+impl TryFrom<&TaskDto> for TaskParts {
+    type Error = CoreError;
+
+    fn try_from(dto: &TaskDto) -> CoreResult<Self> {
+        Ok(Self {
+            id: task_id(&dto.id)?,
+            list_id: list_id(&dto.list_id)?,
+            parent_id: None,
+            title: dto.title.clone(),
+            notes: dto.notes.clone(),
+            status: dto.status.into(),
+            priority: dto.priority.into(),
+            due: dto.due.clone().map(TryInto::try_into).transpose()?,
+            tags: Vec::new(),
+            sort_key: SortKey::parse(&dto.sort_key)?,
+            created_at: parse_iso(&dto.created_at)?,
+            updated_at: parse_iso(&dto.updated_at)?,
+            completed_at: dto.completed_at.as_deref().map(parse_iso).transpose()?,
+        })
     }
 }
 
@@ -466,6 +490,29 @@ mod tests {
             serde_json::to_string(&TaskPatchDto::default()).unwrap(),
             "{}"
         );
+    }
+
+    #[test]
+    fn task_dto_roundtrips_to_parts() {
+        let clock = crate::ports::FixedClock(Timestamp::from_millis(1_760_710_496_123));
+        let mut task = Task::new(TaskListId::INBOX, "Milch", SortKey::first(), &clock).unwrap();
+        task.set_notes("bio", &clock);
+        task.set_due(
+            Some(Due::Date(NaiveDate::from_ymd_opt(2026, 10, 20).unwrap())),
+            &clock,
+        )
+        .unwrap();
+        task.complete(&clock);
+        let parts = TaskParts::try_from(&TaskDto::from(&task)).unwrap();
+        assert_eq!(Task::from_parts(parts).unwrap(), task);
+        let bad = TaskDto {
+            sort_key: "?".into(),
+            ..TaskDto::from(&task)
+        };
+        assert!(matches!(
+            TaskParts::try_from(&bad),
+            Err(CoreError::Validation(_))
+        ));
     }
 
     #[test]

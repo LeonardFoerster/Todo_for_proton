@@ -52,9 +52,17 @@ pub trait ReplicaStore {
     /// # Errors
     /// Speicherfehler.
     fn entity_state(&mut self, entity: EntityRef) -> CoreResult<Option<EntityState>>;
+    /// Ersetzt den Zustand. `before` ist der zuvor per [`ReplicaStore::entity_state`] gelesene
+    /// Zustand – Speicher können damit nur geänderte Register schreiben (Sammel-Commits, P0-01).
+    ///
     /// # Errors
     /// Speicherfehler.
-    fn set_entity_state(&mut self, entity: EntityRef, state: &EntityState) -> CoreResult<()>;
+    fn set_entity_state(
+        &mut self,
+        entity: EntityRef,
+        before: Option<&EntityState>,
+        state: &EntityState,
+    ) -> CoreResult<()>;
     /// Hängt eine lokal erzeugte Op an die Outbox an.
     ///
     /// # Errors
@@ -113,7 +121,7 @@ pub fn record_local<S: ReplicaStore + ?Sized>(
         let ops = ops_for(&change, fields.as_ref(), &mut clock, now);
         if let Some(state) = merge(before.as_ref(), &ops).state {
             if !ops.is_empty() {
-                store.set_entity_state(entity, &state)?;
+                store.set_entity_state(entity, before.as_ref(), &state)?;
             }
         }
         for op in &ops {
@@ -216,7 +224,7 @@ fn merged<S: ReplicaStore + ?Sized>(
     let result = merge(before.as_ref(), ops);
     match result.state {
         Some(state) if result.changed => {
-            store.set_entity_state(entity, &state)?;
+            store.set_entity_state(entity, before.as_ref(), &state)?;
             Ok(Some(state))
         }
         _ => Ok(None),

@@ -294,6 +294,19 @@ pub trait TaskRepository: MaybeSend + MaybeSync {
     /// Lädt eine Task; `None`, wenn sie nicht existiert.
     async fn get_task(&self, id: TaskId) -> CoreResult<Option<Task>>;
 
+    /// Lädt mehrere Tasks (Sammelaktionen); unbekannte IDs entfallen, Reihenfolge wie `ids`.
+    /// Standard: [`TaskRepository::get_task`] je ID – Speicher mit teurem Einzelzugriff (eigener
+    /// DB-Thread) überschreiben das mit einem Zugriff.
+    async fn get_tasks(&self, ids: &[TaskId]) -> CoreResult<Vec<Task>> {
+        let mut tasks = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(task) = self.get_task(*id).await? {
+                tasks.push(task);
+            }
+        }
+        Ok(tasks)
+    }
+
     /// Lädt eine Liste; `None`, wenn sie nicht existiert.
     async fn get_task_list(&self, id: TaskListId) -> CoreResult<Option<TaskList>>;
 
