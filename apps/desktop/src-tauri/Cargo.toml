@@ -25,6 +25,10 @@ async-trait.workspace = true
 serde.workspace = true
 # Tauri läuft auf tokio; hier nur Kanal, Timer und `select!` für den Sync-Scheduler.
 tokio = { version = "1.53.3", default-features = false, features = ["sync", "time", "macros"] }
+# Logs der Shell und der Adapter (proton-adapter loggt über `tracing`) auf stderr. Ohne Farben,
+# ohne `env-filter` (regex) und ohne `log`-Brücke – Filter über `TODO_LOG` (`Targets`-Syntax).
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 todo-keystore-secret-service.workspace = true

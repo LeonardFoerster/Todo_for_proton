@@ -139,8 +139,9 @@ Die Rust-Toolchain ist über `rust-toolchain.toml` fixiert.
 | `tools/acceptance-two-devices.sh` | Zwei-Geräte-Abnahme mit zwei Profilen über ein lokales Sync-Verzeichnis (Debug-Build) |
 
 Umgebung der Desktop-App: `TODO_DATA_DIR` (eigenes Profil inkl. eigenem Schlüsselbund-Eintrag),
-`TODO_WEBKIT_COMPOSITING=1` (WebKit-Compositing wieder an); nur Debug-Builds: `TODO_REMOTE_DIR` (Sync gegen ein
-Verzeichnis statt Proton), `TODO_REMOTE_DELAY_MS`, `TASKS_SELFTEST` (mit `VITE_TASKS_SELFTEST=runtime`).
+`TODO_WEBKIT_COMPOSITING=1` (WebKit-Compositing wieder an), `TODO_LOG` (Log-Filter auf stderr, `Targets`-Syntax,
+Standard `info`); nur Debug-Builds: `TODO_REMOTE_DIR` (Sync gegen ein Verzeichnis statt Proton),
+`TODO_REMOTE_DELAY_MS`, `TASKS_SELFTEST` (mit `VITE_TASKS_SELFTEST=runtime`).
 UI-Tests in der echten WebView laufen über den Dev-Selbsttest (`apps/desktop/src/selftest.ts`), nie über
 globale Eingaben (xdotool o. Ä.) am Desktop.
 

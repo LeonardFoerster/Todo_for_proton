@@ -186,10 +186,10 @@ impl Account {
         match backend.auth.current_session().await {
             Ok(Some(_)) => match self.runner(backend, api) {
                 Ok(runner) => sync.set_runner(Some(runner)),
-                Err(err) => eprintln!("sync: backend not available: {err}"),
+                Err(err) => tracing::warn!(error = %err, "sync: backend not available"),
             },
             Ok(None) => {}
-            Err(err) => eprintln!("sync: reading session failed: {err}"),
+            Err(err) => tracing::warn!(error = %err, "sync: reading session failed"),
         }
     }
 
@@ -312,7 +312,7 @@ async fn connect(keyring_id: &str) -> Option<Backend> {
         match SecretServiceKeyStore::connect(keyring_id, KEYRING_LABEL).await {
             Ok(store) => Arc::new(store),
             Err(err) => {
-                eprintln!("keyring not available, sync disabled: {err}");
+                tracing::warn!(error = %err, "keyring not available, sync disabled");
                 return None;
             }
         };
@@ -322,7 +322,7 @@ async fn connect(keyring_id: &str) -> Option<Backend> {
             key_store,
         }),
         Err(err) => {
-            eprintln!("sync backend not available: {err}");
+            tracing::warn!(error = %err, "sync backend not available");
             None
         }
     }
@@ -370,7 +370,7 @@ fn open_browser(url: &str) {
     match std::process::Command::new("xdg-open").arg(url).spawn() {
         // Abwarten, damit kein Zombie-Prozess bleibt.
         Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
-        Err(err) => eprintln!("xdg-open failed: {err}"),
+        Err(err) => tracing::warn!(error = %err, "xdg-open failed"),
     }
 }
 

@@ -180,6 +180,15 @@ impl Driver {
                         .as_ref()
                         .is_some_and(|r| Arc::ptr_eq(r, &runner));
                     self.pending_ops = outcome.pending_ops;
+                    match &outcome.result {
+                        Ok(_) => tracing::debug!(pending_ops = outcome.pending_ops, "sync done"),
+                        Err(err) => tracing::warn!(
+                            error = %err,
+                            pending_ops = outcome.pending_ops,
+                            current,
+                            "sync failed"
+                        ),
+                    }
                     if current {
                         SchedulerEvent::SyncFinished(outcome)
                     } else {

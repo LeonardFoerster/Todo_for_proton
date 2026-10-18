@@ -25,6 +25,32 @@ static STARTED: OnceLock<Instant> = OnceLock::new();
 /// Gesetzt → Startzeit auf stderr ausgeben (`tools/measure-desktop.sh`).
 const MEASURE_ENV: &str = "TODO_MEASURE_STARTUP";
 
+/// Log-Filter in `Targets`-Syntax, z. B. `debug` oder `info,proton_adapter::http=debug`;
+/// Standard `info`.
+const LOG_ENV: &str = "TODO_LOG";
+
+/// Installiert den Log-Subscriber (stderr). Niemand loggt Task-Inhalte oder Tokens
+/// (`development/architecture.md` §5); der Proton-Adapter loggt nur Routen-Vorlagen (ADR-018).
+fn init_logging() {
+    use tracing_subscriber::{filter::Targets, layer::SubscriberExt, util::SubscriberInitExt};
+
+    let default = || Targets::new().with_default(tracing::Level::INFO);
+    let filter = match env::var(LOG_ENV) {
+        Ok(spec) => spec.parse::<Targets>().unwrap_or_else(|err| {
+            eprintln!("{LOG_ENV}={spec:?} ignored: {err}");
+            default()
+        }),
+        Err(_) => default(),
+    };
+    // Schlägt nur fehl, wenn schon ein Subscriber läuft – dann bleibt der.
+    drop(
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(filter)
+            .try_init(),
+    );
+}
+
 fn report_startup(started: Option<Instant>) {
     if env::var_os(MEASURE_ENV).is_some() {
         let since_start = started.map_or(0, |t| t.elapsed().as_millis());
@@ -127,6 +153,7 @@ fn configure_webkit() {
 /// Wenn Tauri nicht starten kann (z. B. keine WebView) – ohne Fenster gibt es nichts zu tun.
 pub fn run() {
     STARTED.get_or_init(Instant::now);
+    init_logging();
     configure_webkit();
     builder(tauri::Builder::default(), Options::from_env())
         .run(tauri::generate_context!())

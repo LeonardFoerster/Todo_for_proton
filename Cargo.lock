@@ -5735,6 +5735,8 @@ dependencies = [
  "todo-storage-sqlite",
  "todo-sync",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "ts-rs",
 ]
 

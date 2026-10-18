@@ -155,6 +155,7 @@ App-Menü, Icons). Daten, Schlüsselbund und Sitzung bleiben bei einer Aktualisi
 |---|---|
 | `TODO_DATA_DIR` | Eigenes Datenverzeichnis (zweites Profil, inkl. eigenem Schlüsselbund-Eintrag) |
 | `TODO_WEBKIT_COMPOSITING=1` | WebKit-Compositing wieder einschalten (standardmäßig aus – spart Speicher) |
+| `TODO_LOG` | Log-Filter für stderr, z. B. `debug` oder `info,proton_adapter::http=debug` (Standard `info`) |
 | `TODO_REMOTE_DIR` | *nur Debug-Builds:* Sync gegen ein lokales Verzeichnis statt Proton Drive |
 
 ## Entwicklung
