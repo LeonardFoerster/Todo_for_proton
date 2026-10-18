@@ -4,7 +4,7 @@
 use std::{
     collections::HashMap,
     env, fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, PoisonError,
@@ -32,7 +32,7 @@ use crate::{
 
 /// Ehrliche Kennung nach den Proton-SDK-Regeln (ADR-013), wie in der Dev-CLI.
 const APP_VERSION: &str = "external-drive-tasks@0.1.0-alpha";
-/// Eintrag im Schlüsselbund (getrennt von der Dev-CLI).
+/// Eintrag im Schlüsselbund (getrennt von der Dev-CLI); eigene Profile siehe [`keyring_app_id`].
 const KEYRING_APP_ID: &str = "dev.tasks.app";
 const KEYRING_LABEL: &str = "Tasks";
 /// Anbietername und Pflichthinweis für die Login-Ansicht (`interfaces.md` §3).
@@ -105,7 +105,8 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, options: &Options) -> Result<AppStat
             let _ = emitter.emit(SYNC_STATUS_EVENT, status);
         }),
     );
-    let account = Arc::new(Account::new(clock, options.accounts));
+    let keyring_id = keyring_app_id(options.data_dir.as_deref());
+    let account = Arc::new(Account::new(clock, options.accounts, keyring_id));
     if options.accounts {
         let (account, api, sync) = (Arc::clone(&account), Arc::clone(&api), sync.clone());
         tauri::async_runtime::spawn(async move { account.restore(&api, &sync).await });
@@ -120,6 +121,7 @@ pub struct Account {
     clock: Arc<dyn Clock>,
     /// Login-URLs laufender Vorgänge (für „Browser erneut öffnen").
     login_urls: Mutex<HashMap<String, String>>,
+    keyring_id: String,
 }
 
 impl std::fmt::Debug for Account {
@@ -134,7 +136,7 @@ struct Backend {
 }
 
 impl Account {
-    fn new(clock: Arc<dyn Clock>, enabled: bool) -> Self {
+    fn new(clock: Arc<dyn Clock>, enabled: bool, keyring_id: String) -> Self {
         Self {
             backend: if enabled {
                 tokio::sync::OnceCell::new()
@@ -143,11 +145,15 @@ impl Account {
             },
             clock,
             login_urls: Mutex::default(),
+            keyring_id,
         }
     }
 
     async fn backend(&self) -> Option<&Backend> {
-        self.backend.get_or_init(connect).await.as_ref()
+        self.backend
+            .get_or_init(|| connect(&self.keyring_id))
+            .await
+            .as_ref()
     }
 
     /// Wie [`Self::backend`], aber als Command-Fehler, wenn nicht verfügbar.
@@ -277,11 +283,25 @@ impl Account {
     }
 }
 
+/// Schlüsselbund-Kennung eines Profils. Das Standardprofil nutzt [`KEYRING_APP_ID`]; ein eigenes
+/// Datenverzeichnis (`TODO_DATA_DIR`, z. B. zweites Profil für den Zwei-Geräte-Test) bekommt eine
+/// eigene Sitzung und einen eigenen Sync-Schlüssel – zwei Profile mit einer Sitzung würden sich
+/// beim Token-Refresh gegenseitig abmelden (der Refresh entwertet das alte Token-Paar).
+fn keyring_app_id(data_dir: Option<&Path>) -> String {
+    match data_dir {
+        None => KEYRING_APP_ID.to_owned(),
+        Some(dir) => {
+            let dir = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+            format!("{KEYRING_APP_ID}@{}", dir.display())
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
-async fn connect() -> Option<Backend> {
+async fn connect(keyring_id: &str) -> Option<Backend> {
     use todo_keystore_secret_service::SecretServiceKeyStore;
     let key_store: Arc<dyn KeyStore> =
-        match SecretServiceKeyStore::connect(KEYRING_APP_ID, KEYRING_LABEL).await {
+        match SecretServiceKeyStore::connect(keyring_id, KEYRING_LABEL).await {
             Ok(store) => Arc::new(store),
             Err(err) => {
                 eprintln!("keyring not available, sync disabled: {err}");
@@ -301,8 +321,8 @@ async fn connect() -> Option<Backend> {
 }
 
 #[cfg(not(target_os = "linux"))]
-async fn connect() -> Option<Backend> {
-    let _ = (KEYRING_APP_ID, KEYRING_LABEL, APP_VERSION);
+async fn connect(keyring_id: &str) -> Option<Backend> {
+    let _ = (keyring_id, KEYRING_LABEL, APP_VERSION);
     None
 }
 
@@ -343,5 +363,24 @@ fn open_browser(url: &str) {
         // Abwarten, damit kein Zombie-Prozess bleibt.
         Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
         Err(err) => eprintln!("xdg-open failed: {err}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn profiles_get_their_own_keyring_entry() {
+        assert_eq!(keyring_app_id(None), KEYRING_APP_ID);
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let id_a = keyring_app_id(Some(a.path()));
+        assert_ne!(id_a, KEYRING_APP_ID);
+        assert_ne!(id_a, keyring_app_id(Some(b.path())));
+        // Relativ oder absolut angegeben: dasselbe Profil.
+        let nested = a.path().join("x");
+        fs::create_dir(&nested).unwrap();
+        assert_eq!(id_a, keyring_app_id(Some(&nested.join(".."))));
     }
 }
