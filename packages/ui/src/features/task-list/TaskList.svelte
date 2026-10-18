@@ -106,8 +106,6 @@
 
   // --- Mehrfachauswahl -------------------------------------------------------------------------
 
-  /** IDs in Anzeigereihenfolge (O(n), nur für Bereiche). */
-  const order = () => rows.items.map((t) => t.id);
 
   /** Auswahl gemessen an der ganzen Ansicht (Tri-State „Alle auswählen“). */
   const allState = $derived<"none" | "some" | "all">(
@@ -141,13 +139,13 @@
       const cursor = selectedId && rows.byId(selectedId) ? selectedId : null;
       if (e.shiftKey) {
         selection.enter();
-        selection.range(task.id, order(), cursor);
+        selection.range(task.id, rows.order(), cursor);
       } else {
         selection.enter(cursor ? [cursor] : []);
         if (task.id !== cursor) selection.toggle(task.id);
       }
     } else if (e.shiftKey) {
-      selection.range(task.id, order(), selectedId);
+      selection.range(task.id, rows.order(), selectedId);
     } else {
       selection.toggle(task.id);
     }
@@ -188,11 +186,10 @@
   /** Umschalt+↑/↓: Cursor bewegen und Auswahl erweitern (startet den Modus). */
   export function extendSelection(delta: -1 | 1) {
     selection.enter();
-    const ids = order();
-    const next = selection.extend(delta, selectedId && rows.byId(selectedId) ? selectedId : null, ids);
+    const next = selection.extend(delta, selectedId && rows.byId(selectedId) ? selectedId : null, rows.order());
     if (!next) return;
     selectedId = next;
-    list?.scrollToIndex(ids.indexOf(next));
+    list?.scrollToIndex(rows.indexOf(next));
     void focusSelected();
   }
 

@@ -110,6 +110,14 @@ describe("TaskListState.loadAll", () => {
     s.selectAll(ids);
     expect(s.count).toBe(1234);
     expect(await rows.loadAll()).toHaveLength(1234);
+
+    // Bereich und Umschalt+↓ über den O(1)-Index der geladenen Zeilen.
+    s.clear();
+    expect(rows.indexOf(ids[1000])).toBe(1000);
+    s.range(ids[1003], rows.order(), ids[1000]);
+    expect(s.count).toBe(4);
+    expect(s.extend(1, ids[1233], rows.order())).toBe(ids[1233]);
+    expect(rows.indexOf("unknown")).toBe(-1);
   });
 });
 

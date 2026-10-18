@@ -1,6 +1,27 @@
 import type { CoreClient, TaskDto, TaskSummaryDto } from "@tasks/core-client";
 import { toasts } from "../components/toasts.svelte";
 
+/** Wie im Core (`BULK_LIMIT_MAX`): größere Auswahlen gehen in mehreren Aufrufen. */
+export const BULK_LIMIT = 2000;
+
+/** Teilt in Pakete zu höchstens `BULK_LIMIT` (eine Auswahl über eine riesige Ansicht). */
+function chunks<T>(items: readonly T[]): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += BULK_LIMIT) out.push(items.slice(i, i + BULK_LIMIT));
+  return out;
+}
+
+/** `call` je Paket nacheinander (mit dem vorigen Paket), Ergebnisse aneinandergehängt. */
+async function inChunks<T, R>(items: readonly T[], call: (chunk: T[], previous?: T[]) => Promise<R[]>): Promise<R[]> {
+  const done: R[] = [];
+  let previous: T[] | undefined;
+  for (const chunk of chunks(items)) {
+    done.push(...(await call(chunk, previous)));
+    previous = chunk;
+  }
+  return done;
+}
+
 function short(title: string): string {
   return title.length > 40 ? `${title.slice(0, 39)}…` : title;
 }
@@ -15,7 +36,7 @@ function failed(what: string, e: unknown) {
 }
 
 /**
- * Löscht in **einem** Aufruf (Core schreibt Tombstones) und bietet „Rückgängig“ an: Das legt alle
+ * Löscht in **einem** Aufruf je 2 000 Tasks (Core schreibt Tombstones) und bietet „Rückgängig“ an: Das legt alle
  * Tasks mit allen Feldern in einem Aufruf neu an – mit neuen IDs, an ihrer alten Stelle (alter
  * Sort-Key, ADR-021). Liefert die gelöschten Tasks bzw. `null` bei Fehler (Toast ist gezeigt,
  * nichts ist gelöscht).
@@ -27,7 +48,7 @@ export async function deleteManyWithUndo(
 ): Promise<TaskDto[] | null> {
   let deleted: TaskDto[];
   try {
-    deleted = await client.deleteTasks([...ids]);
+    deleted = await inChunks(ids, (chunk) => client.deleteTasks(chunk));
   } catch (e) {
     failed("Nicht gelöscht", e);
     return null;
@@ -38,7 +59,7 @@ export async function deleteManyWithUndo(
     actionLabel: "Rückgängig",
     timeoutMs: 6000,
     onAction: () =>
-      void client.restoreTasks(deleted).then(
+      void inChunks(deleted, (chunk) => client.restoreTasks(chunk)).then(
         (restored) => onRestored?.(restored),
         (e: unknown) => failed("Wiederherstellen fehlgeschlagen", e),
       ),
@@ -57,7 +78,7 @@ export async function completeManyWithUndo(
 ): Promise<TaskDto[] | null> {
   let changed: TaskDto[];
   try {
-    changed = await client.completeTasks([...ids], done);
+    changed = await inChunks(ids, (chunk) => client.completeTasks(chunk, done));
   } catch (e) {
     failed("Nicht gespeichert", e);
     return null;
@@ -67,9 +88,9 @@ export async function completeManyWithUndo(
     message: `${subject(changed)} ${done ? "erledigt" : "wieder geöffnet"}`,
     actionLabel: "Rückgängig",
     onAction: () =>
-      void client.completeTasks(
+      void inChunks(
         changed.map((t) => t.id),
-        !done,
+        (chunk) => client.completeTasks(chunk, !done),
       ).catch((e: unknown) => failed("Rückgängig fehlgeschlagen", e)),
   });
   return changed;
@@ -88,10 +109,16 @@ export async function moveManyWithUndo(
 ): Promise<TaskDto[] | null> {
   let moved: TaskDto[];
   try {
-    moved = await client.moveTasks(
-      before.map((t) => t.id),
-      target,
-    );
+    // Weitere Pakete direkt hinter das vorige (Eingabe ist in Anzeigereihenfolge): der Block bleibt
+    // zusammen und in Reihenfolge.
+    moved = await inChunks(before, (chunk, previous) => {
+      const last = previous?.at(-1);
+      const to = last ? { listId: target.listId ?? last.listId, after: last.id } : target;
+      return client.moveTasks(
+        chunk.map((t) => t.id),
+        to,
+      );
+    });
   } catch (e) {
     failed("Nicht verschoben", e);
     return null;
@@ -131,7 +158,9 @@ async function moveBack(client: CoreClient, tasks: readonly TaskSummaryDto[]): P
       while (j < group.length && firstAfter(rest, group[j]) === slot) j++;
       const ids = group.slice(i, j).map((t) => t.id);
       const target = slot < rest.length ? { listId, before: rest[slot].id } : { listId, after: rest.at(-1)?.id };
-      await client.moveTasks(ids, target);
+      await inChunks(ids, (chunk, previous) =>
+        client.moveTasks(chunk, previous ? { listId, after: previous.at(-1) } : target),
+      );
       i = j;
     }
   }

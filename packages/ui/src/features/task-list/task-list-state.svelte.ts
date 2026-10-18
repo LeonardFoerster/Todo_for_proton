@@ -1,6 +1,7 @@
 /* eslint-disable svelte/prefer-svelte-reactivity -- Sets/Date hier bewusst nicht reaktiv: reine Buchführung, die UI reagiert nur auf `items`. */
 import { CoreClientError, type CoreClient, type TaskDto, type TaskSummaryDto } from "@tasks/core-client";
 import { routeQuery } from "../../lib/views";
+import type { RowOrder } from "./selection.svelte";
 import { compareInView, inView, shownInView, type ViewContext } from "./view-match";
 
 const PAGE_SIZE = 200;
@@ -37,8 +38,8 @@ export class TaskListState {
   private lingering = new Set<string>();
   /** Gerade gelöscht (Rückgängig möglich): ausgeblendet, auch wenn ein Event sie zurückmeldet. */
   private hidden = new Set<string>();
-  /** Index für `byId`, gültig für genau dieses `items`-Array. */
-  private index = new Map<string, TaskSummaryDto>();
+  /** Index für `byId`/`indexOf`, gültig für genau dieses `items`-Array. */
+  private index = new Map<string, number>();
   private indexed: TaskSummaryDto[] | null = null;
   private reloading: Promise<void> | null = null;
   private reloadQueued = false;
@@ -95,11 +96,23 @@ export class TaskListState {
 
   /** Zeile per ID (O(1) über einen bei Änderung von `items` neu gebauten Index). */
   byId(id: string): TaskSummaryDto | undefined {
+    const i = this.indexOf(id);
+    return i < 0 ? undefined : this.items[i];
+  }
+
+  /** Position einer Zeile (O(1), Index je `items`-Array); -1 = nicht geladen. */
+  indexOf(id: string): number {
     if (this.indexed !== this.items) {
-      this.index = new Map(this.items.map((t) => [t.id, t]));
+      this.index = new Map(this.items.map((t, i) => [t.id, i]));
       this.indexed = this.items;
     }
-    return this.index.get(id);
+    return this.index.get(id) ?? -1;
+  }
+
+  /** Reihenfolge der geladenen Zeilen für Bereiche der Auswahl (ohne ID-Array je Taste). */
+  order(): RowOrder {
+    const items = this.items;
+    return { length: items.length, at: (i) => items[i]?.id, indexOf: (id) => this.indexOf(id) };
   }
 
   /** Abo auf Core-Änderungen; gibt die Abmeldung zurück. */

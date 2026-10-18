@@ -1,12 +1,20 @@
 import type { TaskSummaryDto } from "@tasks/core-client";
 import { SvelteSet } from "svelte/reactivity";
 
+/** Zeilenreihenfolge für Bereiche; ein `string[]` passt, `TaskListState.order()` hat O(1)-`indexOf`. */
+export interface RowOrder {
+  readonly length: number;
+  at(index: number): string | undefined;
+  indexOf(id: string): number;
+}
+
 /**
  * Mehrfachauswahl einer Ansicht (P0). Getrennt vom *Cursor* (fokussierte Zeile, Detail): Die
  * Auswahl ist eine Menge von IDs plus ein Anker für Bereiche (Umschalt+Klick).
  *
- * Kosten: Umschalten O(1), Bereich O(Bereich) plus das Suchen von Anker/Ziel in `order`, nur
- * „Alle auswählen" und `prune` sind O(n). Zeilen fragen `has(id)` – kein abgeleitetes Array.
+ * Kosten: Umschalten O(1), Bereich O(Bereich) und `extend` O(1) mit einer `RowOrder` mit
+ * O(1)-`indexOf`; nur „Alle auswählen" und `prune` sind O(n). Zeilen fragen `has(id)` – kein
+ * abgeleitetes Array.
  */
 export class SelectionState {
   /** Auswahlmodus an (Kästchen sichtbar, Klick schaltet um statt zu öffnen). */
@@ -43,35 +51,35 @@ export class SelectionState {
    * Bereich Anker → `toId` (beide eingeschlossen) in der Reihenfolge `order` **hinzufügen**.
    * Ohne (sichtbaren) Anker gilt `cursor`, sonst `toId` allein; der Startpunkt wird Anker.
    */
-  range(toId: string, order: readonly string[], cursor: string | null = null): void {
+  range(toId: string, order: RowOrder, cursor: string | null = null): void {
     const to = order.indexOf(toId);
     if (to < 0) return;
     let from = this.anchor === null ? -1 : order.indexOf(this.anchor);
     if (from < 0) from = cursor === null ? -1 : order.indexOf(cursor);
     if (from < 0) from = to;
-    this.anchor = order[from];
+    this.anchor = order.at(from)!;
     const [lo, hi] = from <= to ? [from, to] : [to, from];
-    for (let i = lo; i <= hi; i++) this.ids.add(order[i]);
+    for (let i = lo; i <= hi; i++) this.ids.add(order.at(i)!);
   }
 
   /**
    * Umschalt+↑/↓: Cursor um `delta` bewegen und Cursor- wie Zielzeile auswählen. Liefert die neue
    * Cursor-ID (am Rand die bisherige).
    */
-  extend(delta: number, cursor: string | null, order: readonly string[]): string | null {
+  extend(delta: number, cursor: string | null, order: RowOrder): string | null {
     if (order.length === 0) return cursor;
     const from = cursor === null ? -1 : order.indexOf(cursor);
     if (from < 0) {
-      const start = delta > 0 ? order[0] : order[order.length - 1];
+      const start = order.at(delta > 0 ? 0 : order.length - 1)!;
       this.ids.add(start);
       this.anchor ??= start;
       return start;
     }
-    const to = Math.max(0, Math.min(order.length - 1, from + delta));
-    this.anchor ??= order[from];
-    this.ids.add(order[from]);
-    this.ids.add(order[to]);
-    return order[to];
+    const [current, next] = [order.at(from)!, order.at(Math.max(0, Math.min(order.length - 1, from + delta)))!];
+    this.anchor ??= current;
+    this.ids.add(current);
+    this.ids.add(next);
+    return next;
   }
 
   /** Genau diese IDs (Alle auswählen). */
