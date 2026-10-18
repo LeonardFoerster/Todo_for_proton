@@ -11,7 +11,8 @@ const theme = params.get("theme");
 if (theme === "dark" || theme === "light") setThemePreference(theme);
 if (params.has("collapsed")) localStorage.setItem("tasks.sidebar-collapsed", params.get("collapsed") === "1" ? "1" : "0");
 const client = new FakeCoreClient({ latencyMs: Number(params.get("latency") ?? 0), loginPolls: Number(params.get("polls") ?? 1) });
-await seed(client, Number(params.get("n") ?? 0));
+if (params.get("seed") === "0") await client.ensureInbox();
+else await seed(client, Number(params.get("n") ?? 0));
 mount(App, { target: document.getElementById("app")!, props: { client } });
 
 // ?open=1: erste Task öffnen (Detail-Panel), ?type=Text: Quick-Add vorbelegen (Screenshots).

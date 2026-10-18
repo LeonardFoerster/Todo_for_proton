@@ -268,7 +268,7 @@
             />
           {/if}
           <div class="list-slot">
-            <TaskList bind:this={taskList} {route} {lists} bind:selectedId onopen={(id) => (openId = id)} onready={listReady} />
+            <TaskList bind:this={taskList} {route} {lists} bind:selectedId onopen={(id) => (openId = id)} onready={listReady} onnewtask={newTask} />
           </div>
         {/key}
       {/if}

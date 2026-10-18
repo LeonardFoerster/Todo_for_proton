@@ -1,10 +1,11 @@
 <script lang="ts">
   import type { TaskSummaryDto } from "@tasks/core-client";
   import { onMount, tick } from "svelte";
+  import Button from "../../components/Button.svelte";
   import Menu, { type MenuItem } from "../../components/Menu.svelte";
   import { toasts } from "../../components/toasts.svelte";
   import VirtualList from "../../components/VirtualList.svelte";
-  import { ArrowDown, ArrowUp, CircleCheck, PanelRight, Trash, Undo } from "../../icons";
+  import { ArrowDown, ArrowUp, CircleCheck, PanelRight, Plus, Trash, Undo } from "../../icons";
   import { useCoreClient } from "../../lib/context";
   import type { ListsState } from "../../lib/lists.svelte";
   import { localDay } from "../../lib/local-day";
@@ -21,9 +22,11 @@
     onopen?: (id: string) => void;
     /** Erste Seite ist gerendert (einmal). */
     onready?: () => void;
+    /** Leere Ansicht: „Neue Task“ anbieten (fehlt in „Erledigt“). */
+    onnewtask?: () => void;
   }
 
-  let { route, lists, selectedId = $bindable(null), onopen, onready }: Props = $props();
+  let { route, lists, selectedId = $bindable(null), onopen, onready, onnewtask }: Props = $props();
 
   const ROW = 36;
   const client = useCoreClient();
@@ -227,6 +230,9 @@
     <div class="empty">
       <span class="empty-icon"><EmptyIcon size={28} strokeWidth={1.5} aria-hidden="true" /></span>
       <p>{emptyText}</p>
+      {#if onnewtask && view.view !== "completed"}
+        <Button icon={Plus} onclick={onnewtask} title="Neue Task (N)">Neue Task</Button>
+      {/if}
     </div>
   {:else}
     <VirtualList

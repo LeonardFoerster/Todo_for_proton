@@ -15,7 +15,7 @@ export const SMART_VIEWS: readonly SmartViewMeta[] = [
   { kind: "inbox", label: "Eingang", icon: Inbox, empty: "Alles, was keiner Liste zugeordnet ist, landet hier." },
   { kind: "today", label: "Heute", icon: Sun, empty: "Nichts fällig heute. Neue Tasks mit „heute“ landen hier." },
   { kind: "upcoming", label: "Geplant", icon: CalendarDays, empty: "Keine Tasks mit Fälligkeit in der Zukunft." },
-  { kind: "all", label: "Alle Tasks", icon: List, empty: "Noch keine Tasks. Leg mit N die erste an." },
+  { kind: "all", label: "Alle Tasks", icon: List, empty: "Noch keine Tasks." },
   { kind: "completed", label: "Erledigt", icon: CircleCheck, empty: "Erledigte Tasks erscheinen hier." },
 ];
 
