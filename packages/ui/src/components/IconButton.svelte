@@ -11,7 +11,7 @@
     size?: 28 | 32;
     /** Gedrückt-Zustand (Umschalter). */
     pressed?: boolean;
-    tooltipSide?: "bottom" | "top" | "right";
+    tooltipSide?: "bottom" | "top" | "right" | "left";
   }
 
   let {

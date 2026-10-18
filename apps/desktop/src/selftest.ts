@@ -80,6 +80,17 @@ const base: Step[] = [
       await click("link", /^Eingang/);
       await until("h1 Eingang", () => heading() === "Eingang");
     },
+  ],  [
+    "Navigation scrollt nicht horizontal",
+    async () => {
+      const nav = await until("Navigationsliste", () => document.querySelector<HTMLElement>("aside .scroll"));
+      const style = getComputedStyle(nav);
+      const extra = nav.scrollWidth - nav.clientWidth;
+      if (extra > 0 || style.overflowX !== "hidden") {
+        throw new Error(`scrollWidth ${nav.scrollWidth} > clientWidth ${nav.clientWidth}, overflow-x ${style.overflowX}`);
+      }
+      return `Breite ${nav.clientWidth} px, overflow-x ${style.overflowX}`;
+    },
   ],
 ];
 

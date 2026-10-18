@@ -156,7 +156,7 @@ body {
 }
 
 /*
- * Tooltips: `data-tooltip="Text"` (+ optional `data-tooltip-side="right|top"`) an einem
+ * Tooltips: `data-tooltip="Text"` (+ optional `data-tooltip-side="right|left|top"`) an einem
  * positionierten Element. Nur CSS, erscheint verzögert bei Hover und sichtbar bei Tastaturfokus.
  */
 [data-tooltip] {
@@ -185,6 +185,14 @@ body {
 
 [data-tooltip-side="right"]::after {
   left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* Links daneben: für Buttons am rechten Rand eines Bereichs, der nicht überlaufen darf. */
+[data-tooltip-side="left"]::after {
+  left: auto;
+  right: calc(100% + 8px);
   top: 50%;
   transform: translateY(-50%);
 }

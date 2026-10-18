@@ -93,7 +93,7 @@
     <div class="section">
       {#if !collapsed}
         <span class="section-label" id="lists-label">Listen</span>
-        <IconButton label="Neue Liste" icon={Plus} size={28} onclick={() => (addingList = true)} />
+        <IconButton label="Neue Liste" icon={Plus} size={28} tooltipSide="left" onclick={() => (addingList = true)} />
       {:else}
         <span class="divider"></span>
       {/if}
@@ -187,6 +187,9 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    /* Feste Breite: ohne das würde overflow-y auch horizontal scrollbar machen (unsichtbare
+       Tooltips am rechten Rand ragten ein paar Pixel hinaus). */
+    overflow-x: hidden;
     padding: 0 var(--space-2);
   }
   .group {
