@@ -4,6 +4,8 @@ import { routeQuery } from "../../lib/views";
 import { compareInView, inView, shownInView, type ViewContext } from "./view-match";
 
 const PAGE_SIZE = 200;
+/** Wie im Core (`PAGE_LIMIT_MAX`). */
+const PAGE_LIMIT_MAX = 500;
 
 export function toSummary(t: TaskDto): TaskSummaryDto {
   return {
@@ -33,6 +35,9 @@ export class TaskListState {
   private lingering = new Set<string>();
   /** Gerade gelöscht (Rückgängig möglich): ausgeblendet, auch wenn ein Event sie zurückmeldet. */
   private hidden = new Set<string>();
+  /** Index für `byId`, gültig für genau dieses `items`-Array. */
+  private index = new Map<string, TaskSummaryDto>();
+  private indexed: TaskSummaryDto[] | null = null;
 
   constructor(
     private readonly client: CoreClient,
@@ -61,6 +66,36 @@ export class TaskListState {
     } finally {
       this.loadingMore = false;
     }
+  }
+
+  /**
+   * Lädt alle restlichen Seiten (für „Alle auswählen", Seiten zu je `PAGE_LIMIT_MAX`) und liefert
+   * die IDs der ganzen Ansicht in Anzeigereihenfolge.
+   */
+  async loadAll(): Promise<string[]> {
+    while (this.loadingMore) await new Promise((r) => setTimeout(r, 10));
+    this.loadingMore = true;
+    try {
+      while (this.cursor) {
+        const query = routeQuery(this.ctx().route);
+        const page = await this.client.listTasks(query, { cursor: this.cursor, limit: PAGE_LIMIT_MAX });
+        const known = new Set(this.items.map((t) => t.id));
+        this.items = [...this.items, ...page.items.filter((t) => !known.has(t.id))];
+        this.cursor = page.nextCursor;
+      }
+    } finally {
+      this.loadingMore = false;
+    }
+    return this.items.map((t) => t.id);
+  }
+
+  /** Zeile per ID (O(1) über einen bei Änderung von `items` neu gebauten Index). */
+  byId(id: string): TaskSummaryDto | undefined {
+    if (this.indexed !== this.items) {
+      this.index = new Map(this.items.map((t) => [t.id, t]));
+      this.indexed = this.items;
+    }
+    return this.index.get(id);
   }
 
   /** Abo auf Core-Änderungen; gibt die Abmeldung zurück. */
