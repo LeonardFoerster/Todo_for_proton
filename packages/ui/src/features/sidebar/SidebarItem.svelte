@@ -42,6 +42,7 @@
 
 <style>
   .item {
+    position: relative; /* für den Zähler-Punkt im eingeklappten Zustand */
     display: flex;
     align-items: center;
     gap: var(--space-3);

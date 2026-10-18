@@ -3,6 +3,7 @@
   import { onMount, untrack } from "svelte";
   import IconButton from "./components/IconButton.svelte";
   import Toaster from "./components/Toaster.svelte";
+  import Tooltips from "./components/Tooltips.svelte";
   import { toasts } from "./components/toasts.svelte";
   import Sidebar from "./features/sidebar/Sidebar.svelte";
   import QuickAdd from "./features/quick-add/QuickAdd.svelte";
@@ -425,6 +426,7 @@
   {/if}
 </div>
 <Toaster />
+<Tooltips />
 {#if showShortcuts}
   <ShortcutHelp shortcuts={shortcuts.list()} onclose={() => (showShortcuts = false)} />
 {/if}

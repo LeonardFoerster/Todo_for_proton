@@ -91,6 +91,28 @@ const base: Step[] = [
       }
       return `Breite ${nav.clientWidth} px, overflow-x ${style.overflowX}`;
     },
+  ],  [
+    "Eingeklappte Navigation: Tooltip vollständig sichtbar",
+    async () => {
+      await click("button", "Seitenleiste einklappen");
+      const item = await until("Eingang (eingeklappt)", () => document.querySelector<HTMLElement>('aside a[aria-label="Eingang"]'));
+      item.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+      await sleep(600);
+      try {
+        const tip = [...document.querySelectorAll<HTMLElement>('[role="tooltip"]')].find((t) => t.textContent?.trim() === "Eingang");
+        if (!tip) throw new Error("kein Tooltip-Element (CSS-::after wird vom Seitenleisten-Bereich abgeschnitten)");
+        const r = tip.getBoundingClientRect();
+        const aside = document.querySelector("aside")!.getBoundingClientRect();
+        const style = getComputedStyle(tip);
+        if (r.left < aside.right - 1) throw new Error(`Tooltip beginnt bei ${r.left}, Seitenleiste endet bei ${aside.right}`);
+        if (r.right > innerWidth || r.bottom > innerHeight || r.width === 0) throw new Error("außerhalb des Fensters");
+        if (style.visibility === "hidden" || Number(style.opacity) < 1) throw new Error(`nicht sichtbar (${style.opacity})`);
+        return `bei x ${Math.round(r.left)} (Seitenleiste bis ${Math.round(aside.right)})`;
+      } finally {
+        item.dispatchEvent(new PointerEvent("pointerout", { bubbles: true }));
+        await click("button", "Seitenleiste ausklappen");
+      }
+    },
   ],
 ];
 
