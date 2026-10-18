@@ -327,6 +327,17 @@ export class TaskListState {
     return { after: rest[at - 1]?.id, before: rest[at]?.id };
   }
 
+  /**
+   * Optimistisch eine Task (aus einer anderen Liste) an Position `index` einfügen; liefert die
+   * Nachbarn für `moveTask`.
+   */
+  insertAt(task: TaskSummaryDto, index: number): { after?: string; before?: string } {
+    const rest = this.items.filter((t) => t.id !== task.id);
+    const at = Math.max(0, Math.min(rest.length, index));
+    this.items = [...rest.slice(0, at), task, ...rest.slice(at)];
+    return { after: rest[at - 1]?.id, before: rest[at]?.id };
+  }
+
   replace(task: TaskSummaryDto): void {
     this.cancelLeave([task.id]);
     this.items = this.items.map((t) => (t.id === task.id ? task : t));

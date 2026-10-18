@@ -1,7 +1,7 @@
 import { FakeCoreClient } from "@tasks/core-client";
-import { render, screen, waitFor, within } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../../App.svelte";
 import { toasts } from "../../components/toasts.svelte";
 
@@ -130,5 +130,103 @@ describe("kanban board", () => {
     for (let i = 0; i < 300; i++) await client.createTask({ title: `Viel ${i}`, listId: work.id });
     await waitFor(() => expect(within(column("Arbeit")).getByLabelText(/offene Tasks/).textContent).toBe("301"));
     expect(within(column("Arbeit")).getAllByRole("option").length).toBeLessThan(100);
+  });
+});
+
+describe("moving cards", () => {
+  /** jsdom hat kein Layout: Spalten je 280 px breit nebeneinander, Karten 64 px ab y = 44. */
+  function layout() {
+    const cols = [...document.querySelectorAll<HTMLElement>('[aria-label="Kanban-Board"] > section')];
+    cols.forEach((section, i) => {
+      const left = i * 292;
+      section.getBoundingClientRect = () =>
+        ({ left, right: left + 280, top: 0, bottom: 700, width: 280, height: 700 }) as DOMRect;
+      const viewport = section.querySelector<HTMLElement>('[role="listbox"]')!;
+      viewport.getBoundingClientRect = () =>
+        ({ left, right: left + 280, top: 44, bottom: 700, width: 280, height: 656 }) as DOMRect;
+    });
+    board().getBoundingClientRect = () => ({ left: 0, right: 2000, top: 0, bottom: 700 }) as DOMRect;
+  }
+  const at = (column: number, slot: number) => ({ clientX: column * 292 + 100, clientY: 44 + slot * 64 });
+
+  async function dragCard(name: string, to: { clientX: number; clientY: number }) {
+    const card = screen.getByRole("option", { name });
+    const r = { clientX: 10, clientY: 10 };
+    await fireEvent.pointerDown(card, { button: 0, ...r });
+    await fireEvent.pointerMove(window, { clientX: r.clientX + 10, clientY: r.clientY + 10 });
+    await fireEvent.pointerMove(window, to);
+    await new Promise((res) => requestAnimationFrame(res));
+    await fireEvent.pointerUp(window, to);
+  }
+
+  it("drags a card into another column at the drop position – the task really changes its list", async () => {
+    const { client, work, ids, user } = await setup();
+    layout();
+    const move = vi.spyOn(client, "moveTasks");
+    const single = vi.spyOn(client, "moveTask");
+    await dragCard("Brot", at(2, 1)); // Spalte „Arbeit“, hinter „Bericht“
+    await waitFor(() => expect(cards("Arbeit")).toEqual(["Bericht", "Brot"]));
+    expect(cards("Einkaufen")).toEqual(["Milch", "Käse"]);
+    expect(move, "ein Core-Aufruf").toHaveBeenCalledTimes(1);
+    expect(single).not.toHaveBeenCalled();
+    expect((await client.getTask(ids.Brot)).listId).toBe(work.id);
+    expect(screen.getByText("„Brot“ nach „Arbeit“ verschoben", { selector: "[role=status].sr-only, .sr-only" })).toBeTruthy();
+
+    await user.click(await screen.findByRole("button", { name: "Rückgängig" }));
+    await waitFor(() => expect(cards("Einkaufen")).toEqual(["Milch", "Brot", "Käse"]));
+    expect(cards("Arbeit")).toEqual(["Bericht"]);
+  });
+
+  it("reorders within a column; dropping in place does nothing", async () => {
+    const { client, shop } = await setup();
+    layout();
+    const move = vi.spyOn(client, "moveTask");
+    await dragCard("Milch", at(1, 3)); // ans Ende
+    await waitFor(() => expect(cards("Einkaufen")).toEqual(["Brot", "Käse", "Milch"]));
+    const open = await client.listTasks({ view: { kind: "list", listId: shop.id }, status: "open" }, { limit: 10 });
+    expect(open.items.map((t) => t.title)).toEqual(["Brot", "Käse", "Milch"]);
+    await dragCard("Brot", at(1, 0));
+    expect(move).toHaveBeenCalledTimes(1);
+  });
+
+  it("Esc cancels a drag; a plain click still opens the detail", async () => {
+    const { client } = await setup();
+    layout();
+    const move = vi.spyOn(client, "moveTask");
+    const card = screen.getByRole("option", { name: "Milch" });
+    await fireEvent.pointerDown(card, { button: 0, clientX: 10, clientY: 10 });
+    await fireEvent.pointerMove(window, at(2, 0));
+    await fireEvent.keyDown(window, { key: "Escape" });
+    await fireEvent.pointerUp(window, at(2, 0));
+    expect(move).not.toHaveBeenCalled();
+    expect(cards("Einkaufen")).toEqual(["Milch", "Brot", "Käse"]);
+    await userEvent.setup().click(screen.getByRole("option", { name: "Käse" }));
+    expect(await screen.findByRole("region", { name: "Task-Details" })).toBeTruthy();
+  });
+
+  it("puts the card back when saving fails", async () => {
+    const { client } = await setup();
+    layout();
+    vi.spyOn(client, "moveTask").mockRejectedValueOnce(new Error("kaputt"));
+    vi.spyOn(client, "moveTasks").mockRejectedValueOnce(new Error("kaputt"));
+    await dragCard("Milch", at(2, 0));
+    await screen.findByText(/Nicht verschoben: kaputt/);
+    await waitFor(() => expect(cards("Einkaufen")).toEqual(["Milch", "Brot", "Käse"]));
+    expect(cards("Arbeit")).toEqual(["Bericht"]);
+  });
+
+  it("Alt+arrows move the cursor card between and within columns", async () => {
+    const { client, shop, work, ids, user } = await setup();
+    location.hash = `#/list/${shop.id}`;
+    await screen.findByRole("heading", { name: "Einkaufen" });
+    await user.keyboard("{ArrowDown}{ArrowDown}"); // Brot
+    await user.keyboard("{Alt>}{ArrowRight}{/Alt}");
+    await waitFor(() => expect(cards("Arbeit")).toEqual(["Bericht", "Brot"]));
+    expect(cursor()).toBe("Brot");
+    expect((await client.getTask(ids.Brot)).listId).toBe(work.id);
+    await user.keyboard("{Alt>}{ArrowUp}{/Alt}");
+    await waitFor(() => expect(cards("Arbeit")).toEqual(["Brot", "Bericht"]));
+    await user.keyboard("{Alt>}{ArrowLeft}{ArrowLeft}{/Alt}");
+    await waitFor(() => expect(cards("Eingang")).toEqual(["Brot", "E1", "E2"]));
   });
 });

@@ -487,6 +487,18 @@
       when: () => showBoard && !!board?.cursorTask(),
       run: () => void board?.deleteCursor(),
     },
+    ...([
+      ["alt+arrowleft", "Karte in die Spalte links", -1, 0],
+      ["alt+arrowright", "Karte in die Spalte rechts", 1, 0],
+      ["alt+arrowup", "Karte nach oben", 0, -1],
+      ["alt+arrowdown", "Karte nach unten", 0, 1],
+    ] as const).map(([key, description, dx, dy]) => ({
+      keys: [key],
+      description,
+      group: "Board",
+      when: () => showBoard && !!board?.cursorTask(),
+      run: () => board?.moveCursorCard(dx, dy),
+    })),
     {
       keys: ["v"],
       description: "Darstellung Liste/Kanban umschalten",

@@ -9,9 +9,10 @@
   import { toasts } from "../../components/toasts.svelte";
   import { useCoreClient } from "../../lib/context";
   import type { ListsState } from "../../lib/lists.svelte";
-  import { deleteManyWithUndo } from "../../lib/task-actions";
+  import { deleteManyWithUndo, moveManyWithUndo } from "../../lib/task-actions";
+  import { listName } from "../../lib/views";
   import { BoardState, type BoardColumn as Column } from "./board-state.svelte";
-  import BoardColumn from "./BoardColumn.svelte";
+  import BoardColumn, { CARD_SLOT } from "./BoardColumn.svelte";
 
   interface Props {
     lists: ListsState;
@@ -182,8 +183,159 @@
   }
 
   function open(task: TaskSummaryDto) {
+    // Ein Klick direkt nach dem Ziehen ist kein Öffnen.
+    if (justDragged) return;
     selectedId = task.id;
     onopen?.(task.id);
+  }
+
+  // --- Verschieben: Ziehen und Alt+Pfeile (P2-07) --------------------------------------------
+
+  /** Live-Region: meldet Verschiebungen für Screenreader. */
+  let announcement = $state("");
+  /** Laufendes Ziehen: Karte, Zeiger, Zielspalte und Einfügeposition (Index ohne die Karte). */
+  let drag = $state<{ task: TaskSummaryDto; from: string; x: number; y: number; over: string | null; to: number } | null>(
+    null,
+  );
+  let justDragged = false;
+  const DRAG_THRESHOLD = 4;
+  const EDGE = 48;
+
+  /**
+   * Karte an Position `to` der Spalte `target` (Index in der Spalte ohne die Karte) setzen:
+   * optimistisch, **ein** `moveTask`. Andere Liste → Toast mit Rückgängig (stellt Liste und Platz
+   * wieder her); Fehler → beide Spalten neu laden.
+   */
+  async function placeCard(task: TaskSummaryDto, target: Column, to: number) {
+    const source = board.columnOf(task.id);
+    if (!source) return;
+    if (source === target) {
+      const from = source.rows.indexOf(task.id);
+      const neighbours = source.rows.reorder(task.id, to > from ? to + 1 : to);
+      if (!neighbours) return;
+      void focusCard(task.id);
+      try {
+        await client.moveTask(task.id, neighbours);
+      } catch (e) {
+        toasts.show({ message: `Nicht verschoben: ${(e as Error).message}`, tone: "danger" });
+        await source.rows.reload();
+      }
+      return;
+    }
+    source.rows.removeMany([task.id]);
+    const neighbours = target.rows.insertAt({ ...task, listId: target.list.id }, to);
+    selectedId = task.id;
+    columnRefs[target.list.id]?.scrollToIndex(Math.min(to, target.rows.items.length - 1));
+    void focusCard(task.id);
+    const name = listName(target.list);
+    announcement = `„${task.title}“ nach „${name}“ verschoben`;
+    const moved = await moveManyWithUndo(client, [task], { listId: target.list.id, ...neighbours }, `nach „${name}“ verschoben`);
+    if (!moved) await Promise.all([source.rows.reload(), target.rows.reload()]);
+  }
+
+  /** `Alt+←/→`: Cursor-Karte in die Nachbarspalte (gleiche Höhe); `Alt+↑/↓`: in der Spalte. */
+  export function moveCursorCard(dx: -1 | 0 | 1, dy: -1 | 0 | 1) {
+    const task = cursorTask();
+    const column = task ? board.columnOf(task.id) : undefined;
+    if (!task || !column) return;
+    const row = column.rows.indexOf(task.id);
+    if (dx === 0) {
+      const to = row + dy;
+      if (to < 0 || to >= column.rows.items.length) return;
+      void placeCard(task, column, to);
+      return;
+    }
+    const target = board.columns[board.columns.indexOf(column) + dx];
+    if (target) void placeCard(task, target, Math.min(row, target.rows.items.length));
+  }
+
+  /** Spalte unter dem Zeiger und Einfügeposition darin (ohne die gezogene Karte). */
+  function dropTarget(x: number, y: number, task: TaskSummaryDto): { over: string | null; to: number } {
+    for (const column of board.columns) {
+      const section = boardEl?.querySelector<HTMLElement>(`[data-column-id="${CSS.escape(column.list.id)}"]`);
+      const r = section?.getBoundingClientRect();
+      if (!r || x < r.left || x > r.right) continue;
+      const viewport = columnRefs[column.list.id]?.viewport();
+      const v = viewport?.getBoundingClientRect();
+      const offset = v ? y - v.top + (viewport?.scrollTop ?? 0) : 0;
+      const count = column.rows.items.filter((t) => t.id !== task.id).length;
+      return { over: column.list.id, to: Math.max(0, Math.min(count, Math.round(offset / CARD_SLOT))) };
+    }
+    return { over: null, to: 0 };
+  }
+
+  /** Ziehen beginnt erst nach ein paar Pixeln – ein Klick bleibt ein Klick (Detail öffnen). */
+  function startCardDrag(e: PointerEvent, task: TaskSummaryDto) {
+    if (e.button !== 0 || (e.target as Element).closest('[role="checkbox"]')) return;
+    const start = { x: e.clientX, y: e.clientY };
+    const from = board.columnOf(task.id)?.list.id;
+    if (!from) return;
+    let pointer = start;
+    let frame = 0;
+
+    const update = () => {
+      if (!drag) return;
+      const rect = boardEl?.getBoundingClientRect();
+      if (rect && boardEl) {
+        if (pointer.x < rect.left + EDGE) boardEl.scrollLeft -= Math.ceil((rect.left + EDGE - pointer.x) / 4);
+        else if (pointer.x > rect.right - EDGE) boardEl.scrollLeft += Math.ceil((pointer.x - rect.right + EDGE) / 4);
+      }
+      const target = dropTarget(pointer.x, pointer.y, task);
+      const viewport = target.over ? columnRefs[target.over]?.viewport() : undefined;
+      const v = viewport?.getBoundingClientRect();
+      if (viewport && v) {
+        if (pointer.y < v.top + EDGE) viewport.scrollTop -= Math.ceil((v.top + EDGE - pointer.y) / 4);
+        else if (pointer.y > v.bottom - EDGE) viewport.scrollTop += Math.ceil((pointer.y - v.bottom + EDGE) / 4);
+      }
+      drag = { ...drag, ...pointer, ...target };
+      frame = requestAnimationFrame(update);
+    };
+    const move = (ev: PointerEvent) => {
+      pointer = { x: ev.clientX, y: ev.clientY };
+      if (!drag && Math.hypot(pointer.x - start.x, pointer.y - start.y) >= DRAG_THRESHOLD) {
+        drag = { task, from, ...pointer, ...dropTarget(pointer.x, pointer.y, task) };
+        frame = requestAnimationFrame(update);
+      }
+    };
+    const stop = () => {
+      cancelAnimationFrame(frame);
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", end);
+      removeEventListener("pointercancel", end);
+      removeEventListener("keydown", escape, true);
+    };
+    const end = (ev: PointerEvent) => {
+      stop();
+      const done = drag;
+      drag = null;
+      if (!done) return;
+      justDragged = true;
+      setTimeout(() => (justDragged = false));
+      if (ev.type !== "pointerup") return;
+      const final = dropTarget(ev.clientX, ev.clientY, task);
+      const target = final.over ? board.column(final.over) : undefined;
+      if (target) void placeCard(task, target, final.to);
+    };
+    const escape = (ev: KeyboardEvent) => {
+      if (ev.key !== "Escape" || !drag) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      stop();
+      drag = null;
+    };
+    addEventListener("pointermove", move);
+    addEventListener("pointerup", end);
+    addEventListener("pointercancel", end);
+    addEventListener("keydown", escape, true);
+  }
+
+  /** Einfügelinie der Spalte, außer das Ablegen ließe die Karte, wo sie ist. */
+  function dropIndexFor(column: Column): number | null {
+    if (!drag || drag.over !== column.list.id) return null;
+    if (drag.from === column.list.id && drag.to === column.rows.indexOf(drag.task.id)) return null;
+    // Linie zwischen den sichtbaren Karten: Index inklusive der gezogenen Karte.
+    const from = column.rows.indexOf(drag.task.id);
+    return from >= 0 && drag.to >= from ? drag.to + 1 : drag.to;
   }
 </script>
 
@@ -196,12 +348,41 @@
       cursorId={selectedId}
       ontoggle={(task, done) => void toggle(task, done)}
       onopen={open}
+      oncardpointerdown={startCardDrag}
+      dropIndex={dropIndexFor(column)}
+      dragging={drag ? new Set([drag.task.id]) : undefined}
       onmenu={column.list.isInbox || !oncolumnmenu ? undefined : (x, y) => oncolumnmenu(column.list, x, y)}
     />
   {/each}
 </div>
+{#if drag}
+  <div class="ghost" style:left="{drag.x + 12}px" style:top="{drag.y + 8}px" aria-hidden="true">{drag.task.title}</div>
+{/if}
+<div class="sr-only" role="status" aria-live="polite">{announcement}</div>
 
 <style>
+  .ghost {
+    position: fixed;
+    z-index: 70;
+    max-width: 240px;
+    padding: var(--space-2) var(--space-3);
+    overflow: hidden;
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius-md);
+    background: var(--color-bg);
+    box-shadow: var(--shadow-popover);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    pointer-events: none;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
   .board {
     display: flex;
     gap: var(--space-3);

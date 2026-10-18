@@ -1304,6 +1304,50 @@ const p2board: Step[] = [
       await until("Milch weg", () => boardCards("Einkaufen") === "Brot,Käse");
       return `Cursor jetzt ${document.activeElement?.getAttribute("aria-label")}`;
     },
+  ],  [
+    "Karte „Käse“ in Spalte „Arbeit“ ziehen → Task gehört wirklich zu „Arbeit“ (1 Aufruf)",
+    async (client) => {
+      const calls = countCalls(client, "moveTasks");
+      try {
+        const card = await until("Käse", () => boardColumn("Einkaufen")?.querySelector<HTMLElement>('[aria-label="Käse"]'));
+        const from = card.getBoundingClientRect();
+        const target = boardColumn("Arbeit")!.querySelector<HTMLElement>('[role="listbox"]')!.getBoundingClientRect();
+        const start = { clientX: from.left + 40, clientY: from.top + 20 };
+        const drop = { clientX: target.left + 100, clientY: target.top + 64 + 20 }; // hinter „Bericht“
+        const ev = (type: string, at: { clientX: number; clientY: number }) =>
+          new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 1, ...at });
+        card.dispatchEvent(ev("pointerdown", start));
+        dispatchEvent(ev("pointermove", { clientX: start.clientX + 10, clientY: start.clientY + 10 }));
+        dispatchEvent(ev("pointermove", drop));
+        await frame();
+        await frame();
+        const ghost = !!document.querySelector(".ghost");
+        dispatchEvent(ev("pointerup", drop));
+        await until("in Arbeit", () => boardCards("Arbeit") === "Bericht,Käse");
+        const lists = await client.listTaskLists();
+        const work = lists.find((l) => l.name === "Arbeit")!;
+        const kaese = (await client.listTasks({ view: { kind: "list", listId: work.id } }, { limit: 10 })).items.find(
+          (t) => t.title === "Käse",
+        );
+        if (!kaese) throw new Error("Core: Käse nicht in „Arbeit“");
+        if (calls.calls !== 1) throw new Error(`${calls.calls} moveTasks`);
+        if (!ghost) throw new Error("keine Vorschau am Zeiger");
+        return `Einkaufen ${boardCards("Einkaufen")} · Arbeit ${boardCards("Arbeit")}`;
+      } finally {
+        calls.restore();
+      }
+    },
+  ],
+  [
+    "Alt+← schiebt die Cursor-Karte zurück",
+    async () => {
+      const card = boardColumn("Arbeit")!.querySelector<HTMLElement>('[aria-label="Käse"]')!;
+      card.click();
+      key(focused(), "Escape");
+      key(focused(), "ArrowLeft", { altKey: true });
+      await until("zurück", () => boardCards("Einkaufen").includes("Käse"));
+      return boardCards("Einkaufen");
+    },
   ],
 ];
 
