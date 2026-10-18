@@ -125,10 +125,22 @@ UI-Kits), **SQLite**, **Vite**, **pnpm**, **just**.
 
 ## Aus dem Quellcode bauen (Arch Linux)
 
+### Schnellinstallation
+
+```sh
+git clone git@github.com:LeonardFoerster/Todo_for_proton.git
+cd Todo_for_proton
+./install.sh
+```
+
+`install.sh` installiert fehlende Systempakete per `pacman` (fragt nach dem sudo-Passwort), die Rust-Toolchain aus
+`rust-toolchain.toml` und die JavaScript-Abhängigkeiten, baut die App und installiert sie wie `just desktop-install`.
+Erneut ausführen ist unschädlich und aktualisiert die App; `--noconfirm` reicht an `pacman` durch.
+
 ### Voraussetzungen
 
 ```sh
-sudo pacman -S --needed base-devel rustup nodejs pnpm just webkit2gtk-4.1 openssl librsvg
+sudo pacman -S --needed base-devel git rustup nodejs pnpm just webkit2gtk-4.1 openssl librsvg desktop-file-utils
 ```
 
 - Die Rust-Version ist über `rust-toolchain.toml` festgelegt; `rustup` lädt sie beim ersten Build automatisch.
