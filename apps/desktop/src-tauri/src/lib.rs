@@ -102,12 +102,27 @@ fn window_event<R: Runtime>(window: &Window<R>, event: &WindowEvent) {
     }
 }
 
+/// WebKitGTK ohne beschleunigten Compositing-Modus: spart im WebProcess ~20 MB PSS und macht den
+/// Wert stabil, Scrollen/Abhaken messbar unverändert (P8-03, ADR-001). Rückgängig mit
+/// `TODO_WEBKIT_COMPOSITING=1`; eine explizit gesetzte WebKit-Variable bleibt unangetastet.
+const WEBKIT_COMPOSITING_ENV: &str = "WEBKIT_DISABLE_COMPOSITING_MODE";
+const KEEP_COMPOSITING_ENV: &str = "TODO_WEBKIT_COMPOSITING";
+
+fn configure_webkit() {
+    if env::var_os(WEBKIT_COMPOSITING_ENV).is_none() && env::var_os(KEEP_COMPOSITING_ENV).is_none()
+    {
+        // Noch vor jedem weiteren Thread und vor dem Start von WebKit.
+        env::set_var(WEBKIT_COMPOSITING_ENV, "1");
+    }
+}
+
 /// Startet die App und blockiert bis zum Beenden.
 ///
 /// # Panics
 /// Wenn Tauri nicht starten kann (z. B. keine WebView) – ohne Fenster gibt es nichts zu tun.
 pub fn run() {
     STARTED.get_or_init(Instant::now);
+    configure_webkit();
     builder(tauri::Builder::default(), Options::from_env())
         .run(tauri::generate_context!())
         .expect("Tauri-App konnte nicht gestartet werden");
