@@ -815,16 +815,17 @@ const p0sel: Step[] = [
       return `${ms.toFixed(0)} ms`;
     },
   ],  [
-    "E erledigt die Auswahl (1 Aufruf), Rückgängig",
+    "E erledigt die Auswahl (1 Aufruf, Zeilen verlassen die Ansicht), Rückgängig",
     async (client) => {
       const calls = countCalls(client, "completeTasks");
       try {
         await click("button", "Auswählen");
         for (const t of ["W001", "W002", "W003"]) (await row(t)).click();
         key(focused(), "e");
-        await until("erledigt", () => byRole("option", "W002, erledigt"));
+        // P1-01: abgehakte verlassen die offene Ansicht.
+        await until("verschwunden", () => visibleTitles(2) === "W004,W005");
         (await until("Rückgängig", () => byRole("button", "Rückgängig"))).click();
-        await until("wieder offen", () => byRole("option", "W002"));
+        await until("wieder da", () => visibleTitles(5) === "W001,W002,W003,W004,W005");
         if (calls.calls !== 2) throw new Error(`${calls.calls} Aufrufe`);
         return "1 Aufruf + 1 Rückgängig";
       } finally {

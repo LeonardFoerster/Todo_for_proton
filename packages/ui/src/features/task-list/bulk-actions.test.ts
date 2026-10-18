@@ -96,11 +96,13 @@ describe("bulk actions", () => {
     await user.keyboard("e");
     await waitFor(async () => expect(await stored(client)).toEqual(["A✓", "B", "C✓", "D", "E"]));
     expect(spies.completeTasks).toHaveBeenCalledTimes(1);
-    expect(within(listbox()).getByRole("option", { name: "A, erledigt" })).toBeTruthy();
     expect(screen.getByText("2 Tasks erledigt")).toBeTruthy();
+    await waitFor(() => expect(shown()).toEqual(["B", "D", "E"]));
+    expect(counter(), "Auswahl wird geleert, Modus bleibt").toContain("0 ausgewählt");
 
     await user.click(await undo());
     await waitFor(async () => expect(await stored(client)).toEqual(["A", "B", "C", "D", "E"]));
+    await waitFor(() => expect(shown()).toEqual(["A", "B", "C", "D", "E"]));
     expect(spies.completeTasks).toHaveBeenLastCalledWith(expect.arrayContaining([]), false);
   });
 

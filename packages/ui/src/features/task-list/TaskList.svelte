@@ -74,15 +74,23 @@
       .then(tick)
       .then(() => requestAnimationFrame(() => onready?.()))
       .catch((e: Error) => toasts.show({ message: `Liste nicht geladen: ${e.message}`, tone: "danger", timeoutMs: 0 }));
-    return detach;
+    return () => {
+      detach();
+      rows.dispose();
+    };
   });
 
   function shortTitle(title: string): string {
     return title.length > 40 ? `${title.slice(0, 39)}…` : title;
   }
 
+  /** Abgehakte verlassen offene Ansichten (P1-01) – nur „Erledigt“ zeigt sie weiter. */
+  const completedLeave = view.view !== "completed";
+
   async function toggle(task: TaskSummaryDto, done: boolean) {
+    if (done && completedLeave) moveCursorAway(new Set([task.id]));
     const before = rows.setDone(task.id, done);
+    if (done && completedLeave) revealCursor();
     try {
       await client.completeTask(task.id, done);
     } catch (e) {
@@ -360,7 +368,9 @@
       .filter((t) => t.status !== (done ? "done" : "open"))
       .map((t) => t.id);
     if (ids.length === 0) return;
+    if (done && completedLeave) moveCursorAway(new Set(ids));
     const before = rows.setDoneMany(ids, done);
+    if (done && completedLeave) revealCursor();
     if (!(await completeManyWithUndo(client, ids, done))) rows.replaceMany(before);
   }
 

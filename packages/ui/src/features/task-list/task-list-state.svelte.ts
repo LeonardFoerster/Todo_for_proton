@@ -9,6 +9,13 @@ const PAGE_SIZE = 200;
 const PAGE_LIMIT_MAX = 500;
 /** Ab so vielen IDs in einem Änderungs-Event die geladenen Seiten neu holen statt je ID `getTask`. */
 const REFRESH_BATCH = 20;
+/** So lange bleibt eine abgehakte Zeile stehen (Haken-Animation), bevor sie die offene Ansicht verlässt. */
+export const LEAVE_MS = 250;
+
+function leaveDelay(): number {
+  const reduced = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return reduced ? 0 : LEAVE_MS;
+}
 
 export function toSummary(t: TaskDto): TaskSummaryDto {
   return {
@@ -34,8 +41,11 @@ export class TaskListState {
 
   private cursor: string | null = null;
   private loadingMore = false;
-  /** In dieser Ansicht abgehakt: bleiben gedimmt stehen (Rückgängig per Klick), bis zum Wechsel. */
-  private lingering = new Set<string>();
+  /**
+   * Gerade abgehakt: bleiben für die Haken-Animation kurz stehen und verlassen dann die offene
+   * Ansicht (P1-01). Wert = Timer, der die Zeile entfernt.
+   */
+  private leaving = new Map<string, ReturnType<typeof setTimeout>>();
   /** Gerade gelöscht (Rückgängig möglich): ausgeblendet, auch wenn ein Event sie zurückmeldet. */
   private hidden = new Set<string>();
   /** Index für `byId`/`indexOf`, gültig für genau dieses `items`-Array. */
@@ -158,7 +168,7 @@ export class TaskListState {
     } while (cursor && fetched.length < want);
     const ctx = this.ctx();
     const fresh = new Set(fetched.map((t) => t.id));
-    const linger = this.items.filter((t) => this.lingering.has(t.id) && !fresh.has(t.id) && inView(t, ctx));
+    const linger = this.items.filter((t) => this.leaving.has(t.id) && !fresh.has(t.id) && inView(t, ctx));
     let items = fetched.filter((t) => !this.hidden.has(t.id));
     if (linger.length > 0) items = [...items, ...linger].sort((a, b) => compareInView(a, b, ctx.route));
     this.items = items;
@@ -178,7 +188,7 @@ export class TaskListState {
   apply(task: TaskSummaryDto): void {
     const ctx = this.ctx();
     if (this.hidden.has(task.id)) return;
-    const visible = shownInView(task, ctx) || (this.lingering.has(task.id) && inView(task, ctx));
+    const visible = shownInView(task, ctx) || (this.leaving.has(task.id) && inView(task, ctx));
     const rest = this.items.filter((t) => t.id !== task.id);
     if (!visible) {
       if (rest.length !== this.items.length) this.items = rest;
@@ -197,11 +207,11 @@ export class TaskListState {
     if (this.items.some((t) => t.id === id)) this.items = this.items.filter((t) => t.id !== id);
   }
 
-  /** Optimistisch abhaken/öffnen; erledigte bleiben bis zum Ansichtswechsel stehen. */
+  /** Optimistisch abhaken/öffnen; abgehakte verlassen offene Ansichten nach `LEAVE_MS`. */
   setDone(id: string, done: boolean): TaskSummaryDto | undefined {
     const task = this.items.find((t) => t.id === id);
     if (!task) return undefined;
-    if (done) this.lingering.add(id);
+    if (done) this.leave([id]);
     const next: TaskSummaryDto = {
       ...task,
       status: done ? "done" : "open",
@@ -219,14 +229,48 @@ export class TaskListState {
     this.items = this.items.map((t) => {
       if (!set.has(t.id) || t.status === (done ? "done" : "open")) return t;
       before.push(t);
-      if (done) this.lingering.add(t.id);
       return { ...t, status: done ? "done" : "open", completedAt: at };
     });
+    if (done) this.leave(before.map((t) => t.id));
     return before;
+  }
+
+  /**
+   * Abgehakte Zeilen nach der Animation aus der offenen Ansicht nehmen – nur, wenn sie dann noch
+   * erledigt sind (Rückgängig in der Zwischenzeit lässt sie stehen). „Erledigt“ zeigt sie weiter.
+   */
+  private leave(ids: readonly string[]): void {
+    if (this.ctx().route.view === "completed" || ids.length === 0) return;
+    this.cancelLeave(ids);
+    const timer = setTimeout(() => {
+      const gone = new Set(ids.filter((id) => this.leaving.get(id) === timer));
+      for (const id of gone) this.leaving.delete(id);
+      const ctx = this.ctx();
+      const next = this.items.filter((t) => !gone.has(t.id) || shownInView(t, ctx));
+      if (next.length !== this.items.length) this.items = next;
+    }, leaveDelay());
+    for (const id of ids) this.leaving.set(id, timer);
+  }
+
+  /** Verlassen abbrechen (Abhaken fehlgeschlagen). */
+  cancelLeave(ids: readonly string[]): void {
+    for (const id of ids) {
+      const timer = this.leaving.get(id);
+      if (timer === undefined) continue;
+      this.leaving.delete(id);
+      if (![...this.leaving.values()].includes(timer)) clearTimeout(timer);
+    }
+  }
+
+  /** Offene Timer beenden (Ansicht wird verlassen). */
+  dispose(): void {
+    for (const timer of new Set(this.leaving.values())) clearTimeout(timer);
+    this.leaving.clear();
   }
 
   /** Zeilen auf einen früheren Stand zurücksetzen (fehlgeschlagene Aktion). */
   replaceMany(tasks: readonly TaskSummaryDto[]): void {
+    this.cancelLeave(tasks.map((t) => t.id));
     const byId = new Map(tasks.map((t) => [t.id, t]));
     this.items = this.items.map((t) => byId.get(t.id) ?? t);
   }
@@ -284,6 +328,7 @@ export class TaskListState {
   }
 
   replace(task: TaskSummaryDto): void {
+    this.cancelLeave([task.id]);
     this.items = this.items.map((t) => (t.id === task.id ? task : t));
   }
 }
