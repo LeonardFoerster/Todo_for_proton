@@ -1257,7 +1257,57 @@ const p1B: Step[] = [
   ["Zustand", async (client) => p1state(client)],
 ];
 
-const SUITES: Record<string, Step[]> = { p002, p1sync, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
+// P2: Listen & Kanban-Board in der echten WebView.
+const boardColumn = (name: string) =>
+  document.querySelector<HTMLElement>(`[aria-label="Kanban-Board"] section[aria-label="${CSS.escape(name)}"]`);
+const boardCards = (name: string) =>
+  [...(boardColumn(name)?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])].map((o) => o.getAttribute("aria-label")).join(",");
+
+const p2board: Step[] = [
+  [
+    "Listen „Einkaufen“ und „Arbeit“ mit Tasks",
+    async (client) => {
+      const shop = await client.createTaskList("Einkaufen");
+      const work = await client.createTaskList("Arbeit");
+      for (const t of ["Milch", "Brot", "Käse"]) await client.createTask({ title: t, listId: shop.id });
+      await client.createTask({ title: "Bericht", listId: work.id });
+      await client.createTask({ title: "Im Eingang" });
+    },
+  ],
+  [
+    "Umschalten auf Kanban: Spalten nebeneinander, Karten mit fester Höhe",
+    async () => {
+      location.hash = "#/inbox";
+      await until("h1 Eingang", () => heading() === "Eingang");
+      await click("button", "Kanban");
+      await until("Board", () => boardCards("Einkaufen") === "Milch,Brot,Käse");
+      const cols = [...document.querySelectorAll<HTMLElement>('[aria-label="Kanban-Board"] > section')];
+      const names = cols.map((c) => c.getAttribute("aria-label")).join(",");
+      if (names !== "Eingang,Einkaufen,Arbeit") throw new Error(`Spalten ${names}`);
+      const [a, b] = cols.map((c) => c.getBoundingClientRect());
+      if (!(b.left >= a.right && Math.abs(a.top - b.top) < 1)) throw new Error("Spalten nicht nebeneinander");
+      const boardRect = document.querySelector('[aria-label="Kanban-Board"]')!.getBoundingClientRect();
+      if (a.bottom > boardRect.bottom + 1 || a.height < 200) throw new Error(`Spaltenhöhe ${a.height}`);
+      const card = boardColumn("Einkaufen")!.querySelector<HTMLElement>('[role="option"]')!.getBoundingClientRect();
+      if (Math.round(card.height) !== 56) throw new Error(`Kartenhöhe ${card.height}`);
+      return `${cols.length} Spalten à ${Math.round(a.width)} px, Karte ${Math.round(card.height)} px`;
+    },
+  ],
+  [
+    "Tastatur: ↓ in der Eingang-Spalte, → zur Nachbarspalte, Leertaste hakt ab",
+    async () => {
+      key(focused(), "ArrowDown");
+      await until("Cursor", () => document.activeElement?.getAttribute("aria-label") === "Im Eingang");
+      key(focused(), "ArrowRight");
+      await until("Milch", () => document.activeElement?.getAttribute("aria-label") === "Milch");
+      key(focused(), " ");
+      await until("Milch weg", () => boardCards("Einkaufen") === "Brot,Käse");
+      return `Cursor jetzt ${document.activeElement?.getAttribute("aria-label")}`;
+    },
+  ],
+];
+
+const SUITES: Record<string, Step[]> = { p002, p1sync, p2board, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
   p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */

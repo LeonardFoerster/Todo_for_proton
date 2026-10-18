@@ -81,6 +81,7 @@
   let SettingsDialog = $state<typeof SettingsDialogType | null>(null);
   let quickAdd = $state<QuickAdd>();
   let taskList = $state<TaskList>();
+  let board = $state<Board>();
   let reportedReady = false;
 
   const route = $derived(router.route);
@@ -465,6 +466,27 @@
       when: hasList,
       run: () => taskList?.extendSelection(-1),
     },
+    // Board (P2-06): Navigation und Aktionen auf der Cursor-Karte.
+    { keys: ["arrowdown", "j"], label: "↓ / J", description: "Nächste Karte", group: "Board", when: () => showBoard && !!board?.hasCards(), run: () => board?.moveCursor(0, 1) },
+    { keys: ["arrowup", "k"], label: "↑ / K", description: "Vorige Karte", group: "Board", when: () => showBoard && !!board?.hasCards(), run: () => board?.moveCursor(0, -1) },
+    { keys: ["arrowright", "l"], label: "→ / L", description: "Nächste Spalte", group: "Board", when: () => showBoard && !!board?.hasCards(), run: () => board?.moveCursor(1, 0) },
+    { keys: ["arrowleft", "h"], label: "← / H", description: "Vorige Spalte", group: "Board", when: () => showBoard && !!board?.hasCards(), run: () => board?.moveCursor(-1, 0) },
+    {
+      keys: ["space", "e"],
+      label: "Leertaste / E",
+      description: "Karte erledigt umschalten",
+      group: "Board",
+      when: () => showBoard && !!board?.cursorTask(),
+      run: () => board?.toggleCursor(),
+    },
+    { keys: ["enter"], description: "Karte öffnen", group: "Board", when: () => showBoard && !!board?.cursorTask(), run: () => board?.openCursor() },
+    {
+      keys: ["delete"],
+      description: "Karte löschen (mit Rückgängig)",
+      group: "Board",
+      when: () => showBoard && !!board?.cursorTask(),
+      run: () => void board?.deleteCursor(),
+    },
     {
       keys: ["v"],
       description: "Darstellung Liste/Kanban umschalten",
@@ -596,7 +618,13 @@
               bind:this={quickAdd}
               {lists}
               listId={routeListId(route)}
-              shownListId={route.view === "list" ? route.listId : route.view === "inbox" ? lists.inbox?.id : undefined}
+              shownListId={showBoard
+                ? undefined
+                : route.view === "list"
+                  ? route.listId
+                  : route.view === "inbox"
+                    ? lists.inbox?.id
+                    : undefined}
               onopenlist={(id) =>
                 router.navigate(id === lists.inbox?.id ? { view: "inbox" } : { view: "list", listId: id })}
               defaultDue={route.view === "today" ? todayPlus(0) : null}
@@ -605,7 +633,15 @@
           {/if}
           <div class="list-slot">
             {#if showBoard}
-              <Board onready={listReady} />
+              <Board
+                bind:this={board}
+                {lists}
+                highlightId={route.view === "list" ? route.listId : route.view === "inbox" ? lists.inbox?.id : undefined}
+                bind:selectedId
+                onopen={(id) => (openId = id)}
+                onready={listReady}
+                oncolumnmenu={(list, x, y) => (listMenu = { list, x, y })}
+              />
             {:else}
               <TaskList bind:this={taskList} {route} {lists} bind:selectedId onopen={(id) => (openId = id)} onready={listReady} onnewtask={newTask} />
             {/if}
