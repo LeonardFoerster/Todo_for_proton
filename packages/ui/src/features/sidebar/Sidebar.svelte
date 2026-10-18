@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { SyncStatusDto } from "@tasks/core-client";
+  import logo from "../../assets/logo.png";
   import Button from "../../components/Button.svelte";
   import IconButton from "../../components/IconButton.svelte";
   import { Hash, PanelLeft, Plus } from "../../icons";
@@ -50,9 +51,7 @@
 <nav class="sidebar" class:collapsed aria-label="Navigation">
   <div class="brand">
     {#if !collapsed}
-      <span class="mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24"><rect width="24" height="24" rx="6" /><path d="M7.5 12.3l3 3 6-6.6" /></svg>
-      </span>
+      <img class="mark" src={logo} alt="" width="22" height="22" />
       <span class="name">Tasks</span>
     {/if}
     <IconButton
@@ -151,20 +150,10 @@
     justify-content: center;
     padding: 0;
   }
-  .mark svg {
+  .mark {
     display: block;
     width: 22px;
     height: 22px;
-  }
-  .mark rect {
-    fill: var(--color-accent-fill);
-  }
-  .mark path {
-    fill: none;
-    stroke: var(--color-on-accent);
-    stroke-width: 2.2;
-    stroke-linecap: round;
-    stroke-linejoin: round;
   }
   .name {
     flex: 1;
