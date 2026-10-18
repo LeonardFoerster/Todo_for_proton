@@ -10,6 +10,7 @@
 # Fenster öffnen sich sichtbar (keine Eingaben am Desktop nötig). Dauer: ~3–5 min.
 # Abschnitt 5 (P0-07): Sammelaktionen der Mehrfachauswahl über beide Profile.
 # Abschnitt 6 (P1-03): Abhaken verlässt den Eingang, Upload ohne manuellen Sync.
+# Abschnitt 7 (P2-09): Board-Ziehen, Listen umbenennen/umsortieren über beide Profile.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -168,6 +169,20 @@ b=$(state B p1B)
 say "  A: $a"
 say "  B: $b"
 [ "$a" = "Abhaken-Test erledigt=true im Eingang=false" ] && [ "$a" = "$b" ]; check "B: erledigt, nicht mehr im Eingang" $?
+
+say ""
+say "== 7. Listen & Board: A zieht eine Karte in eine andere Liste, benennt um, sortiert um → B gleich, Neustart A gleich =="
+run A p2syncA
+passed A p2syncA; check "A: Board-Ziehen, Umbenennen und Umsortieren über die UI" $?
+run B p2syncB
+run A p2syncLocal
+a=$(state A p2syncA)
+b=$(state B p2syncB)
+r=$(state A p2syncLocal)
+say "  A: $a"
+say "  B: $b"
+[ "$a" = "Listen Haushalt | Obst · Äpfel in Obst" ] && [ "$a" = "$b" ]; check "B: dieselbe Zuordnung, Namen und Reihenfolge" $?
+[ "$a" = "$r" ]; check "nach Neustart von A unverändert" $?
 
 say ""
 if [ $failures -eq 0 ]; then say "ERGEBNIS: alle Prüfungen bestanden"; else say "ERGEBNIS: $failures Prüfung(en) fehlgeschlagen"; fi

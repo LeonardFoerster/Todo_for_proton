@@ -1275,6 +1275,57 @@ const p2board: Step[] = [
     },
   ],
   [
+    "Liste anlegen, inline umbenennen, per Dialog löschen (Tasks → Eingang)",
+    async (client) => {
+      await click("button", "Neue Liste");
+      const input = await field("Name der neuen Liste");
+      type(input, "Temp");
+      key(input, "Enter");
+      await until("h1 Temp", () => heading() === "Temp");
+      const temp = (await client.listTaskLists()).find((l) => l.name === "Temp")!;
+      await client.createTask({ title: "Aus Temp", listId: temp.id });
+      const link = await until("Temp-Link", () => document.querySelector<HTMLElement>(`aside a[data-list-id="${temp.id}"]`));
+      link.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 50, clientY: 300 }));
+      await click("menuitem", /^Umbenennen/);
+      const rename = await field("Neuer Name der Liste");
+      type(rename, "Temporär");
+      key(rename, "Enter");
+      await until("umbenannt", () => heading() === "Temporär");
+      await click("button", "Listenaktionen");
+      await click("menuitem", /^Löschen/);
+      await until("Dialog", () => document.querySelector("dialog[open]")?.textContent?.includes("1 Task offene"));
+      await click("button", "Liste löschen");
+      await until("Eingang", () => heading() === "Eingang");
+      await row("Aus Temp");
+      const names = (await client.listTaskLists()).map((l) => l.name).join(",");
+      if (names.includes("Temp")) throw new Error(names);
+      return names;
+    },
+  ],
+  [
+    "Quick-Add: Liste „Einkaufen“ wählen (Alt+L) und anlegen",
+    async (client) => {
+      const input = await field("Neue Task");
+      input.focus();
+      key(input, "l", { altKey: true });
+      await click("menuitem", "Einkaufen");
+      type(input, "Eier");
+      key(input, "Enter");
+      const toastTexts = () => [...document.querySelectorAll("[role=status]")].map((t) => t.textContent?.trim()).join(" | ");
+      await until("Toast", () => document.body.textContent?.includes("„Eier“ in „Einkaufen“ angelegt")).catch(async () => {
+        const all = (await client.listTasks({ view: { kind: "all" } }, { limit: 100 })).items.map((t) => `${t.title}@${t.listId.slice(-4)}`);
+        throw new Error(
+          `Toasts: ${toastTexts()} · Picker ${document.querySelector('[aria-label^="Liste: "]')?.getAttribute("aria-label")} · h1 ${heading()} · input "${input.value}" · ${all.join(",")}`,
+        );
+      });
+      const shop = (await client.listTaskLists()).find((l) => l.name === "Einkaufen")!;
+      const titles = (await client.listTasks({ view: { kind: "list", listId: shop.id } }, { limit: 10 })).items.map((t) => t.title);
+      if (!titles.includes("Eier")) throw new Error(titles.join(","));
+      await client.deleteTasks([(await client.listTasks({ view: { kind: "list", listId: shop.id } }, { limit: 10 })).items.find((t) => t.title === "Eier")!.id]);
+      return titles.join(",");
+    },
+  ],
+  [
     "Umschalten auf Kanban: Spalten nebeneinander, Karten mit fester Höhe",
     async () => {
       location.hash = "#/inbox";
@@ -1294,9 +1345,10 @@ const p2board: Step[] = [
     },
   ],
   [
-    "Tastatur: ↓ in der Eingang-Spalte, → zur Nachbarspalte, Leertaste hakt ab",
+    "Tastatur: Cursor in der Eingang-Spalte, → zur Nachbarspalte, Leertaste hakt ab",
     async () => {
-      key(focused(), "ArrowDown");
+      (await until("Karte", () => boardColumn("Eingang")?.querySelector<HTMLElement>('[aria-label="Im Eingang"]'))).click();
+      key(focused(), "Escape"); // Detail zu, Cursor bleibt
       await until("Cursor", () => document.activeElement?.getAttribute("aria-label") === "Im Eingang");
       key(focused(), "ArrowRight");
       await until("Milch", () => document.activeElement?.getAttribute("aria-label") === "Milch");
@@ -1373,7 +1425,184 @@ const p2board: Step[] = [
   ],
 ];
 
-const SUITES: Record<string, Step[]> = { p002, p1sync, p2board, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
+// P2-09: Messung im Board (Debug-Build, wie P0-07).
+const p2perf: Step[] = [
+  [
+    "10 Listen à 200 Tasks + Liste „Lang“ mit 1 000",
+    async (client) => {
+      const t0 = performance.now();
+      for (let l = 1; l <= 10; l++) await createMany(client, `L${String(l).padStart(2, "0")}`, 200);
+      await createMany(client, "Lang", 1000);
+      return `${((performance.now() - t0) / 1000).toFixed(0)} s angelegt`;
+    },
+  ],
+  ["Leerlauf Listenansicht (30 s, Vergleich)", async () => idle("IDLE_LIST")],
+  [
+    "Umschalten auf Kanban bis alle Spalten gezeichnet",
+    async () => {
+      const t0 = performance.now();
+      await click("button", "Kanban");
+      await until(
+        "12 Spalten mit Karten",
+        () => [...document.querySelectorAll('[aria-label="Kanban-Board"] > section')].filter((c) => c.querySelector('[role="option"]')).length >= 11,
+        10_000,
+      );
+      const ms = (await frame()) - t0;
+      return `${ms.toFixed(0)} ms (12 Spalten, je erste Seite 200)`;
+    },
+  ],
+  [
+    "Karte per Alt+→ in die Nachbarspalte bis Repaint",
+    async () => {
+      const times: number[] = [];
+      for (let i = 0; i < 10; i++) {
+        const card = boardColumn("L01")!.querySelector<HTMLElement>('[role="option"]')!;
+        card.click();
+        key(focused(), "Escape");
+        await frame();
+        const target = boardColumn("L02")!.querySelector('[role="listbox"]')!;
+        const changed = new Promise<void>((resolve) => {
+          const obs = new MutationObserver(() => {
+            obs.disconnect();
+            resolve();
+          });
+          obs.observe(target, { childList: true, subtree: true });
+        });
+        const t0 = performance.now();
+        key(focused(), "ArrowRight", { altKey: true });
+        await changed;
+        times.push((await frame()) - t0);
+        await sleep(150);
+      }
+      const st = stats(times);
+      if (st.p95 > 50) throw new Error(`p95 ${st.p95.toFixed(1)} ms`);
+      return `p50 ${st.p50.toFixed(1)} / p95 ${st.p95.toFixed(1)} / max ${st.max.toFixed(1)} ms`;
+    },
+  ],
+  [
+    "Spalte „Lang“ (1 000 Karten) durchscrollen",
+    async () => {
+      const viewport = boardColumn("Lang")!.querySelector<HTMLElement>('[role="listbox"]')!;
+      viewport.closest("section")!.scrollIntoView({ inline: "nearest" });
+      // Alle Seiten laden (Zähler ohne „+“), damit wirklich 1 000 Karten gescrollt werden.
+      const more = () => boardColumn("Lang")!.querySelector("header")!.textContent!.includes("+");
+      for (let i = 0; i < 50 && more(); i++) {
+        viewport.scrollTop = viewport.scrollHeight;
+        await sleep(100);
+      }
+      viewport.scrollTop = 0;
+      await frame();
+      const deltas: number[] = [];
+      let prev = await frame();
+      while (viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 1) {
+        viewport.scrollTop += 96;
+        const now = await frame();
+        deltas.push(now - prev);
+        prev = now;
+      }
+      const st = stats(deltas.slice(1));
+      const dom = viewport.querySelectorAll('[role="option"]').length;
+      if (st.p95 > 25) throw new Error(`p95 ${st.p95.toFixed(1)} ms`);
+      return `${deltas.length} Frames, p50 ${st.p50.toFixed(1)} / p95 ${st.p95.toFixed(1)} ms, ${dom} DOM-Karten`;
+    },
+  ],
+  ["Leerlauf Board (30 s)", async () => idle("IDLE_BOARD")],
+  // Nachlauf: Die CPU-Messung von außen liest ihre zweite Stichprobe, bevor die App endet.
+  ["Nachlauf", async () => void (await sleep(3000))],
+];
+
+// P2-09 Abnahme Abschnitt 7: Board-Ziehen, Umbenennen und Umsortieren über zwei Profile.
+async function dragCardTo(title: string, columnName: string, slot: number) {
+  const card = await until(title, () => document.querySelector<HTMLElement>(`[aria-label="Kanban-Board"] [role="option"][aria-label="${CSS.escape(title)}"]`));
+  const from = card.getBoundingClientRect();
+  const target = boardColumn(columnName)!.querySelector<HTMLElement>('[role="listbox"]')!.getBoundingClientRect();
+  const start = { clientX: from.left + 40, clientY: from.top + 20 };
+  const drop = { clientX: target.left + 100, clientY: target.top + slot * 64 + 20 };
+  const ev = (type: string, at: { clientX: number; clientY: number }) =>
+    new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 1, ...at });
+  card.dispatchEvent(ev("pointerdown", start));
+  dispatchEvent(ev("pointermove", { clientX: start.clientX + 10, clientY: start.clientY + 10 }));
+  dispatchEvent(ev("pointermove", drop));
+  await frame();
+  await frame();
+  dispatchEvent(ev("pointerup", drop));
+}
+
+async function p2state(client: CoreClient): Promise<string> {
+  const lists = await client.listTaskLists();
+  const apple = (await client.listTasks({ view: { kind: "all" } }, { limit: 500 })).items.find((t) => t.title === "Äpfel");
+  const where = lists.find((l) => l.id === apple?.listId)?.name ?? "fehlt";
+  const names = lists.filter((l) => ["Obst", "Haushalt", "Zweite"].includes(l.name)).map((l) => l.name);
+  return `Listen ${names.join(" | ")} · Äpfel in ${where}`;
+}
+
+const p2syncA: Step[] = [
+  ["Bereit: synchronisiert", async (client) => syncedNow(client)],
+  [
+    "Listen „Obst“, „Zweite“ und Task „Äpfel“ im Eingang",
+    async (client) => {
+      await client.createTaskList("Obst");
+      await client.createTaskList("Zweite");
+      await client.createTask({ title: "Äpfel" });
+      location.hash = "#/inbox";
+      await until("h1 Eingang", () => heading() === "Eingang");
+    },
+  ],
+  [
+    "Board: „Äpfel“ in die Spalte „Obst“ ziehen",
+    async () => {
+      const board = document.querySelector<HTMLElement>('[role="group"][aria-label="Darstellung"] [aria-label="Kanban"]')!;
+      if (board.getAttribute("aria-pressed") === "false") board.click();
+      await until("Spalte Obst", () => boardColumn("Obst"));
+      boardColumn("Obst")!.scrollIntoView({ inline: "nearest" });
+      await frame();
+      await dragCardTo("Äpfel", "Obst", 0);
+      await until("in Obst", () => boardCards("Obst") === "Äpfel", 5000);
+    },
+  ],
+  [
+    "Seitenleiste: „Zweite“ in „Haushalt“ umbenennen und per Alt+↑ vor „Obst“",
+    async (client) => {
+      const zweite = (await client.listTaskLists()).find((l) => l.name === "Zweite")!;
+      const link = await until("Zweite", () => document.querySelector<HTMLElement>(`aside a[data-list-id="${zweite.id}"]`));
+      link.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 50, clientY: 300 }));
+      await click("menuitem", /^Umbenennen/);
+      const input = await field("Neuer Name der Liste");
+      type(input, "Haushalt");
+      key(input, "Enter");
+      const renamed = await until("Haushalt", () => {
+        const a = document.querySelector<HTMLElement>(`aside a[data-list-id="${zweite.id}"]`);
+        return a?.textContent?.trim() === "Haushalt" && a;
+      });
+      renamed.focus();
+      key(renamed, "ArrowUp", { altKey: true });
+      await untilAsync("vor Obst", async () => (await p2state(client)).startsWith("Listen Haushalt | Obst"));
+    },
+  ],
+  ["Hochgeladen", async (client) => syncedNow(client)],
+  ["Zustand", async (client) => p2state(client)],
+];
+
+const p2syncB: Step[] = [
+  ["Synchronisiert", async (client) => syncedNow(client)],
+  ["Zustand", async (client) => p2state(client)],
+];
+
+const p2syncLocal: Step[] = [["Zustand", async (client) => p2state(client)]];
+
+/** Nach Neustart mit demselben Profil: Darstellung „Kanban“ ist gemerkt. */
+const p2layout: Step[] = [
+  [
+    "Start in der gemerkten Darstellung „Kanban“",
+    async () => {
+      await until("Board", () => document.querySelector('[aria-label="Kanban-Board"] section'), 5000);
+      const pressed = document.querySelector('[role="group"][aria-label="Darstellung"] [aria-pressed="true"]');
+      if (pressed?.getAttribute("aria-label") !== "Kanban") throw new Error("nicht Kanban");
+    },
+  ],
+];
+
+const SUITES: Record<string, Step[]> = { p002, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
   p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */
@@ -1384,6 +1613,14 @@ export async function runSelftest(
 ): Promise<void> {
   if (report) mark = (line) => void report(line);
   const names = selection === "1" ? ["base", "p707"] : selection.split(",").map((n) => n.trim());
+  // Die Darstellung liegt im localStorage der WebView und gilt für alle Testprofile: Jede Suite
+  // beginnt in der Listenansicht – außer der, die gerade das Merken von „Kanban“ prüft.
+  if (!names.includes("p2layout")) {
+    const listButton = await until("Kopfzeile", () => document.querySelector<HTMLElement>("h1"), 10_000)
+      .then(() => document.querySelector<HTMLElement>('[role="group"][aria-label="Darstellung"] [aria-label="Liste"]'))
+      .catch(() => null);
+    if (listButton?.getAttribute("aria-pressed") === "false") listButton.click();
+  }
   const steps = names.flatMap((n) => SUITES[n] ?? [[`Suite ${n}`, async () => Promise.reject(new Error("unbekannt"))] as Step]);
   const box = document.createElement("pre");
   box.style.cssText =

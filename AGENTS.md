@@ -12,8 +12,9 @@ Reihenfolge der Plattformen: **1. Arch Linux nativ (Tauri 2)**, **2. Web**, **3.
 
 Status: **Prototyp (v0.1.0, 2026-10-18).** Desktop-App (Linux) mit lokalem Speicher, Login per Browser und Sync über
 Proton Drive ist abgenommen (automatisierter Zwei-Geräte-Lauf; Live-Teil über Proton offen, siehe
-`development/prototype-acceptance.md`). Zwischenphase P0 (Mehrfachauswahl & Sammelaktionen) umgesetzt und abgenommen;
-nächste Etappe ist die Web-App (`development/roadmap-next.md`).
+`development/prototype-acceptance.md`). Zwischenphasen P0–P2 (Mehrfachauswahl, Upload ≤ 5 s,
+Listen & Kanban-Board) umgesetzt, P2-Abnahme durch den User offen; nächste Etappe ist die Web-App
+(`development/roadmap-next.md`).
 
 ## 2. Wo was liegt
 
