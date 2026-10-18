@@ -220,4 +220,32 @@ describe("FakeCoreClient", () => {
       expect(restored.listId).toBe((await core.ensureInbox()).id);
     });
   });
+
+  it("reorders lists with the inbox always first and one event", async () => {
+    const { core } = await setup();
+    const a = await core.createTaskList("A");
+    const b = await core.createTaskList("B");
+    const c = await core.createTaskList("C");
+    const names = async () => (await core.listTaskLists()).map((l) => l.name).join(",");
+    const events: ChangedEventDto[] = [];
+    core.onChange((e) => events.push(e));
+    await core.moveTaskList(c.id, { before: a.id });
+    expect(await names()).toBe("Inbox,C,A,B");
+    await core.moveTaskList(c.id, { after: b.id });
+    expect(await names()).toBe("Inbox,A,B,C");
+    await core.moveTaskList(a.id, {});
+    expect(await names()).toBe("Inbox,B,C,A");
+    await Promise.resolve();
+    expect(events).toEqual([
+      { tasks: [], lists: [c.id] },
+      { tasks: [], lists: [c.id] },
+      { tasks: [], lists: [a.id] },
+    ]);
+    const inbox = (await core.listTaskLists())[0];
+    await expect(core.moveTaskList(inbox.id, {})).rejects.toMatchObject({ kind: "validation" });
+    await expect(core.moveTaskList(a.id, { before: inbox.id })).rejects.toMatchObject({ kind: "validation" });
+    const d = await core.createTaskList("D");
+    expect(await names(), "neue Liste ans Ende").toBe("Inbox,B,C,A,D");
+    expect(d.sortKey > (await core.listTaskLists())[3].sortKey).toBe(true);
+  });
 });

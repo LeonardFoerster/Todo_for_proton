@@ -8,6 +8,7 @@ export type { DueDto } from "./generated/DueDto";
 export type { ErrorDto } from "./generated/ErrorDto";
 export type { ErrorKind } from "./generated/ErrorKind";
 export type { LocalDayDto } from "./generated/LocalDayDto";
+export type { MoveListTargetDto } from "./generated/MoveListTargetDto";
 export type { MoveTargetDto } from "./generated/MoveTargetDto";
 export type { PageDto } from "./generated/PageDto";
 export type { PageRequestDto } from "./generated/PageRequestDto";

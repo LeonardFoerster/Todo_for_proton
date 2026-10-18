@@ -12,6 +12,7 @@
     "allow-list-task-lists",
     "allow-create-task-list",
     "allow-rename-task-list",
+    "allow-move-task-list",
     "allow-delete-task-list",
     "allow-create-task",
     "allow-get-task",

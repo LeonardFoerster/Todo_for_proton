@@ -61,6 +61,7 @@ pub fn builder<R: Runtime>(base: tauri::Builder<R>, options: Options) -> tauri::
         commands::list_task_lists,
         commands::create_task_list,
         commands::rename_task_list,
+        commands::move_task_list,
         commands::delete_task_list,
         commands::create_task,
         commands::get_task,

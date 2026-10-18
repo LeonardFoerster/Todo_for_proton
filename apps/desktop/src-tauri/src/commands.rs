@@ -3,7 +3,7 @@
 //! **Sync-Auslöser (ADR-022):** Genau die schreibenden Commands melden nach Erfolg **einmal**
 //! `state.sync.local_change()` – der Scheduler lädt dann nach 1,5 s Ruhe hoch, bei einer Serie
 //! spätestens 5 s nach der ersten Änderung:
-//! - Listen: `create_task_list`, `rename_task_list`, `delete_task_list`
+//! - Listen: `create_task_list`, `rename_task_list`, `move_task_list` (Reihenfolge), `delete_task_list`
 //! - Tasks: `create_task`, `update_task` (Titel, Notizen, Priorität, Fälligkeit), `complete_task`
 //!   (abhaken/öffnen), `move_task` (Liste/Reihenfolge), `delete_task`
 //! - Sammelaktionen (ein Aufruf = eine Meldung): `complete_tasks`, `delete_tasks`, `move_tasks`,
@@ -14,8 +14,8 @@
 
 use tauri::State;
 use todo_core::api::dto::{
-    CreateTaskDto, MoveTargetDto, PageDto, PageRequestDto, TaskDto, TaskListDto, TaskPatchDto,
-    TaskQueryDto, TaskSummaryDto,
+    CreateTaskDto, MoveListTargetDto, MoveTargetDto, PageDto, PageRequestDto, TaskDto, TaskListDto,
+    TaskPatchDto, TaskQueryDto, TaskSummaryDto,
 };
 use todo_sync::SchedulerEvent;
 
@@ -53,6 +53,17 @@ pub async fn rename_task_list(
     name: String,
 ) -> Result<TaskListDto> {
     let list = state.api.rename_task_list(id, name).await?;
+    state.sync.local_change();
+    Ok(list)
+}
+
+#[tauri::command]
+pub async fn move_task_list(
+    state: State<'_, AppState>,
+    id: String,
+    target: MoveListTargetDto,
+) -> Result<TaskListDto> {
+    let list = state.api.move_task_list(id, target).await?;
     state.sync.local_change();
     Ok(list)
 }

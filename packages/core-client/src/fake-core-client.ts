@@ -6,6 +6,7 @@ import type {
   CreateTaskDto,
   DueDto,
   LocalDayDto,
+  MoveListTargetDto,
   MoveTargetDto,
   PageDto,
   PageRequestDto,
@@ -75,12 +76,7 @@ export class FakeCoreClient implements CoreClient {
       return { ...inbox };
     });
 
-  listTaskLists = () =>
-    this.run(() =>
-      [...this.lists.values()]
-        .sort((a, b) => cmp(a.sortKey, b.sortKey) || cmp(a.id, b.id))
-        .map((l) => ({ ...l })),
-    );
+  listTaskLists = () => this.run(() => this.orderedLists().map((l) => ({ ...l })));
 
   createTaskList = (name: string) =>
     this.run(() => {
@@ -88,10 +84,37 @@ export class FakeCoreClient implements CoreClient {
         id: this.newId(),
         name: validName(name, LIST_NAME_MAX, "list name"),
         isInbox: false,
-        sortKey: `b${String(this.lists.size).padStart(6, "0")}`,
+        sortKey: listKey(this.userLists().length + 1),
       };
       this.lists.set(list.id, list);
       this.emit([], [list.id]);
+      return { ...list };
+    });
+
+  moveTaskList = (id: string, target: MoveListTargetDto) =>
+    this.run(() => {
+      const list = this.list(id);
+      if (list.isInbox) throw new CoreClientError("validation", "the inbox cannot be moved");
+      if (target.after === id || target.before === id) {
+        throw new CoreClientError("validation", "a list cannot be its own neighbour");
+      }
+      const rest = this.userLists().filter((l) => l.id !== id);
+      const index = (nid: string | null | undefined) => {
+        if (nid == null) return -1;
+        const i = rest.findIndex((l) => l.id === nid);
+        if (i < 0) throw new CoreClientError("validation", `${nid} is not a movable list`);
+        return i;
+      };
+      const ai = index(target.after);
+      const bi = index(target.before);
+      if (target.after != null && target.before != null && bi !== ai + 1) {
+        throw new CoreClientError("validation", "neighbours are not adjacent");
+      }
+      const at = target.after != null ? ai + 1 : target.before != null ? bi : rest.length;
+      rest.splice(at, 0, list);
+      // Fake: Schlüssel neu durchnummerieren (der Core ändert nur den der verschobenen Liste).
+      rest.forEach((l, i) => (l.sortKey = listKey(i + 1)));
+      this.emit([], [id]);
       return { ...list };
     });
 
@@ -439,6 +462,17 @@ export class FakeCoreClient implements CoreClient {
     return [lo, lo + 2];
   }
 
+  /** Eingang zuerst, dann Benutzerlisten nach Sort-Key (wie `CoreApi::list_task_lists`). */
+  private orderedLists(): TaskListDto[] {
+    return [...this.lists.values()].sort(
+      (a, b) => Number(b.isInbox) - Number(a.isInbox) || cmp(a.sortKey, b.sortKey) || cmp(a.id, b.id),
+    );
+  }
+
+  private userLists(): TaskListDto[] {
+    return this.orderedLists().filter((l) => !l.isInbox);
+  }
+
   private list(id: string): TaskListDto {
     const list = this.lists.get(id);
     if (!list) throw new CoreClientError("notFound", `not found: list ${id}`);
@@ -486,6 +520,11 @@ function checkBulk(n: number) {
   if (n > BULK_LIMIT_MAX) {
     throw new CoreClientError("validation", `at most ${BULK_LIMIT_MAX} tasks per call, got ${n}`);
   }
+}
+
+/** Sortierbarer Listen-Schlüssel des Fakes (n ≥ 1). */
+function listKey(n: number): string {
+  return `b${String(n).padStart(6, "0")}`;
 }
 
 function cmp(a: string, b: string): number {

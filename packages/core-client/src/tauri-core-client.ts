@@ -32,6 +32,7 @@ export class TauriCoreClient implements CoreClient {
   createTaskList: CoreClient["createTaskList"] = (name) => invoke("create_task_list", { name });
   renameTaskList: CoreClient["renameTaskList"] = (id, name) =>
     invoke("rename_task_list", { id, name });
+  moveTaskList: CoreClient["moveTaskList"] = (id, target) => invoke("move_task_list", { id, target });
   deleteTaskList: CoreClient["deleteTaskList"] = (id) => invoke("delete_task_list", { id });
 
   createTask: CoreClient["createTask"] = (input) => invoke("create_task", { input });

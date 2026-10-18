@@ -130,6 +130,31 @@ fn lists_and_validation_errors() {
 }
 
 #[test]
+fn reorders_lists_with_the_inbox_first() {
+    let h = harness();
+    let inbox = h.ok("ensure_inbox", json!({}));
+    let a = h.ok("create_task_list", json!({ "name": "A" }));
+    let b = h.ok("create_task_list", json!({ "name": "B" }));
+    let moved = h.ok(
+        "move_task_list",
+        json!({ "id": b["id"], "target": { "before": a["id"] } }),
+    );
+    assert_eq!(moved["name"], "B");
+    let names: Vec<String> = h
+        .ok("list_task_lists", json!({}))
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["name"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(names, ["Inbox", "B", "A"]);
+    let err = h
+        .invoke("move_task_list", json!({ "id": inbox["id"], "target": {} }))
+        .unwrap_err();
+    assert_eq!(err["kind"], "validation");
+}
+
+#[test]
 fn sync_and_auth_without_keyring() {
     let h = harness();
     let status = h.ok("sync_status", json!({}));

@@ -3,6 +3,7 @@ import type {
   AuthStepDto,
   ChangedEventDto,
   CreateTaskDto,
+  MoveListTargetDto,
   MoveTargetDto,
   PageDto,
   PageRequestDto,
@@ -45,6 +46,8 @@ export interface CoreClient {
   listTaskLists(): Promise<TaskListDto[]>;
   createTaskList(name: string): Promise<TaskListDto>;
   renameTaskList(id: string, name: string): Promise<TaskListDto>;
+  /** Liste unter den Benutzerlisten umsortieren (Eingang bleibt vorn, ADR-023). */
+  moveTaskList(id: string, target: MoveListTargetDto): Promise<TaskListDto>;
   /** Liefert die Anzahl der in die Inbox verschobenen Tasks. */
   deleteTaskList(id: string): Promise<number>;
 
