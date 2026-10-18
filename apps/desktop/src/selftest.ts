@@ -21,6 +21,14 @@ async function until<T>(what: string, probe: () => T | null | undefined | false,
   }
 }
 
+async function untilAsync(what: string, probe: () => Promise<boolean>, timeoutMs = 3000): Promise<void> {
+  const end = performance.now() + timeoutMs;
+  while (!(await probe())) {
+    if (performance.now() > end) throw new Error(`timeout: ${what}`);
+    await sleep(50);
+  }
+}
+
 const heading = () => document.querySelector("h1")?.textContent?.trim();
 
 function byRole(role: string, name: string | RegExp): HTMLElement | null {
@@ -741,13 +749,8 @@ const p0sel: Step[] = [
     `Liste „Auswahl“ mit ${SELECT_N} Tasks`,
     async (client) => {
       const list = await client.createTaskList("Auswahl");
-      for (let i = 0; i < SELECT_N; i += 50) {
-        await Promise.all(
-          Array.from({ length: Math.min(50, SELECT_N - i) }, (_, j) =>
-            client.createTask({ title: `W${String(i + j + 1).padStart(3, "0")}`, listId: list.id }),
-          ),
-        );
-      }
+      // Nacheinander: parallele Aufrufe vergäben gleiche Sort-Keys (FIX-10), die Reihenfolge wäre zufällig.
+      for (let i = 1; i <= SELECT_N; i++) await client.createTask({ title: `W${String(i).padStart(3, "0")}`, listId: list.id });
       location.hash = `#/list/${list.id}`;
       await until("h1 Auswahl", () => heading() === "Auswahl");
       await row("W001");
@@ -881,10 +884,243 @@ const p0sel: Step[] = [
         gets.restore();
       }
     },
+  ],  [
+    "Alt+↓ verschiebt den Auswahlblock (verstreut → zusammengezogen)",
+    async (client) => {
+      const moves = countCalls(client, "moveTasks");
+      try {
+        if (!multiselectable()) await click("button", "Auswählen");
+        for (const t of ["W001", "W003"]) (await row(t)).click();
+        key(focused(), "ArrowDown", { altKey: true });
+        await until("Block", () => visibleTitles(5) === "W002,W004,W001,W003,W005");
+        await untilAsync("gespeichert", async () => (await titlesOf(client, "Auswahl")).slice(0, 5).join() === "W002,W004,W001,W003,W005");
+        if (moves.calls !== 1) throw new Error(`${moves.calls} moveTasks`);
+        return visibleTitles(5);
+      } finally {
+        moves.restore();
+      }
+    },
+  ],
+  [
+    "Ziehen am Griff zieht den Block (Badge „2“)",
+    async (client) => {
+      const grip = (await row("W001")).querySelector<HTMLElement>(".grip")!;
+      const g = grip.getBoundingClientRect();
+      const top = document.querySelector('[role="listbox"]')!.getBoundingClientRect().top;
+      const at = (y: number) => ({ bubbles: true, cancelable: true, button: 0, clientX: g.left + 4, clientY: y, pointerId: 1 });
+      grip.dispatchEvent(new PointerEvent("pointerdown", at(g.top + g.height / 2)));
+      dispatchEvent(new PointerEvent("pointermove", at(top + 2)));
+      await frame();
+      await frame();
+      const badge = document.querySelector(".drag-badge")?.textContent;
+      dispatchEvent(new PointerEvent("pointerup", at(top + 2)));
+      await until("abgelegt", () => visibleTitles(5) === "W001,W003,W002,W004,W005");
+      await untilAsync("gespeichert", async () => (await titlesOf(client, "Auswahl")).slice(0, 5).join() === "W001,W003,W002,W004,W005");
+      key(focused(), "Escape");
+      if (badge !== "2") throw new Error(`Badge ${badge}`);
+      return visibleTitles(5);
+    },
   ],
 ];
 
-const SUITES: Record<string, Step[]> = { p002, p0sel, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
+// P0-07: Messung – Repaint nach Klick/Umschalt+↓ mit vielen ausgewählten, Leerlauf im Modus,
+// „Alle auswählen“ mit 10 000 Tasks. `IDLE_START`/`IDLE_END` markieren das Leerlauf-Fenster für die
+// CPU-Messung von außen.
+async function createMany(client: CoreClient, name: string, n: number): Promise<string> {
+  const list = await client.createTaskList(name);
+  for (let i = 0; i < n; i += 100) {
+    await Promise.all(
+      Array.from({ length: Math.min(100, n - i) }, (_, j) => client.createTask({ title: `${name} ${i + j + 1}`, listId: list.id })),
+    );
+  }
+  return list.id;
+}
+
+/** Zeit bis zum ersten Frame nach `act`, `runs` Mal; `act` liefert, worauf vor dem Frame gewartet wird. */
+async function repaint(runs: number, act: (i: number) => Promise<void> | void): Promise<string> {
+  const times: number[] = [];
+  for (let i = 0; i < runs; i++) {
+    await frame();
+    const t0 = performance.now();
+    await act(i);
+    times.push((await frame()) - t0);
+  }
+  const s = stats(times);
+  if (s.p95 > 50) throw new Error(`p95 ${s.p95.toFixed(1)} ms > 50 ms`);
+  return `p50 ${s.p50.toFixed(1)} / p95 ${s.p95.toFixed(1)} / max ${s.max.toFixed(1)} ms`;
+}
+
+/** Klick auf eine sichtbare Zeile im Modus; wartet (ohne Polling), bis ihr `aria-selected` umspringt. */
+async function toggleRow(i: number) {
+  const rows = [...document.querySelectorAll<HTMLElement>('[role="option"]')];
+  const target = rows[2 + (i % 8)];
+  const changed = new Promise<void>((resolve) => {
+    const obs = new MutationObserver(() => {
+      obs.disconnect();
+      resolve();
+    });
+    obs.observe(target, { attributes: true, attributeFilter: ["aria-selected"] });
+  });
+  clickWith(target);
+  await changed;
+}
+
+/** Leerlauf-Fenster für die CPU-Messung von außen (`NAME_START`/`NAME_END`). */
+async function idle(name: string, ms = 30_000) {
+  mark(`${name}_START`);
+  await sleep(ms);
+  mark(`${name}_END`);
+}
+
+const p0perf: Step[] = [
+  [
+    "1 000 Tasks in „Messung“",
+    async (client) => {
+      const id = await createMany(client, "Messung", 1000);
+      location.hash = `#/list/${id}`;
+      await until("h1", () => heading() === "Messung");
+      await until("Zeilen", () => document.querySelectorAll('[role="option"]').length > 0);
+    },
+  ],
+  ["Leerlauf ohne Modus (30 s, Vergleich)", async () => idle("IDLE_BASE")],
+  [
+    "Strg+A: 1 000 ausgewählt",
+    async () => {
+      (document.querySelector<HTMLElement>('[role="option"]'))!.focus();
+      const t0 = performance.now();
+      key(focused(), "a", { ctrlKey: true });
+      await until("1000", () => selectionCount() === 1000, 5000);
+      return `${((await frame()) - t0).toFixed(0)} ms bis Frame`;
+    },
+  ],
+  ["Klick schaltet um, bis Repaint (1 000 ausgewählt)", async () => repaint(20, toggleRow)],
+  [
+    "Umschalt+↓ bis Repaint (1 000 ausgewählt)",
+    async () => {
+      (document.querySelector<HTMLElement>('[role="option"]'))!.focus();
+      return repaint(20, () => key(focused(), "ArrowDown", { shiftKey: true }));
+    },
+  ],
+  [
+    "Leerlauf im Auswahlmodus (30 s)",
+    async () => {
+      await idle("IDLE_MODE");
+      if (!multiselectable()) throw new Error("Modus verlassen");
+      key(focused(), "Escape");
+    },
+  ],
+];
+
+const p0perf10k: Step[] = [
+  [
+    "10 000 Tasks in „Zehntausend“",
+    async (client) => {
+      const t0 = performance.now();
+      const id = await createMany(client, "Zehntausend", 10_000);
+      location.hash = `#/list/${id}`;
+      await until("h1", () => heading() === "Zehntausend", 10_000);
+      await until("Zeilen", () => document.querySelectorAll('[role="option"]').length > 0);
+      return `${((performance.now() - t0) / 1000).toFixed(0)} s angelegt`;
+    },
+  ],
+  [
+    "Alle auswählen mit 10 000 (lädt 9 800 nach)",
+    async () => {
+      (document.querySelector<HTMLElement>('[role="option"]'))!.focus();
+      const t0 = performance.now();
+      key(focused(), "a", { ctrlKey: true });
+      await until("10000", () => selectionCount() === 10_000, 30_000);
+      return `${((await frame()) - t0).toFixed(0)} ms bis Frame`;
+    },
+  ],
+  ["Klick schaltet um, bis Repaint (10 000 ausgewählt)", async () => repaint(10, toggleRow)],
+  [
+    "Esc beendet den Modus",
+    async () => {
+      key(focused(), "Escape");
+      await until("aus", () => !multiselectable());
+    },
+  ],
+];
+
+// P0-06/P0-07: Sammelaktionen über zwei Profile (tools/acceptance-two-devices.sh, Abschnitt 5).
+const SAMMEL = "Sammel";
+const ZIEL = "Ziel";
+
+async function p0state(client: CoreClient): Promise<string> {
+  const titles = async (name: string) => (await allIn(client, await listId(client, name))).map((t) => t.title);
+  const [a, z] = [await titles(SAMMEL), await titles(ZIEL)];
+  return `${SAMMEL} ${a.length}: ${a.join(" ")} · ${ZIEL} ${z.length}: ${z.join(" ")}`;
+}
+
+async function shiftDown(n: number) {
+  for (let i = 0; i < n; i++) key(focused(), "ArrowDown", { shiftKey: true });
+  await frame();
+}
+
+const p0bulkA: Step[] = [
+  [
+    `Listen „${SAMMEL}“ (200 Tasks) und „${ZIEL}“`,
+    async (client) => {
+      const list = await client.createTaskList(SAMMEL);
+      await client.createTaskList(ZIEL);
+      // Nacheinander: parallele Aufrufe vergäben gleiche Sort-Keys (FIX-10).
+      for (let i = 1; i <= 200; i++) await client.createTask({ title: `S${String(i).padStart(3, "0")}`, listId: list.id });
+      location.hash = `#/list/${list.id}`;
+      await until(`h1 ${SAMMEL}`, () => heading() === SAMMEL);
+      await row("S001");
+    },
+  ],
+  [
+    "50 per Umschalt+↓ auswählen und löschen",
+    async () => {
+      const first = await row("S001");
+      first.focus();
+      first.click();
+      key(focused(), "Escape");
+      await shiftDown(49);
+      await until("50", () => selectionCount() === 50);
+      key(focused(), "Delete");
+      await until("S051 oben", () => visibleTitles(1) === "S051");
+    },
+  ],
+  [
+    `50 nach „${ZIEL}“ verschieben (M)`,
+    async () => {
+      const first = await row("S051");
+      first.focus();
+      first.click();
+      await shiftDown(49);
+      await until("50", () => selectionCount() === 50);
+      key(focused(), "m");
+      await click("menuitem", ZIEL);
+      await until("S101 oben", () => visibleTitles(1) === "S101");
+    },
+  ],
+  [
+    "Block S101+S103 mit Alt+↓ umsortieren",
+    async () => {
+      for (const t of ["S101", "S103"]) (await row(t)).click();
+      await until("2", () => selectionCount() === 2);
+      key(focused(), "ArrowDown", { altKey: true });
+      await until("Block", () => visibleTitles(5) === "S102,S104,S101,S103,S105");
+      key(focused(), "Escape");
+    },
+  ],
+  ["Hochgeladen", async (client) => syncedNow(client)],
+  ["Zustand", async (client) => p0state(client)],
+];
+
+const p0bulkB: Step[] = [
+  ["Synchronisiert", async (client) => syncedNow(client)],
+  ["Zustand", async (client) => p0state(client)],
+];
+
+/** Neustart ohne Sync: Zustand aus der lokalen Datenbank. */
+const p0bulkLocal: Step[] = [["Zustand", async (client) => p0state(client)]];
+
+
+const SUITES: Record<string, Step[]> = { p002, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
   p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */

@@ -8,6 +8,7 @@
 #
 # Aufruf:  tools/acceptance-two-devices.sh [AUSGABE-ORDNER]
 # Fenster öffnen sich sichtbar (keine Eingaben am Desktop nötig). Dauer: ~3–5 min.
+# Abschnitt 5 (P0-07): Sammelaktionen der Mehrfachauswahl über beide Profile.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -137,6 +138,22 @@ rm "$REMOTE/.auth-revoked"
 run A p802sync
 run B p802sync
 "$CLI" --db "$OUT/B/tasks.db" ls | grep -q "Ohne Sitzung"; check "nach erneuter Anmeldung: B sieht die lokal angelegte Task" $?
+
+say ""
+say "== 5. Mehrfachauswahl: A löscht und verschiebt je 50, sortiert einen Block um → B gleich, Neustart A gleich =="
+run A p0bulkA
+passed A p0bulkA; check "A: Sammel-Löschen, -Verschieben und Block-Umsortieren über die UI" $?
+run B p0bulkB
+run A p0bulkLocal
+a=$(state A p0bulkA)
+b=$(state B p0bulkB)
+r=$(state A p0bulkLocal)
+say "  A: ${a:0:120}…"
+say "  B: ${b:0:120}…"
+[ -n "$a" ] && [ "$a" = "$b" ]; check "B sieht dasselbe wie A (Reihenfolge, Listen)" $?
+[ "$a" = "$r" ]; check "nach Neustart von A unverändert" $?
+[[ $a == "Sammel 100: S102 S104 S101 S103 S105 "* ]]; check "50 gelöscht, Block S101+S103 hinter S104" $?
+[[ $a == *"· Ziel 50: S051 S052 "* ]]; check "50 in „Ziel“, Reihenfolge erhalten" $?
 
 say ""
 if [ $failures -eq 0 ]; then say "ERGEBNIS: alle Prüfungen bestanden"; else say "ERGEBNIS: $failures Prüfung(en) fehlgeschlagen"; fi
