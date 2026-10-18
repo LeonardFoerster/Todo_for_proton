@@ -22,7 +22,7 @@ danach die Web-App (`development/roadmap-next.md`).
 | Pfad | Inhalt |
 |---|---|
 | `AGENTS.md` | Diese Datei – Regeln & Kontext |
-| `development/` | **Alle** Architektur-, Planungs- und Entscheidungsdokumente (gitignored) |
+| `development/` | **Alle** Architektur-, Planungs- und Entscheidungsdokumente (gitignored; eigenes lokales Git-Repo ohne Remote – Doku-Änderungen dort committen) |
 | `crates/todo-core/` | Domain-Modell, Use-Cases, **Port-Traits** (Interfaces), Sync-Modell (HLC, Ops, Merge). Kein IO. |
 | `crates/todo-sync/` | Sync-Engine (Segmente, Push/Pull, Scheduler, Snapshots). Spricht nur mit Ports. |
 | `crates/todo-storage-sqlite/` | `TaskRepository`-Implementierung mit SQLite (nativ) |
