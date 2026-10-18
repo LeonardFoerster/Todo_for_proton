@@ -92,3 +92,25 @@ fn full_flow_persists_across_restart() {
     );
     assert!(lists[0].is_inbox);
 }
+
+/// FIX-10: Parallele `create_task` (wie `Promise.all` im Selbsttest) bekommen verschiedene
+/// Sort-Keys. Der Datenbank-Thread lässt die Aufrufe tatsächlich ineinander laufen.
+#[test]
+fn parallel_creates_get_distinct_sort_keys() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let api = api(&dir.path().join("todo.sqlite3"));
+    let creates = (0..50).map(|i| {
+        api.create_task(CreateTaskDto {
+            title: format!("T{i}"),
+            list_id: None,
+        })
+    });
+    let tasks = block_on(futures::future::join_all(creates));
+    let mut keys: Vec<String> = tasks
+        .into_iter()
+        .map(|t| t.expect("create").sort_key)
+        .collect();
+    keys.sort();
+    keys.dedup();
+    assert_eq!(keys.len(), 50, "doppelte Sort-Keys");
+}

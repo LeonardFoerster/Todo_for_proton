@@ -44,6 +44,7 @@ macro_rules! repository_contract_tests {
             page_of_limit_plus_one,
             paging_visits_all_in_sort_order,
             equal_sort_keys_ordered_by_id,
+            last_sort_key_of_list,
             rejects_invalid_limit_and_cursor,
             filter_inbox_and_list,
             filter_today_and_upcoming,
@@ -96,6 +97,7 @@ pub fn run_all<R: TaskRepository>(make: impl Fn() -> R) {
     page_of_limit_plus_one(make());
     paging_visits_all_in_sort_order(make());
     equal_sort_keys_ordered_by_id(make());
+    last_sort_key_of_list(make());
     rejects_invalid_limit_and_cursor(make());
     filter_inbox_and_list(make());
     filter_today_and_upcoming(make());
@@ -447,6 +449,33 @@ pub fn equal_sort_keys_ordered_by_id<R: TaskRepository>(repo: R) {
     let mut expected = [a.id(), b.id()];
     expected.sort();
     assert_eq!(f.ids(all(), 1), expected);
+}
+
+pub fn last_sort_key_of_list<R: TaskRepository>(repo: R) {
+    let f = setup(repo);
+    assert_eq!(block_on(f.repo.last_sort_key(f.work.id())).unwrap(), None);
+    assert_eq!(
+        block_on(f.repo.last_sort_key(TaskListId::new())).unwrap(),
+        None
+    );
+
+    // Mehr als eine Seite, gespeichert in gemischter Reihenfolge; die letzte ist erledigt.
+    let mut tasks = f.add_tasks(f.work.id(), PAGE_LIMIT_MAX as usize + 3);
+    tasks.reverse();
+    let mut last = tasks[0].clone();
+    last.complete(&f.clock);
+    f.save(&[last.clone()]);
+    f.add_tasks(f.inbox.id(), 1);
+    assert_eq!(
+        block_on(f.repo.last_sort_key(f.work.id()))
+            .unwrap()
+            .as_ref(),
+        Some(last.sort_key())
+    );
+    assert_eq!(
+        block_on(f.repo.last_sort_key(f.inbox.id())).unwrap(),
+        Some(SortKey::first())
+    );
 }
 
 pub fn rejects_invalid_limit_and_cursor<R: TaskRepository>(repo: R) {

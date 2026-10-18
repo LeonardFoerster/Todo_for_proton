@@ -23,7 +23,7 @@ use crate::{
         MoveTasksInput, RenameTaskList, RenameTaskListInput, ReopenTask, ReopenTaskInput,
         RestoreTasks, RestoreTasksInput, TaskPatch, UpdateTask, UpdateTaskInput,
     },
-    domain::{DeviceId, Task, TaskId, TaskList, TaskListId, TaskParts},
+    domain::{DeviceId, SortKey, Task, TaskId, TaskList, TaskListId, TaskParts},
     ports::{
         ChangeSet, Clock, CommitReceipt, EntityRef, MaybeSend, MaybeSync, Page, PageRequest,
         TaskQuery, TaskRepository, TaskSummary,
@@ -404,6 +404,10 @@ impl TaskRepository for NotifyingRepository {
         page: PageRequest,
     ) -> CoreResult<Page<TaskSummary>> {
         self.inner.list_tasks(query, page).await
+    }
+
+    async fn last_sort_key(&self, list_id: TaskListId) -> CoreResult<Option<SortKey>> {
+        self.inner.last_sort_key(list_id).await
     }
 
     async fn commit(&self, changes: ChangeSet) -> CoreResult<CommitReceipt> {

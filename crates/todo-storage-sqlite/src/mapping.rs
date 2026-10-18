@@ -137,6 +137,11 @@ pub(crate) fn read_summary(row: &Row<'_>) -> CoreResult<TaskSummary> {
     })
 }
 
+/// Liest einen Sort-Key aus Spalte `index`.
+pub(crate) fn read_sort_key(row: &Row<'_>, index: usize) -> CoreResult<SortKey> {
+    sort_key(&get::<String>(row, index)?)
+}
+
 fn get<T: rusqlite::types::FromSql>(row: &Row<'_>, index: usize) -> CoreResult<T> {
     row.get(index).map_err(storage)
 }

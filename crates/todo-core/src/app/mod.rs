@@ -21,6 +21,8 @@ mod update_task;
 
 use std::{fmt, sync::Arc};
 
+use futures::lock::{Mutex, MutexGuard};
+
 pub use complete_task::{CompleteTask, CompleteTaskInput};
 pub use complete_tasks::{CompleteTasks, CompleteTasksInput};
 pub use create_task::{CreateTask, CreateTaskInput};
@@ -43,17 +45,31 @@ use crate::{
     CoreError, CoreResult,
 };
 
-/// Gemeinsame Abhängigkeiten aller Use-Cases. Günstig zu klonen.
+/// Gemeinsame Abhängigkeiten aller Use-Cases. Günstig zu klonen; Klone teilen sich die
+/// Reihenfolge-Sperre (FIX-10).
 #[derive(Clone)]
 pub struct Deps {
     pub repo: Arc<dyn TaskRepository>,
     pub clock: Arc<dyn Clock>,
+    order: Arc<Mutex<()>>,
 }
 
 impl Deps {
     #[must_use]
     pub fn new(repo: Arc<dyn TaskRepository>, clock: Arc<dyn Clock>) -> Self {
-        Self { repo, clock }
+        Self {
+            repo,
+            clock,
+            order: Arc::default(),
+        }
+    }
+
+    /// Serialisiert Use-Cases, die eine Reihenfolge lesen und darauf neue Sort-Keys committen
+    /// (anlegen, verschieben, Liste löschen). Ohne die Sperre lesen parallele Aufrufe denselben
+    /// Stand und vergeben dieselben Keys (FIX-10). Die Sperre hält bis zum Ende des Commits;
+    /// Use-Cases darunter (z. B. `EnsureInbox`) nehmen sie nicht erneut.
+    pub(crate) async fn lock_order(&self) -> MutexGuard<'_, ()> {
+        self.order.lock().await
     }
 }
 

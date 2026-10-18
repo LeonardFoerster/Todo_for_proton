@@ -323,6 +323,25 @@ pub trait TaskRepository: MaybeSend + MaybeSync {
         page: PageRequest,
     ) -> CoreResult<Page<TaskSummary>>;
 
+    /// Größter Sort-Key der Tasks (offen und erledigt) in `list_id`; `None` für eine leere oder
+    /// unbekannte Liste. Grundlage für „ans Ende anhängen" (FIX-03). Standard: alle Seiten von
+    /// [`TaskRepository::list_tasks`] – Speicher mit Index überschreiben das mit einer Abfrage.
+    async fn last_sort_key(&self, list_id: TaskListId) -> CoreResult<Option<SortKey>> {
+        let query = TaskQuery::view(SmartView::List(list_id));
+        let mut page = PageRequest::first(PAGE_LIMIT_MAX);
+        let mut last = None;
+        loop {
+            let result = self.list_tasks(&query, page).await?;
+            if let Some(item) = result.items.into_iter().last() {
+                last = Some(item.sort_key);
+            }
+            match result.next_cursor {
+                Some(cursor) => page = PageRequest::after(cursor, PAGE_LIMIT_MAX),
+                None => return Ok(last),
+            }
+        }
+    }
+
     /// Wendet alle Änderungen atomar an (alles oder nichts), in der angegebenen Reihenfolge.
     /// Dieselbe Transaktion schreibt die zugehörigen Ops in die Outbox und schreibt Register und
     /// HLC fort ([`crate::sync::record_local`]). Änderungen an gelöschten Entities (Tombstone)

@@ -1,9 +1,9 @@
 //! Neue Task anlegen.
 
-use super::{collect_all, key_after, Deps, EnsureInbox};
+use super::{key_after, Deps, EnsureInbox};
 use crate::{
     domain::{Task, TaskListId},
-    ports::{ChangeSet, SmartView, TaskQuery},
+    ports::ChangeSet,
     CoreError, CoreResult,
 };
 
@@ -30,6 +30,7 @@ impl CreateTask {
     /// `CoreError::Validation` bei ungültigem Titel, `CoreError::NotFound` für eine unbekannte
     /// Liste; Fehler des Repositories.
     pub async fn execute(&self, input: CreateTaskInput) -> CoreResult<Task> {
+        let _order = self.deps.lock_order().await;
         let repo = self.deps.repo.as_ref();
         let list_id = match input.list_id {
             Some(id) => repo
@@ -39,8 +40,7 @@ impl CreateTask {
                 .id(),
             None => EnsureInbox::new(self.deps.clone()).execute().await?.id(),
         };
-        let existing = collect_all(repo, &TaskQuery::view(SmartView::List(list_id))).await?;
-        let key = key_after(existing.iter().map(|s| &s.sort_key).max())?;
+        let key = key_after(repo.last_sort_key(list_id).await?.as_ref())?;
         let task = Task::new(list_id, &input.title, key, self.deps.clock.as_ref())?;
         repo.commit(ChangeSet::new().upsert_task(task.clone()))
             .await?;
@@ -53,7 +53,10 @@ mod tests {
     use futures::executor::block_on;
 
     use super::*;
-    use crate::app::{test_util::deps, CreateTaskList, CreateTaskListInput};
+    use crate::{
+        app::{collect_all, test_util::deps, CreateTaskList, CreateTaskListInput},
+        ports::{SmartView, TaskQuery},
+    };
 
     fn create(uc: &CreateTask, title: &str, list_id: Option<TaskListId>) -> CoreResult<Task> {
         block_on(uc.execute(CreateTaskInput {

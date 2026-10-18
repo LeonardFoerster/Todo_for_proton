@@ -166,7 +166,7 @@ fn main() {
         Some(ms(2)),
     );
 
-    // --- Use-Cases über CoreApi (laden die Zielliste komplett, siehe P3-06) --------------------
+    // --- Use-Cases über CoreApi (create: nur letzter Key; move mit Nachbar: ganze Liste, FIX-11) -
     let api = CoreApi::new(repo.clone(), Arc::new(SystemClock));
     let first = tasks[0].id().to_string();
     report(

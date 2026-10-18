@@ -35,6 +35,7 @@ impl DeleteTaskList {
     /// `CoreError::NotFound` für unbekannte Listen, `CoreError::Validation` für die Inbox;
     /// Fehler des Repositories.
     pub async fn execute(&self, input: DeleteTaskListInput) -> CoreResult<DeleteTaskListOutput> {
+        let _order = self.deps.lock_order().await;
         let repo = self.deps.repo.as_ref();
         let list = repo
             .get_task_list(input.id)
@@ -45,8 +46,7 @@ impl DeleteTaskList {
         }
         let inbox = EnsureInbox::new(self.deps.clone()).execute().await?;
 
-        let inbox_tasks = collect_all(repo, &TaskQuery::view(SmartView::Inbox)).await?;
-        let mut last_key = inbox_tasks.last().map(|s| s.sort_key.clone());
+        let mut last_key = repo.last_sort_key(inbox.id()).await?;
         let to_move = collect_all(repo, &TaskQuery::view(SmartView::List(list.id()))).await?;
 
         let mut changes = ChangeSet::new();

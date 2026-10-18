@@ -43,6 +43,7 @@ impl MoveTask {
     /// Nachbarn außerhalb der Zielliste, die Task selbst als Nachbarn oder vertauschte
     /// Nachbarn; Fehler des Repositories.
     pub async fn execute(&self, input: MoveTaskInput) -> CoreResult<Task> {
+        let _order = self.deps.lock_order().await;
         let repo = self.deps.repo.as_ref();
         let mut task = load_task(repo, input.id).await?;
         let list_id = input.list_id.unwrap_or(task.list_id());

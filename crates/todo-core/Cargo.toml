@@ -7,8 +7,8 @@ description = "Domain, Use-Cases und Ports (Interfaces). Kein IO."
 
 [dependencies]
 async-trait.workspace = true
-# Nur für `testing` (Feature test-support): synchrone Ausführung der Contract-Tests.
-futures = { workspace = true, optional = true }
+# `lock::Mutex` (Reihenfolge-Sperre der Use-Cases, FIX-10); `executor` für die Contract-Tests.
+futures.workspace = true
 chrono.workspace = true
 # Kanonisches Binärformat der Sync-Ops (Outbox, Segmente, Snapshots), ADR-016.
 postcard.workspace = true
@@ -18,7 +18,7 @@ uuid.workspace = true
 
 [features]
 # Test-Doubles (z. B. `FixedClock`, `SteppingClock`) für Tests anderer Crates.
-test-support = ["dep:futures"]
+test-support = []
 
 [lints]
 workspace = true

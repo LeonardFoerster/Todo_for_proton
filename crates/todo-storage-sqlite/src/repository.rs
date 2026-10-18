@@ -4,7 +4,7 @@ use std::path::Path;
 
 use rusqlite::{params_from_iter, Connection, TransactionBehavior};
 use todo_core::{
-    domain::{DeviceId, Task, TaskId, TaskList, TaskListId},
+    domain::{DeviceId, SortKey, Task, TaskId, TaskList, TaskListId},
     ports::{
         Change, ChangeSet, CommitReceipt, EntityRef, Page, PageRequest, SmartView, TaskQuery,
         TaskRepository, TaskSummary, PAGE_LIMIT_MAX,
@@ -17,7 +17,8 @@ use crate::{
     connection::Database,
     error::{corrupt, storage},
     mapping::{
-        read_list, read_summary, read_task, write_list, write_task, LIST_COLUMNS, TASK_COLUMNS,
+        read_list, read_sort_key, read_summary, read_task, write_list, write_task, LIST_COLUMNS,
+        TASK_COLUMNS,
     },
     query::{list_tasks_sql, Position},
     sync_store::{self, SqliteReplica},
@@ -157,6 +158,25 @@ impl TaskRepository for SqliteTaskRepository {
                     Position::of(&items[limit - 1], &query.view).encode()
                 });
                 Ok(Page { items, next_cursor })
+            })
+            .await
+    }
+
+    async fn last_sort_key(&self, list_id: TaskListId) -> CoreResult<Option<SortKey>> {
+        self.db
+            .call(move |conn| {
+                // Index `tasks_by_list` (list_id, sort_key, id): ein Indexzugriff statt O(n).
+                let mut stmt = conn
+                    .prepare_cached(
+                        "SELECT sort_key FROM tasks WHERE list_id = ?1 \
+                         ORDER BY sort_key DESC, id DESC LIMIT 1",
+                    )
+                    .map_err(storage)?;
+                let mut rows = stmt.query([list_id.to_string()]).map_err(storage)?;
+                rows.next()
+                    .map_err(storage)?
+                    .map(|row| read_sort_key(row, 0))
+                    .transpose()
             })
             .await
     }
@@ -353,6 +373,9 @@ mod tests {
             page: PageRequest,
         ) -> CoreResult<Page<TaskSummary>> {
             self.repo.list_tasks(query, page).await
+        }
+        async fn last_sort_key(&self, list_id: TaskListId) -> CoreResult<Option<SortKey>> {
+            self.repo.last_sort_key(list_id).await
         }
         async fn commit(&self, changes: ChangeSet) -> CoreResult<CommitReceipt> {
             self.repo.commit(changes).await

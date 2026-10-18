@@ -41,6 +41,7 @@ impl MoveTaskList {
     /// Liste oder Nachbar), die Liste als eigenen Nachbarn, unbekannte oder vertauschte Nachbarn;
     /// Fehler des Repositories.
     pub async fn execute(&self, input: MoveTaskListInput) -> CoreResult<TaskList> {
+        let _order = self.deps.lock_order().await;
         let repo = self.deps.repo.as_ref();
         let clock = self.deps.clock.as_ref();
         let lists = repo.list_task_lists().await?;

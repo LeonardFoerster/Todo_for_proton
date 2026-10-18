@@ -23,6 +23,7 @@ impl CreateTaskList {
     /// # Errors
     /// `CoreError::Validation` bei ungültigem Namen; Fehler des Repositories.
     pub async fn execute(&self, input: CreateTaskListInput) -> CoreResult<TaskList> {
+        let _order = self.deps.lock_order().await;
         let lists = self.deps.repo.list_task_lists().await?;
         let key = key_after(lists.last().map(TaskList::sort_key))?;
         let list = TaskList::new(&input.name, key, self.deps.clock.as_ref())?;

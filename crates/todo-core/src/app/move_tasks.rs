@@ -43,6 +43,7 @@ impl MoveTasks {
     /// Zielliste oder aus dem Block und für vertauschte Nachbarn; Fehler des Repositories.
     /// Bei jedem Fehler ist nichts geschrieben.
     pub async fn execute(&self, input: MoveTasksInput) -> CoreResult<Vec<Task>> {
+        let _order = self.deps.lock_order().await;
         let ids = bulk_ids(input.ids)?;
         let repo = self.deps.repo.as_ref();
         let mut tasks = load_existing(repo, &ids).await?;
