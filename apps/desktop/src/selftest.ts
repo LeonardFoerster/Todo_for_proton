@@ -695,7 +695,7 @@ const p002: Step[] = [
 ];
 
 // P0-04 bis P0-07: Mehrfachauswahl in der echten WebView (synthetische Ereignisse, keine Eingaben am Desktop).
-const SELECT_N = 250;
+const SELECT_N = 500;
 const multiselectable = () => document.querySelector('[role="listbox"]')?.getAttribute("aria-multiselectable") === "true";
 const selectionCount = () => Number(/(\d+) ausgewählt/.exec(document.querySelector('[role="toolbar"] [role="status"]')?.textContent ?? "")?.[1] ?? -1);
 const checkedTitles = () =>
@@ -704,6 +704,33 @@ const row = (title: string) => until(`Zeile ${title}`, () => byRole("option", ti
 
 /** Tasten gehen wie echte an das fokussierte Element (bzw. `body`). */
 const focused = (): HTMLElement => (document.activeElement as HTMLElement | null) ?? document.body;
+
+/** Zählt Aufrufe einer Client-Methode (dieselbe Instanz wie die UI). */
+function countCalls(client: CoreClient, method: "completeTasks" | "deleteTasks" | "moveTasks" | "restoreTasks" | "getTask") {
+  const original = client[method] as (...args: never[]) => Promise<unknown>;
+  const counter = { calls: 0, restore: () => void (client[method] = original as never) };
+  client[method] = ((...args: never[]) => {
+    counter.calls++;
+    return original(...args);
+  }) as never;
+  return counter;
+}
+
+/** Titel einer Liste (offen + erledigt) in Anzeigereihenfolge. */
+async function titlesOf(client: CoreClient, name: string): Promise<string[]> {
+  const list = (await client.listTaskLists()).find((l) => l.name === name)!;
+  const titles: string[] = [];
+  let cursor: string | null = null;
+  do {
+    const page = await client.listTasks({ view: { kind: "list", listId: list.id } }, { cursor, limit: 500 });
+    titles.push(...page.items.map((t) => t.title));
+    cursor = page.nextCursor;
+  } while (cursor);
+  return titles;
+}
+
+const visibleTitles = (n: number) =>
+  [...document.querySelectorAll<HTMLElement>('[role="option"]')].slice(0, n).map((o) => o.getAttribute("aria-label")).join(",");
 
 function clickWith(el: HTMLElement, init: MouseEventInit = {}) {
   el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...init }));
@@ -783,6 +810,76 @@ const p0sel: Step[] = [
       key(focused(), "Escape");
       await until("Modus aus", () => !multiselectable());
       return `${ms.toFixed(0)} ms`;
+    },
+  ],  [
+    "E erledigt die Auswahl (1 Aufruf), Rückgängig",
+    async (client) => {
+      const calls = countCalls(client, "completeTasks");
+      try {
+        await click("button", "Auswählen");
+        for (const t of ["W001", "W002", "W003"]) (await row(t)).click();
+        key(focused(), "e");
+        await until("erledigt", () => byRole("option", "W002, erledigt"));
+        (await until("Rückgängig", () => byRole("button", "Rückgängig"))).click();
+        await until("wieder offen", () => byRole("option", "W002"));
+        if (calls.calls !== 2) throw new Error(`${calls.calls} Aufrufe`);
+        return "1 Aufruf + 1 Rückgängig";
+      } finally {
+        calls.restore();
+      }
+    },
+  ],
+  [
+    "M verschiebt verstreute Auswahl, Rückgängig an alte Stellen",
+    async (client) => {
+      const calls = countCalls(client, "moveTasks");
+      try {
+        key(focused(), "a", { ctrlKey: true });
+        await until("alle", () => selectionCount() === SELECT_N, 5000);
+        key(focused(), "a", { ctrlKey: true });
+        for (const t of ["W002", "W004"]) (await row(t)).click();
+        key(focused(), "m");
+        await click("menuitem", "Eingang");
+        await until("weg", () => visibleTitles(3) === "W001,W003,W005");
+        if (calls.calls !== 1) throw new Error(`${calls.calls} Aufrufe beim Verschieben`);
+        (await until("Rückgängig", () => byRole("button", "Rückgängig"))).click();
+        await until("zurück", () => visibleTitles(5) === "W001,W002,W003,W004,W005", 5000);
+        return `Rückgängig mit ${calls.calls - 1} Aufrufen`;
+      } finally {
+        calls.restore();
+      }
+    },
+  ],
+  [
+    `${SELECT_N} löschen: 1 Aufruf, sofort leer, Rückgängig an alter Stelle`,
+    async (client) => {
+      const deletes = countCalls(client, "deleteTasks");
+      const gets = countCalls(client, "getTask");
+      try {
+        const before = await titlesOf(client, "Auswahl");
+        key(focused(), "a", { ctrlKey: true });
+        await until("alle", () => selectionCount() === SELECT_N, 5000);
+        const t0 = performance.now();
+        key(focused(), "Delete");
+        await frame();
+        const empty = document.querySelectorAll('[role="option"]').length === 0;
+        const painted = performance.now() - t0;
+        if (!empty) throw new Error("Liste nicht sofort leer");
+        await until("Toast", () => byRole("button", "Rückgängig"));
+        if (deletes.calls !== 1) throw new Error(`${deletes.calls} deleteTasks`);
+        (await until("Rückgängig", () => byRole("button", "Rückgängig"))).click();
+        await until("zurück", () => visibleTitles(3) === "W001,W002,W003", 8000);
+        const after = await titlesOf(client, "Auswahl");
+        if (after.length !== SELECT_N || after.join() !== before.join()) {
+          const i = after.findIndex((t, j) => t !== before[j]);
+          throw new Error(`${after.length} zurück, erste Abweichung an ${i}: ${before[i]} → ${after[i]}`);
+        }
+        key(focused(), "Escape");
+        return `leer nach ${painted.toFixed(0)} ms, ${gets.calls} getTask`;
+      } finally {
+        deletes.restore();
+        gets.restore();
+      }
     },
   ],
 ];

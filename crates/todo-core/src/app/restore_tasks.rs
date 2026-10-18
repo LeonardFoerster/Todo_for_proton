@@ -51,15 +51,26 @@ impl RestoreTasks {
             .map(TaskList::id)
             .collect();
         let now = self.deps.clock.now();
+        // Neue IDs in der alten Anzeigereihenfolge vergeben (UUIDv7 ist im Prozess monoton): So
+        // bleibt die Reihenfolge auch zwischen Tasks mit gleichem Sort-Key (Tiebreak `TaskId`).
+        let mut order: Vec<usize> = (0..input.tasks.len()).collect();
+        order.sort_by(|&a, &b| {
+            let (a, b) = (&input.tasks[a], &input.tasks[b]);
+            (&a.sort_key, a.id).cmp(&(&b.sort_key, b.id))
+        });
+        let mut ids: Vec<Option<TaskId>> = vec![None; input.tasks.len()];
+        for i in order {
+            ids[i] = Some(TaskId::new());
+        }
         let mut restored = Vec::with_capacity(input.tasks.len());
-        for parts in input.tasks {
+        for (parts, id) in input.tasks.into_iter().zip(ids.into_iter().flatten()) {
             let mut list_id = parts.list_id;
             if !lists.contains(&list_id) {
                 list_id = EnsureInbox::new(self.deps.clone()).execute().await?.id();
                 lists.insert(list_id);
             }
             restored.push(Task::from_parts(TaskParts {
-                id: TaskId::new(),
+                id,
                 list_id,
                 updated_at: now,
                 ..parts
@@ -83,7 +94,7 @@ mod tests {
         app::{
             collect_all, test_util::deps, CompleteTask, CompleteTaskInput, CreateTask,
             CreateTaskInput, CreateTaskList, CreateTaskListInput, DeleteTaskList,
-            DeleteTaskListInput, DeleteTasks, DeleteTasksInput, TaskPatch, UpdateTask,
+            DeleteTaskListInput, DeleteTasks, DeleteTasksInput, EnsureInbox, TaskPatch, UpdateTask,
             UpdateTaskInput, BULK_LIMIT_MAX,
         },
         domain::{Due, NaiveDate, Priority},
@@ -174,6 +185,49 @@ mod tests {
         .map(|s| s.title)
         .collect();
         assert_eq!(order, ["a", "b", "c"], "alte Position");
+    }
+
+    /// Gleiche Sort-Keys (parallel angelegt, Sync) ordnet die `TaskId`; die neuen IDs müssen die
+    /// alte Reihenfolge fortsetzen, auch wenn die Eingabe anders sortiert ist.
+    #[test]
+    fn keeps_order_among_equal_sort_keys() {
+        let (deps, repo) = deps();
+        let clock = crate::ports::FixedClock(crate::domain::Timestamp::from_millis(5));
+        let key = crate::domain::SortKey::first();
+        let mut tasks: Vec<Task> = (0..20)
+            .map(|i| {
+                Task::new(TaskListId::INBOX, &format!("t{i:02}"), key.clone(), &clock).unwrap()
+            })
+            .collect();
+        tasks.sort_by_key(Task::id);
+        block_on(EnsureInbox::new(deps.clone()).execute()).unwrap();
+        let mut changes = ChangeSet::new();
+        for t in &tasks {
+            changes.push(Change::UpsertTask(t.clone()));
+        }
+        block_on(repo.commit(changes)).unwrap();
+        let titles = || -> Vec<String> {
+            block_on(collect_all(
+                repo.as_ref(),
+                &TaskQuery::view(SmartView::Inbox),
+            ))
+            .unwrap()
+            .into_iter()
+            .map(|s| s.title)
+            .collect()
+        };
+        let before = titles();
+
+        let mut deleted = block_on(DeleteTasks::new(deps.clone()).execute(DeleteTasksInput {
+            ids: tasks.iter().map(Task::id).collect(),
+        }))
+        .unwrap();
+        deleted.reverse();
+        block_on(RestoreTasks::new(deps).execute(RestoreTasksInput {
+            tasks: deleted.iter().map(parts).collect(),
+        }))
+        .unwrap();
+        assert_eq!(titles(), before);
     }
 
     #[test]

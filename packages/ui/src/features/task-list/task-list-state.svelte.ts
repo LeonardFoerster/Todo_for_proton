@@ -6,6 +6,8 @@ import { compareInView, inView, shownInView, type ViewContext } from "./view-mat
 const PAGE_SIZE = 200;
 /** Wie im Core (`PAGE_LIMIT_MAX`). */
 const PAGE_LIMIT_MAX = 500;
+/** Ab so vielen IDs in einem Änderungs-Event die geladenen Seiten neu holen statt je ID `getTask`. */
+const REFRESH_BATCH = 20;
 
 export function toSummary(t: TaskDto): TaskSummaryDto {
   return {
@@ -38,6 +40,8 @@ export class TaskListState {
   /** Index für `byId`, gültig für genau dieses `items`-Array. */
   private index = new Map<string, TaskSummaryDto>();
   private indexed: TaskSummaryDto[] | null = null;
+  private reloading: Promise<void> | null = null;
+  private reloadQueued = false;
 
   constructor(
     private readonly client: CoreClient,
@@ -101,8 +105,52 @@ export class TaskListState {
   /** Abo auf Core-Änderungen; gibt die Abmeldung zurück. */
   attach(): () => void {
     return this.client.onChange((e) => {
-      for (const id of e.tasks) void this.refresh(id);
+      if (e.tasks.length > REFRESH_BATCH) void this.reload();
+      else for (const id of e.tasks) void this.refresh(id);
     });
+  }
+
+  /**
+   * Holt die bisher geladenen Zeilen neu (Sammelaktion, großer Sync): wenige `listTasks` statt n
+   * `getTask`. Gedimmt stehende Erledigte bleiben an ihrer Stelle, Ausgeblendete draußen. Aufrufe
+   * während eines Neuladens werden zu einem weiteren Durchgang zusammengefasst.
+   */
+  reload(): Promise<void> {
+    if (this.reloading) {
+      this.reloadQueued = true;
+      return this.reloading;
+    }
+    this.reloading = (async () => {
+      try {
+        do {
+          this.reloadQueued = false;
+          await this.fetchLoaded();
+        } while (this.reloadQueued);
+      } finally {
+        this.reloading = null;
+      }
+    })();
+    return this.reloading;
+  }
+
+  private async fetchLoaded(): Promise<void> {
+    const want = Math.max(this.items.length, PAGE_SIZE);
+    const query = routeQuery(this.ctx().route);
+    const fetched: TaskSummaryDto[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await this.client.listTasks(query, { cursor, limit: PAGE_LIMIT_MAX });
+      fetched.push(...page.items);
+      cursor = page.nextCursor;
+    } while (cursor && fetched.length < want);
+    const ctx = this.ctx();
+    const fresh = new Set(fetched.map((t) => t.id));
+    const linger = this.items.filter((t) => this.lingering.has(t.id) && !fresh.has(t.id) && inView(t, ctx));
+    let items = fetched.filter((t) => !this.hidden.has(t.id));
+    if (linger.length > 0) items = [...items, ...linger].sort((a, b) => compareInView(a, b, ctx.route));
+    this.items = items;
+    this.cursor = cursor;
+    this.loaded = true;
   }
 
   /** Lädt eine Task neu und pflegt sie ein (oder aus). */
@@ -150,15 +198,42 @@ export class TaskListState {
     return task;
   }
 
-  /** Ausblenden (z. B. Löschen mit Rückgängig) bzw. wieder einblenden. */
-  hide(id: string): void {
-    this.hidden.add(id);
-    this.remove(id);
+  /** Optimistisch abhaken/öffnen (Sammelaktion, ein neues Array); liefert die Zeilen davor. */
+  setDoneMany(ids: readonly string[], done: boolean): TaskSummaryDto[] {
+    const set = new Set(ids);
+    const before: TaskSummaryDto[] = [];
+    const at = done ? new Date().toISOString() : null;
+    this.items = this.items.map((t) => {
+      if (!set.has(t.id) || t.status === (done ? "done" : "open")) return t;
+      before.push(t);
+      if (done) this.lingering.add(t.id);
+      return { ...t, status: done ? "done" : "open", completedAt: at };
+    });
+    return before;
   }
 
-  unhide(id: string): void {
-    this.hidden.delete(id);
-    void this.refresh(id);
+  /** Zeilen auf einen früheren Stand zurücksetzen (fehlgeschlagene Aktion). */
+  replaceMany(tasks: readonly TaskSummaryDto[]): void {
+    const byId = new Map(tasks.map((t) => [t.id, t]));
+    this.items = this.items.map((t) => byId.get(t.id) ?? t);
+  }
+
+  /** Aus der Ansicht nehmen (ohne Merken – ein späteres Event kann sie zurückbringen). */
+  removeMany(ids: readonly string[]): void {
+    const set = new Set(ids);
+    this.items = this.items.filter((t) => !set.has(t.id));
+  }
+
+  /** Ausblenden (Löschen mit Rückgängig): bleiben draußen, auch wenn ein Event sie meldet. */
+  hide(ids: readonly string[]): void {
+    for (const id of ids) this.hidden.add(id);
+    this.removeMany(ids);
+  }
+
+  /** Wieder einblenden (Löschen fehlgeschlagen). */
+  async unhide(ids: readonly string[]): Promise<void> {
+    for (const id of ids) this.hidden.delete(id);
+    await this.reload();
   }
 
   /** Optimistisch an Einfügeposition `to` (Index vor dem Entfernen) schieben; liefert die Nachbarn. */

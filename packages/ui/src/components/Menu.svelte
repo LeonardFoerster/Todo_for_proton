@@ -2,6 +2,8 @@
   import type { IconComponent } from "../icons";
 
   export interface MenuItem {
+    /** Eindeutiger Schlüssel, falls Beschriftungen doppelt vorkommen können (z. B. Listennamen). */
+    id?: string;
     label: string;
     icon?: IconComponent;
     /** Rechtsbündig gedimmt, z. B. „Entf“. */
@@ -77,7 +79,7 @@
   style:top="{top}px"
   {onkeydown}
 >
-  {#each items as item (item.label)}
+  {#each items as item (item.id ?? item.label)}
     <button
       type="button"
       role="menuitem"

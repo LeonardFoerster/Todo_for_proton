@@ -5,12 +5,12 @@
   import Menu, { type MenuItem } from "../../components/Menu.svelte";
   import { toasts } from "../../components/toasts.svelte";
   import VirtualList from "../../components/VirtualList.svelte";
-  import { ArrowDown, ArrowUp, CircleCheck, PanelRight, Plus, Trash, Undo } from "../../icons";
+  import { ArrowDown, ArrowUp, CircleCheck, FolderInput, Hash, Inbox, PanelRight, Plus, Trash, Undo } from "../../icons";
   import { useCoreClient } from "../../lib/context";
   import type { ListsState } from "../../lib/lists.svelte";
   import { localDay } from "../../lib/local-day";
   import type { Route } from "../../lib/router.svelte";
-  import { deleteWithUndo } from "../../lib/task-actions";
+  import { completeManyWithUndo, deleteManyWithUndo, moveManyWithUndo } from "../../lib/task-actions";
   import { listName, routeIcon, SMART_VIEWS } from "../../lib/views";
   import { SelectionState } from "./selection.svelte";
   import { TaskListState, toSummary } from "./task-list-state.svelte";
@@ -50,6 +50,7 @@
   let list = $state<VirtualList<TaskSummaryDto>>();
   let drag = $state<{ id: string; from: number; to: number } | null>(null);
   let menu = $state<{ task: TaskSummaryDto; x: number; y: number } | null>(null);
+  let moveMenu = $state<{ x: number; y: number } | null>(null);
 
   onMount(() => {
     const detach = rows.attach();
@@ -98,6 +99,9 @@
     selection.count === 0 ? "none" : !rows.hasMore && selection.count >= rows.items.length ? "all" : "some",
   );
 
+  /** Offene bzw. erledigte Tasks in der Auswahl (Aktionsleiste). */
+  const flags = $derived(selection.flags((id) => rows.byId(id)));
+
   // Zeilen, die die Ansicht verlassen (Sync, Löschen, Verschieben), fallen aus der Auswahl – ein
   // Effekt über die ganze Menge, nicht pro Zeile.
   $effect(() => {
@@ -145,6 +149,10 @@
 
   export function selectionAll(): "none" | "some" | "all" {
     return allState;
+  }
+
+  export function selectionFlags(): { hasOpen: boolean; hasDone: boolean } {
+    return flags;
   }
 
   /** Alle Tasks der Ansicht (fehlende Seiten werden nachgeladen) bzw. – sind es schon alle – keine. */
@@ -251,18 +259,119 @@
 
   // --- Löschen & Menü --------------------------------------------------------------------------
 
-  export async function deleteTask(task: TaskSummaryDto | undefined = rows.items.find((t) => t.id === selectedId)) {
-    if (!task) return;
-    const i = rows.items.findIndex((t) => t.id === task.id);
-    const neighbours = { afterId: rows.items[i - 1]?.id, beforeId: rows.items[i + 1]?.id };
-    // Auswahl auf die nächste Zeile setzen, damit Entf mehrfach hintereinander geht.
-    const next = rows.items[i + 1] ?? rows.items[i - 1];
-    if (selectedId === task.id) selectedId = next?.id ?? null;
-    rows.remove(task.id);
-    await deleteWithUndo(client, task.id, neighbours);
+  // --- Sammelaktionen (ein Core-Aufruf je Aktion, Rückgängig im Toast) -------------------------
+
+  /** Ausgewählte Zeilen in Anzeigereihenfolge („Alle auswählen“ lädt vorher alle Seiten). */
+  const selectedRows = () => rows.items.filter((t) => selection.has(t.id));
+  const tasks = (n: number) => (n === 1 ? "1 Task" : `${n} Tasks`);
+
+  /** Cursor von Zeilen weg, die gleich verschwinden: nächste verbliebene, sonst vorige. */
+  function moveCursorAway(gone: ReadonlySet<string>) {
+    if (!selectedId || !gone.has(selectedId)) return;
+    const i = rows.items.findIndex((t) => t.id === selectedId);
+    const next =
+      rows.items.slice(i + 1).find((t) => !gone.has(t.id)) ??
+      rows.items
+        .slice(0, i)
+        .reverse()
+        .find((t) => !gone.has(t.id));
+    selectedId = next?.id ?? null;
   }
 
-  function menuItems(task: TaskSummaryDto): MenuItem[] {
+  /** Optimistisch ausblenden, löschen; bei Fehler wieder einblenden (FIX-08). */
+  async function deleteMany(targets: readonly TaskSummaryDto[]) {
+    if (targets.length === 0) return;
+    const ids = targets.map((t) => t.id);
+    moveCursorAway(new Set(ids));
+    rows.hide(ids);
+    if (await deleteManyWithUndo(client, ids)) selection.clear();
+    else await rows.unhide(ids);
+    void focusSelected();
+  }
+
+  export async function deleteTask(task: TaskSummaryDto | undefined = rows.items.find((t) => t.id === selectedId)) {
+    if (task) await deleteMany([task]);
+  }
+
+  export async function deleteSelected() {
+    await deleteMany(selectedRows());
+  }
+
+  /** Alle ausgewählten abhaken (`done`) bzw. wieder öffnen. */
+  export async function completeSelected(done: boolean) {
+    const ids = selectedRows()
+      .filter((t) => t.status !== (done ? "done" : "open"))
+      .map((t) => t.id);
+    if (ids.length === 0) return;
+    const before = rows.setDoneMany(ids, done);
+    if (!(await completeManyWithUndo(client, ids, done))) rows.replaceMany(before);
+  }
+
+  /** `E` im Modus: offene abhaken, sonst erledigte wieder öffnen. */
+  export function completeOrReopenSelected() {
+    if (flags.hasOpen) void completeSelected(true);
+    else if (flags.hasDone) void completeSelected(false);
+  }
+
+  /** Liste, deren Tasks diese Ansicht zeigt (Liste/Eingang); in Sammelansichten keine. */
+  const currentList = () => (view.view === "list" ? view.listId : view.view === "inbox" ? lists.inbox?.id : undefined);
+
+  export async function moveSelectedTo(listId: string) {
+    const targets = selectedRows().filter((t) => t.listId !== listId);
+    if (targets.length === 0) return;
+    const ids = targets.map((t) => t.id);
+    // Aus einer Listenansicht verschwinden sie; Sammelansichten zeigen nur den neuen Listennamen.
+    const leaving = currentList() !== undefined;
+    if (leaving) {
+      moveCursorAway(new Set(ids));
+      rows.removeMany(ids);
+      selection.clear();
+    }
+    const name = names.get(listId) ?? "Liste";
+    const moved = await moveManyWithUndo(client, targets, { listId }, `nach „${name}“ verschoben`);
+    if (!moved && leaving) await rows.reload();
+  }
+
+  /** „Verschieben nach…“ an Position (Viewport) öffnen. */
+  export function openMoveMenu(x: number, y: number) {
+    if (selection.count > 0) moveMenu = { x, y };
+  }
+
+  function moveItems(): MenuItem[] {
+    const current = currentList();
+    const ordered = [...lists.lists].sort((a, b) => Number(b.isInbox) - Number(a.isInbox));
+    return ordered.map((l) => ({
+      id: l.id,
+      label: listName(l),
+      icon: l.isInbox ? Inbox : Hash,
+      disabled: l.id === current,
+      action: () => void moveSelectedTo(l.id),
+    }));
+  }
+
+  function bulkMenuItems(at: { x: number; y: number }): MenuItem[] {
+    const n = tasks(selection.count);
+    const items: MenuItem[] = [];
+    if (flags.hasOpen) {
+      items.push({ label: `${n} erledigen`, icon: CircleCheck, shortcut: "E", action: () => void completeSelected(true) });
+    }
+    if (flags.hasDone) {
+      items.push({
+        label: `${n} wieder öffnen`,
+        icon: Undo,
+        shortcut: flags.hasOpen ? undefined : "E",
+        action: () => void completeSelected(false),
+      });
+    }
+    items.push(
+      { label: "Verschieben nach…", icon: FolderInput, shortcut: "M", action: () => openMoveMenu(at.x, at.y) },
+      { label: `${n} löschen`, icon: Trash, shortcut: "Entf", danger: true, action: () => void deleteSelected() },
+    );
+    return items;
+  }
+
+  function menuItems(task: TaskSummaryDto, at: { x: number; y: number }): MenuItem[] {
+    if (selection.active && selection.has(task.id)) return bulkMenuItems(at);
     const i = rows.items.findIndex((t) => t.id === task.id);
     const done = task.status === "done";
     return [
@@ -296,7 +405,7 @@
     const task = row && rows.items.find((t) => t.id === row.dataset.taskId);
     if (!task) return;
     e.preventDefault();
-    selectedId = task.id;
+    if (!selection.active || !selection.has(task.id)) selectedId = task.id;
     menu = { task, x: e.clientX, y: e.clientY };
   }
 
@@ -357,7 +466,16 @@
 </div>
 
 {#if menu}
-  <Menu label="Aktionen für {menu.task.title}" items={menuItems(menu.task)} x={menu.x} y={menu.y} onclose={() => (menu = null)} />
+  <Menu
+    label={selection.active && selection.has(menu.task.id) ? `Aktionen für ${tasks(selection.count)}` : `Aktionen für ${menu.task.title}`}
+    items={menuItems(menu.task, menu)}
+    x={menu.x}
+    y={menu.y}
+    onclose={() => (menu = null)}
+  />
+{/if}
+{#if moveMenu}
+  <Menu label="Verschieben nach" items={moveItems()} x={moveMenu.x} y={moveMenu.y} onclose={() => (moveMenu = null)} />
 {/if}
 
 <style>

@@ -10,7 +10,7 @@
   import SelectionBar from "./features/task-list/SelectionBar.svelte";
   import TaskList from "./features/task-list/TaskList.svelte";
   import ShortcutHelp from "./features/shell/ShortcutHelp.svelte";
-  import { Keyboard, ListChecks, PanelLeft, Settings } from "./icons";
+  import { CircleCheck, FolderInput, Keyboard, ListChecks, PanelLeft, Settings, Trash, Undo } from "./icons";
   import type SettingsDialogType from "./features/account/SettingsDialog.svelte";
   import { setCoreClient } from "./lib/context";
   import { ListsState } from "./lib/lists.svelte";
@@ -20,7 +20,7 @@
   import { SyncState } from "./lib/sync.svelte";
   import { todayPlus } from "./lib/format-date";
   import { routeListId, routeTitle } from "./lib/views";
-  import { deleteWithUndo } from "./lib/task-actions";
+  import { deleteManyWithUndo } from "./lib/task-actions";
   import { followSystemTheme } from "./theme/theme";
   import "./tokens/tokens.css";
 
@@ -134,7 +134,7 @@
     const task = taskList?.items().find((t) => t.id === id);
     openId = null;
     if (task && taskList) void taskList.deleteTask(task);
-    else void deleteWithUndo(client, id);
+    else void deleteManyWithUndo(client, [id]);
   }
 
   // --- Tastatur (ui-guidelines §5) -------------------------------------------------------------
@@ -161,6 +161,14 @@
   const hasList = () => !!taskList && taskList.items().length > 0;
   const selected = () => taskList?.items().find((t) => t.id === selectedId);
   const selecting = () => !!selection?.active;
+  const hasSelection = () => selecting() && (selection?.count ?? 0) > 0;
+
+  /** „Verschieben nach…“ unter dem Button der Aktionsleiste öffnen (auch per `M`). */
+  function openMoveMenu() {
+    const button = document.querySelector<HTMLElement>("[data-move-button]");
+    const rect = button?.getBoundingClientRect();
+    taskList?.openMoveMenu(rect?.left ?? 0, (rect?.bottom ?? 0) + 4);
+  }
 
   /** Auswahl verschieben; ohne Auswahl die erste bzw. letzte Zeile. */
   function selectBy(delta: -1 | 1) {
@@ -251,6 +259,21 @@
       run: () => taskList?.toggleCursor(),
     },
     {
+      keys: ["e"],
+      description: "Ausgewählte erledigen bzw. wieder öffnen",
+      group: "Auswahl",
+      when: hasSelection,
+      run: () => taskList?.completeOrReopenSelected(),
+    },
+    {
+      keys: ["delete"],
+      description: "Ausgewählte löschen (mit Rückgängig)",
+      group: "Auswahl",
+      when: hasSelection,
+      run: () => void taskList?.deleteSelected(),
+    },
+    { keys: ["m"], description: "Ausgewählte verschieben nach…", group: "Auswahl", when: hasSelection, run: openMoveMenu },
+    {
       keys: ["shift+arrowdown"],
       description: "Auswahl nach unten erweitern",
       group: "Auswahl",
@@ -297,12 +320,45 @@
       </span>
       <h1 id="view-title">{title}</h1>
       {#if selection?.active && taskList}
+        {@const flags = taskList.selectionFlags()}
         <SelectionBar
           all={taskList.selectionAll()}
           count={selection.count}
           ontoggleall={() => void taskList?.toggleAll()}
           ondone={() => taskList?.exitSelection()}
-        />
+        >
+          {#snippet actions()}
+            <IconButton
+              label="Erledigt"
+              shortcut="E"
+              icon={CircleCheck}
+              disabled={!flags.hasOpen}
+              onclick={() => void taskList?.completeSelected(true)}
+            />
+            <IconButton
+              label="Wieder öffnen"
+              shortcut={flags.hasOpen ? undefined : "E"}
+              icon={Undo}
+              disabled={!flags.hasDone}
+              onclick={() => void taskList?.completeSelected(false)}
+            />
+            <IconButton
+              label="Verschieben nach…"
+              shortcut="M"
+              icon={FolderInput}
+              disabled={selection.count === 0}
+              data-move-button
+              onclick={openMoveMenu}
+            />
+            <IconButton
+              label="Löschen"
+              shortcut="Entf"
+              icon={Trash}
+              disabled={selection.count === 0}
+              onclick={() => void taskList?.deleteSelected()}
+            />
+          {/snippet}
+        </SelectionBar>
       {:else}
         <span class="header-actions">
           <IconButton

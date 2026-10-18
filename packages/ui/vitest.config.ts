@@ -9,5 +9,8 @@ export default defineConfig({
     include: ["src/**/*.test.ts"],
     environment: "jsdom",
     setupFiles: ["src/test-setup.ts"],
+    // UI-Tests mit Hunderten Zeilen (Mehrfachauswahl) brauchen einzeln < 1 s, unter Volllast
+    // (parallele Pakete, andere Jobs) aber mehr als die Standard-5 s.
+    testTimeout: 15_000,
   },
 });

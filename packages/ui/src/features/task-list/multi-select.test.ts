@@ -30,7 +30,10 @@ const checked = () =>
     .filter((o) => o.getAttribute("aria-selected") === "true")
     .map((o) => o.getAttribute("aria-label"))
     .join("");
-const status = () => screen.queryByRole("status")?.textContent?.trim();
+const status = () => {
+  const bar = screen.queryByRole("toolbar", { name: "Auswahl" });
+  return bar ? within(bar).getByRole("status").textContent?.trim() : undefined;
+};
 
 describe("multi-select mode", () => {
   it("toggles via the header button and leaves with Fertig or Esc", async () => {
