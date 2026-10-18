@@ -10,7 +10,10 @@ Eine schnelle, ressourcenschonende Task-/Todo-App, die Aufgaben **offline-first*
 an Proton Mail/Drive (ruhig, dicht, gute Dark/Light-Unterstützung), ist aber eine eigene Umsetzung.
 Reihenfolge der Plattformen: **1. Arch Linux nativ (Tauri 2)**, **2. Web**, **3. Android (später)**.
 
-Status: **Planungs-/Skeleton-Phase.** Es gibt noch keinen Feature-Code.
+Status: **Prototyp (v0.1.0, 2026-10-18).** Desktop-App (Linux) mit lokalem Speicher, Login per Browser und Sync über
+Proton Drive ist abgenommen (automatisierter Zwei-Geräte-Lauf; Live-Teil über Proton offen, siehe
+`development/prototype-acceptance.md`); nächste Etappe ist die Web-App
+(`development/roadmap-next.md`).
 
 ## 2. Wo was liegt
 
@@ -31,13 +34,15 @@ Status: **Planungs-/Skeleton-Phase.** Es gibt noch keinen Feature-Code.
 | `apps/web/` | Web-Einstieg (Vite + Svelte), Core läuft als WASM im Web Worker |
 | `packages/ui/` | Gemeinsame Svelte-5-Komponenten + Design-Tokens |
 | `packages/core-client/` | TS-Interface `CoreClient` + Implementierungen (Tauri-IPC / WASM-Worker) |
+| `tools/` | Mess- und Abnahmeskripte (`measure-desktop.sh`, `acceptance-two-devices.sh`) |
 
 Detaildokumente in `development/`:
-`roadmap.md` (**geordnete Arbeitsliste bis zum Prototypen – hier steht, was als Nächstes zu tun ist**),
+`roadmap-next.md` (**geordnete Arbeitsliste nach dem Prototyp – hier steht, was als Nächstes zu tun ist**),
+`roadmap.md` (abgeschlossene Liste bis zum Prototyp, mit Notizen zu jeder Aufgabe), `prototype-acceptance.md`,
 `architecture.md`, `module-structure.md`, `interfaces.md`, `ui-guidelines.md`,
 `sync-strategy.md`, `tech-decisions.md` (ADR-Log + offene Spikes), `future-android.md`.
 
-**Session-Start:** In `development/roadmap.md` die erste offene Aufgabe (`[ ]`) suchen, ihre Vorab-Lektüre lesen,
+**Session-Start:** In `development/roadmap-next.md` die erste offene Aufgabe (`[ ]`) suchen, ihre Vorab-Lektüre lesen,
 sie vollständig abarbeiten und danach abhaken (Datum + Commit-Hash). Nicht mehrere Aufgaben vermischen.
 
 **Vor jeder größeren Änderung** das passende Dokument lesen. Wenn `development/` fehlt
@@ -124,6 +129,14 @@ Die Rust-Toolchain ist über `rust-toolchain.toml` fixiert.
 | `just desktop-build` | Release-Binary der Desktop-App (`target/release/todo-desktop`) |
 | `just ts` | TS/Svelte: ESLint, Typecheck, Vitest (alle pnpm-Pakete) |
 | `just types` | TS-Typen der DTOs neu erzeugen (`packages/core-client/src/generated/`, läuft auch in `just test`) |
+| `tools/measure-desktop.sh` | Start, PSS, Leerlauf-CPU, Binary-Größe des Release-Builds (Budgets §4) |
+| `tools/acceptance-two-devices.sh` | Zwei-Geräte-Abnahme mit zwei Profilen über ein lokales Sync-Verzeichnis (Debug-Build) |
+
+Umgebung der Desktop-App: `TODO_DATA_DIR` (eigenes Profil inkl. eigenem Schlüsselbund-Eintrag),
+`TODO_WEBKIT_COMPOSITING=1` (WebKit-Compositing wieder an); nur Debug-Builds: `TODO_REMOTE_DIR` (Sync gegen ein
+Verzeichnis statt Proton), `TODO_REMOTE_DELAY_MS`, `TASKS_SELFTEST` (mit `VITE_TASKS_SELFTEST=runtime`).
+UI-Tests in der echten WebView laufen über den Dev-Selbsttest (`apps/desktop/src/selftest.ts`), nie über
+globale Eingaben (xdotool o. Ä.) am Desktop.
 
 Pre-commit-Hook aktivieren (einmal pro Clone): `git config core.hooksPath .githooks`.
 
