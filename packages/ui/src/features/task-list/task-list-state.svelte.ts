@@ -247,6 +247,29 @@ export class TaskListState {
     return { after: rest[at - 1]?.id, before: rest[at]?.id };
   }
 
+  /**
+   * Optimistisch den Block `ids` (in Anzeigereihenfolge, auch verstreut) an Einfügeposition `to`
+   * (Index vor dem Entfernen) schieben – verstreute Zeilen werden dabei zusammengezogen. Liefert
+   * die Nachbarn für `moveTasks` bzw. `null`, wenn sich nichts ändert.
+   */
+  reorderMany(ids: ReadonlySet<string>, to: number): { after?: string; before?: string } | null {
+    const block: TaskSummaryDto[] = [];
+    const rest: TaskSummaryDto[] = [];
+    let at = 0;
+    this.items.forEach((t, i) => {
+      if (ids.has(t.id)) block.push(t);
+      else {
+        if (i < to) at++;
+        rest.push(t);
+      }
+    });
+    if (block.length === 0) return null;
+    const next = [...rest.slice(0, at), ...block, ...rest.slice(at)];
+    if (next.every((t, i) => t === this.items[i])) return null;
+    this.items = next;
+    return { after: rest[at - 1]?.id, before: rest[at]?.id };
+  }
+
   replace(task: TaskSummaryDto): void {
     this.items = this.items.map((t) => (t.id === task.id ? task : t));
   }

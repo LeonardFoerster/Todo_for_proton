@@ -241,8 +241,20 @@
       when: () => !selecting() && !!selected(),
       run: () => void taskList?.deleteTask(),
     },
-    { keys: ["alt+arrowup"], description: "Nach oben verschieben", group: "Liste", when: () => !!selected(), run: () => taskList?.moveSelected(-1) },
-    { keys: ["alt+arrowdown"], description: "Nach unten verschieben", group: "Liste", when: () => !!selected(), run: () => taskList?.moveSelected(1) },
+    {
+      keys: ["alt+arrowup"],
+      description: "Nach oben verschieben",
+      group: "Liste",
+      when: () => !selecting() && !!selected(),
+      run: () => taskList?.moveSelected(-1),
+    },
+    {
+      keys: ["alt+arrowdown"],
+      description: "Nach unten verschieben",
+      group: "Liste",
+      when: () => !selecting() && !!selected(),
+      run: () => taskList?.moveSelected(1),
+    },
     {
       keys: ["ctrl+a"],
       description: "Alle auswählen (sind es schon alle: keine)",
@@ -273,6 +285,20 @@
       run: () => void taskList?.deleteSelected(),
     },
     { keys: ["m"], description: "Ausgewählte verschieben nach…", group: "Auswahl", when: hasSelection, run: openMoveMenu },
+    {
+      keys: ["alt+arrowup"],
+      description: "Auswahlblock nach oben",
+      group: "Auswahl",
+      when: hasSelection,
+      run: () => taskList?.moveSelectionBlock(-1),
+    },
+    {
+      keys: ["alt+arrowdown"],
+      description: "Auswahlblock nach unten",
+      group: "Auswahl",
+      when: hasSelection,
+      run: () => taskList?.moveSelectionBlock(1),
+    },
     {
       keys: ["shift+arrowdown"],
       description: "Auswahl nach unten erweitern",

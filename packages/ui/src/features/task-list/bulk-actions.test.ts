@@ -182,4 +182,63 @@ describe("bulk actions", () => {
     const copy = (await client.listTasks({ view: { kind: "inbox" } }, { limit: 10 })).items[2];
     expect(await client.getTask(copy.id)).toMatchObject({ notes: "Notiz", priority: "high", createdAt });
   });
+
+  describe("reordering the selection block", () => {
+    it("Alt+↑/↓ moves the block one position and gathers a scattered selection", async () => {
+      const { client, spies, user } = await setup();
+      await select(user, "B", "D");
+      await user.keyboard("{Alt>}{ArrowDown}{/Alt}");
+      expect(shown()).toEqual(["A", "C", "E", "B", "D"]);
+      await waitFor(async () => expect(await stored(client)).toEqual(["A", "C", "E", "B", "D"]));
+      expect(spies.moveTasks).toHaveBeenCalledTimes(1);
+      await user.keyboard("{Alt>}{ArrowUp}{/Alt}");
+      await waitFor(async () => expect(await stored(client)).toEqual(["A", "C", "B", "D", "E"]));
+      expect(shown()).toEqual(["A", "C", "B", "D", "E"]);
+      expect(spies.moveTasks).toHaveBeenCalledTimes(2);
+      expect(screen.getAllByText("2 Tasks verschoben").length).toBeGreaterThan(0);
+
+      await user.click((await screen.findAllByRole("button", { name: "Rückgängig" })).at(-1)!);
+      await waitFor(async () => expect(await stored(client)).toEqual(["A", "C", "E", "B", "D"]));
+    });
+
+    it("drags the selected block by the grip of one of its rows", async () => {
+      const { client, user } = await setup();
+      await select(user, "A", "C");
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+        top: 0,
+        bottom: 720,
+        left: 0,
+        right: 800,
+        height: 720,
+        width: 800,
+        x: 0,
+        y: 0,
+      } as DOMRect);
+      const grip = screen.getByRole("option", { name: "C" }).querySelector(".grip")!;
+      // Zeilen sind 36 px hoch → y = 180 ist Einfügestelle 5 (ans Ende).
+      await fireEvent.pointerDown(grip, { button: 0, clientY: 90 });
+      await fireEvent.pointerMove(window, { clientY: 180 });
+      await new Promise((r) => requestAnimationFrame(r));
+      expect(document.querySelector(".drag-badge")?.textContent).toBe("2");
+      await fireEvent.pointerUp(window, { clientY: 180 });
+      await waitFor(async () => expect(await stored(client)).toEqual(["B", "D", "E", "A", "C"]));
+      vi.restoreAllMocks();
+    });
+
+    it("is disabled outside sortable views", async () => {
+      const { client, spies, user } = await setup();
+      location.hash = "#/all";
+      await screen.findByRole("heading", { name: "Alle Tasks" });
+      await screen.findByRole("option", { name: /^A/ });
+      await select(user, "A", "B");
+      await user.keyboard("{Alt>}{ArrowDown}{/Alt}");
+      expect(spies.moveTasks).not.toHaveBeenCalled();
+      await fireEvent.contextMenu(screen.getByRole("option", { name: /^B/ }));
+      const menu = await screen.findByRole("menu");
+      const down = within(menu).getByRole("menuitem", { name: /^Nach unten/ });
+      expect(down.hasAttribute("disabled")).toBe(true);
+      expect(down.getAttribute("data-tooltip")).toMatch(/sortierbar/);
+      expect(await stored(client)).toEqual(["A", "B", "C", "D", "E"]);
+    });
+  });
 });

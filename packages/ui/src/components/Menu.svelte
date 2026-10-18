@@ -10,6 +10,8 @@
     shortcut?: string;
     danger?: boolean;
     disabled?: boolean;
+    /** Hinweis als Tooltip (z. B. warum der Eintrag deaktiviert ist). */
+    title?: string;
     action: () => void;
   }
 </script>
@@ -85,6 +87,8 @@
       role="menuitem"
       class:danger={item.danger}
       disabled={item.disabled}
+      data-tooltip={item.title}
+      data-tooltip-side={item.title ? "right" : undefined}
       onclick={() => {
         onclose();
         item.action();

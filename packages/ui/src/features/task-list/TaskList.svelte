@@ -48,7 +48,22 @@
   export const selection = new SelectionState();
 
   let list = $state<VirtualList<TaskSummaryDto>>();
-  let drag = $state<{ id: string; from: number; to: number } | null>(null);
+  /**
+   * Laufendes Ziehen. Zieht man eine ausgewählte Zeile, wandert der ganze Block (`block` = Anzahl,
+   * `x`/`y` = Zeiger für das Zähler-Badge).
+   */
+  let drag = $state<{
+    id: string;
+    from: number;
+    to: number;
+    block: number;
+    x: number;
+    y: number;
+    /** Ablegen innerhalb [first, last + 1] ändert nichts (nur bei zusammenhängendem Block). */
+    noop: [number, number] | null;
+  } | null>(null);
+  /** IDs, die gerade gezogen werden (eine Zeile oder der Auswahlblock). */
+  let dragIds = $state.raw<ReadonlySet<string>>(new Set());
   let menu = $state<{ task: TaskSummaryDto; x: number; y: number } | null>(null);
   let moveMenu = $state<{ x: number; y: number } | null>(null);
 
@@ -222,8 +237,13 @@
     const viewport = list?.element();
     if (!viewport) return;
     const from = rows.items.findIndex((t) => t.id === task.id);
-    drag = { id: task.id, from, to: from };
-    let pointerY = e.clientY;
+    const block = selection.active && selection.has(task.id) && selection.count > 1;
+    dragIds = block ? new Set(selection.ids) : new Set([task.id]);
+    const indices = block ? rows.items.flatMap((t, i) => (dragIds.has(t.id) ? [i] : [])) : [from];
+    const [first, last] = [indices[0], indices[indices.length - 1]];
+    const noop: [number, number] | null = last - first === indices.length - 1 ? [first, last + 1] : null;
+    drag = { id: task.id, from, to: from, block: dragIds.size, x: e.clientX, y: e.clientY, noop };
+    let pointer = { x: e.clientX, y: e.clientY };
     let frame = 0;
 
     const update = () => {
@@ -231,21 +251,25 @@
       const rect = viewport.getBoundingClientRect();
       // Am Rand automatisch scrollen.
       const edge = 40;
-      if (pointerY < rect.top + edge) viewport.scrollTop -= Math.ceil((rect.top + edge - pointerY) / 4);
-      else if (pointerY > rect.bottom - edge) viewport.scrollTop += Math.ceil((pointerY - rect.bottom + edge) / 4);
-      const y = pointerY - rect.top + viewport.scrollTop;
-      drag = { ...drag, to: Math.max(0, Math.min(rows.items.length, Math.round(y / ROW))) };
+      if (pointer.y < rect.top + edge) viewport.scrollTop -= Math.ceil((rect.top + edge - pointer.y) / 4);
+      else if (pointer.y > rect.bottom - edge) viewport.scrollTop += Math.ceil((pointer.y - rect.bottom + edge) / 4);
+      const y = pointer.y - rect.top + viewport.scrollTop;
+      drag = { ...drag, to: Math.max(0, Math.min(rows.items.length, Math.round(y / ROW))), ...pointer };
       frame = requestAnimationFrame(update);
     };
-    const move = (ev: PointerEvent) => (pointerY = ev.clientY);
+    const move = (ev: PointerEvent) => (pointer = { x: ev.clientX, y: ev.clientY });
     const end = (ev: PointerEvent) => {
       cancelAnimationFrame(frame);
       removeEventListener("pointermove", move);
       removeEventListener("pointerup", end);
       removeEventListener("pointercancel", end);
       const done = drag;
+      const ids = dragIds;
       drag = null;
-      if (done && ev.type === "pointerup") void moveTo(done.id, done.to);
+      dragIds = new Set();
+      if (!done || ev.type !== "pointerup") return;
+      if (done.block > 1) void moveBlockTo(ids, done.to);
+      else void moveTo(done.id, done.to);
     };
     addEventListener("pointermove", move);
     addEventListener("pointerup", end);
@@ -253,9 +277,38 @@
     frame = requestAnimationFrame(update);
   }
 
+  /** Einfügelinie nur, wenn das Ablegen etwas ändert (nicht auf dem eigenen, zusammenhängenden Block). */
   const dropLine = $derived(
-    drag && drag.to !== drag.from && drag.to !== drag.from + 1 ? drag.to * ROW : null,
+    drag && !(drag.noop && drag.to >= drag.noop[0] && drag.to <= drag.noop[1]) ? drag.to * ROW : null,
   );
+
+  // --- Auswahlblock umsortieren (P0-06) ---------------------------------------------------------
+
+  /**
+   * Block (Auswahl, auch verstreut – wird zusammengezogen) optimistisch an Einfügeposition `to`
+   * schieben und mit einem `moveTasks` speichern; Rückgängig im Toast. Bei Fehler neu laden.
+   */
+  async function moveBlockTo(ids: ReadonlySet<string>, to: number) {
+    if (!sortable) return;
+    const before = rows.items.filter((t) => ids.has(t.id));
+    const hadFocus = list?.element()?.contains(document.activeElement) ?? false;
+    const neighbours = rows.reorderMany(ids, to);
+    if (!neighbours) return;
+    if (hadFocus) void focusSelected();
+    const cursor = rows.items.findIndex((t) => t.id === selectedId);
+    if (cursor >= 0) list?.scrollToIndex(cursor);
+    const moved = await moveManyWithUndo(client, before, { listId: currentList(), ...neighbours }, "verschoben");
+    if (!moved) await rows.reload();
+  }
+
+  /** Alt+↑/↓ im Modus: Auswahlblock um eine Position (über die erste bzw. unter die letzte Zeile). */
+  export function moveSelectionBlock(delta: -1 | 1) {
+    if (!sortable || selection.count === 0) return;
+    const indices = rows.items.flatMap((t, i) => (selection.has(t.id) ? [i] : []));
+    if (indices.length === 0) return;
+    const to = delta < 0 ? Math.max(0, indices[0] - 1) : Math.min(rows.items.length, indices[indices.length - 1] + 2);
+    void moveBlockTo(new Set(selection.ids), to);
+  }
 
   // --- Löschen & Menü --------------------------------------------------------------------------
 
@@ -278,15 +331,22 @@
     selectedId = next?.id ?? null;
   }
 
+  /** Cursor-Zeile ins Bild holen und fokussieren (nach dem Entfernen vieler Zeilen). */
+  function revealCursor() {
+    const i = rows.items.findIndex((t) => t.id === selectedId);
+    if (i >= 0) list?.scrollToIndex(i);
+    void focusSelected();
+  }
+
   /** Optimistisch ausblenden, löschen; bei Fehler wieder einblenden (FIX-08). */
   async function deleteMany(targets: readonly TaskSummaryDto[]) {
     if (targets.length === 0) return;
     const ids = targets.map((t) => t.id);
     moveCursorAway(new Set(ids));
     rows.hide(ids);
+    revealCursor();
     if (await deleteManyWithUndo(client, ids)) selection.clear();
     else await rows.unhide(ids);
-    void focusSelected();
   }
 
   export async function deleteTask(task: TaskSummaryDto | undefined = rows.items.find((t) => t.id === selectedId)) {
@@ -326,6 +386,7 @@
       moveCursorAway(new Set(ids));
       rows.removeMany(ids);
       selection.clear();
+      revealCursor();
     }
     const name = names.get(listId) ?? "Liste";
     const moved = await moveManyWithUndo(client, targets, { listId }, `nach „${name}“ verschoben`);
@@ -363,8 +424,25 @@
         action: () => void completeSelected(false),
       });
     }
+    const unsortable = sortable ? undefined : "Nur im Eingang und in Listen sortierbar";
     items.push(
       { label: "Verschieben nach…", icon: FolderInput, shortcut: "M", action: () => openMoveMenu(at.x, at.y) },
+      {
+        label: "Nach oben",
+        icon: ArrowUp,
+        shortcut: "Alt+↑",
+        disabled: !sortable,
+        title: unsortable,
+        action: () => moveSelectionBlock(-1),
+      },
+      {
+        label: "Nach unten",
+        icon: ArrowDown,
+        shortcut: "Alt+↓",
+        disabled: !sortable,
+        title: unsortable,
+        action: () => moveSelectionBlock(1),
+      },
       { label: `${n} löschen`, icon: Trash, shortcut: "Entf", danger: true, action: () => void deleteSelected() },
     );
     return items;
@@ -451,7 +529,7 @@
           selected={task.id === selectedId}
           selectable={selection.active}
           checked={selection.active && selection.has(task.id)}
-          dragging={drag?.id === task.id}
+          dragging={drag !== null && dragIds.has(task.id)}
           ontoggle={toggle}
           onopen={rowClick}
           ondelete={(t) => void deleteTask(t)}
@@ -465,6 +543,9 @@
   {/if}
 </div>
 
+{#if drag && drag.block > 1}
+  <span class="drag-badge" style:left="{drag.x + 12}px" style:top="{drag.y + 12}px" aria-hidden="true">{drag.block}</span>
+{/if}
 {#if menu}
   <Menu
     label={selection.active && selection.has(menu.task.id) ? `Aktionen für ${tasks(selection.count)}` : `Aktionen für ${menu.task.title}`}
@@ -486,6 +567,21 @@
   .task-list.dragging {
     cursor: grabbing;
     user-select: none;
+  }
+  .drag-badge {
+    position: fixed;
+    z-index: 70;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: var(--radius-full);
+    background: var(--color-accent-fill);
+    color: var(--color-on-accent);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
+    line-height: 20px;
+    text-align: center;
+    pointer-events: none;
   }
   .drop-line {
     position: absolute;

@@ -112,3 +112,55 @@ describe("TaskListState.loadAll", () => {
     expect(await rows.loadAll()).toHaveLength(1234);
   });
 });
+
+describe("TaskListState.reorderMany", () => {
+  async function state(titles = "ABCDEF") {
+    const client = new FakeCoreClient();
+    const inbox = await client.ensureInbox();
+    for (const t of titles) await client.createTask({ title: t });
+    const day = { date: "2026-10-18", start: "2026-10-17T22:00:00.000Z", end: "2026-10-18T22:00:00.000Z" };
+    const rows = new TaskListState(client, () => ({ route: { view: "inbox" }, inboxId: inbox.id, day }));
+    await rows.load();
+    const id = (t: string) => rows.items.find((r) => r.title === t)!.id;
+    const title = (i?: string) => rows.items.find((r) => r.id === i)?.title;
+    const move = (block: string, to: number) => {
+      const n = rows.reorderMany(new Set([...block].map(id)), to);
+      return n && `${title(n.after) ?? "-"}|${title(n.before) ?? "-"}`;
+    };
+    const order = () => rows.items.map((r) => r.title).join("");
+    return { move, order };
+  }
+
+  it("moves a contiguous block up and down", async () => {
+    const s = await state();
+    expect(s.move("CD", 1)).toBe("A|B");
+    expect(s.order()).toBe("ACDBEF");
+    expect(s.move("CD", 6)).toBe("F|-");
+    expect(s.order()).toBe("ABEFCD");
+  });
+
+  it("gathers a scattered selection at the insertion point", async () => {
+    const s = await state();
+    expect(s.move("BE", 3)).toBe("C|D");
+    expect(s.order()).toBe("ACBEDF");
+    expect(s.move("AF", 0)).toBe("-|C");
+    expect(s.order()).toBe("AFCBED");
+  });
+
+  it("moves to the start and the end", async () => {
+    const s = await state();
+    expect(s.move("DE", 0)).toBe("-|A");
+    expect(s.order()).toBe("DEABCF");
+    expect(s.move("DA", 6)).toBe("F|-");
+    expect(s.order()).toBe("EBCFDA");
+  });
+
+  it("returns null when the block lands on itself", async () => {
+    const s = await state();
+    for (const to of [2, 3, 4]) expect(s.move("CD", to)).toBeNull();
+    expect(s.order()).toBe("ABCDEF");
+    expect(s.move("BD", 2), "verstreut über sich selbst: wird zusammengezogen").toBe("A|C");
+    expect(s.order()).toBe("ABDCEF");
+    expect(s.move("", 0)).toBeNull();
+  });
+});
