@@ -13,8 +13,9 @@ Reihenfolge der Plattformen: **1. Arch Linux nativ (Tauri 2)**, **2. Web**, **3.
 Status: **Prototyp (v0.1.0, 2026-10-18).** Desktop-App (Linux) mit lokalem Speicher, Login per Browser und Sync über
 Proton Drive ist abgenommen (automatisierter Zwei-Geräte-Lauf; Live-Teil über Proton offen, siehe
 `development/prototype-acceptance.md`). Zwischenphasen P0–P2 (Mehrfachauswahl, Upload ≤ 5 s,
-Listen & Kanban-Board) umgesetzt und abgenommen; nächste Etappe ist die Web-App
-(`development/roadmap-next.md`).
+Listen & Kanban-Board) umgesetzt und abgenommen (Archiv: `development/archive/roadmap-interim.md`); P3 bis auf den
+Inhalt des Fensters „Neue Task" (P3-03, wartet auf User-Spezifikation) erledigt. Als Nächstes N0 (Prototyp abrunden),
+danach die Web-App (`development/roadmap-next.md`).
 
 ## 2. Wo was liegt
 
@@ -39,12 +40,16 @@ Listen & Kanban-Board) umgesetzt und abgenommen; nächste Etappe ist die Web-App
 
 Detaildokumente in `development/`:
 `roadmap-next.md` (**geordnete Arbeitsliste nach dem Prototyp – hier steht, was als Nächstes zu tun ist**),
-`roadmap.md` (abgeschlossene Liste bis zum Prototyp, mit Notizen zu jeder Aufgabe), `prototype-acceptance.md`,
+`roadmap.md` (eingeschobene Zwischenphasen, **vor** `roadmap-next.md` abarbeiten; die abgeschlossene Prototyp-Liste
+mit Notizen liegt in `archive/roadmap-prototype.md`, die abgeschlossenen Zwischenphasen P0–P2 in
+`archive/roadmap-interim.md`), `prototype-acceptance.md`,
 `architecture.md`, `module-structure.md`, `interfaces.md`, `ui-guidelines.md`,
 `sync-strategy.md`, `tech-decisions.md` (ADR-Log + offene Spikes), `future-android.md`.
 
-**Session-Start:** In `development/roadmap-next.md` die erste offene Aufgabe (`[ ]`) suchen, ihre Vorab-Lektüre lesen,
-sie vollständig abarbeiten und danach abhaken (Datum + Commit-Hash). Nicht mehrere Aufgaben vermischen.
+**Session-Start:** Zuerst in `development/roadmap.md` (eingeschobene Zwischenphasen), wenn dort nichts offen ist in
+`development/roadmap-next.md` die erste offene Aufgabe (`[ ]`) suchen – `[~]` heißt „wartet auf den User" und wird
+übersprungen –, ihre Vorab-Lektüre lesen, sie vollständig abarbeiten und danach abhaken (Datum + Commit-Hash). Nicht
+mehrere Aufgaben vermischen.
 
 **Vor jeder größeren Änderung** das passende Dokument lesen. Wenn `development/` fehlt
 (frischer Clone – der Ordner ist nicht versioniert), den User danach fragen, statt Architektur zu raten.
