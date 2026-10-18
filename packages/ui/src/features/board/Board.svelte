@@ -59,10 +59,25 @@
     );
   });
 
+  /**
+   * Umschalt + Mausrad scrollt das Board waagerecht (WebKitGTK macht das nicht selbst). Nicht
+   * passiv, damit das senkrechte Scrollen der Spalte darunter unterbleibt.
+   */
+  function shiftWheel(e: WheelEvent) {
+    if (!e.shiftKey || !boardEl || e.deltaY === 0 || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    // deltaMode: 0 = Pixel, 1 = Zeilen, 2 = Seiten.
+    const step = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? boardEl.clientWidth : 1;
+    e.preventDefault();
+    boardEl.scrollLeft += e.deltaY * step;
+  }
+
   onMount(() => {
     const detach = board.attach();
+    const el = boardEl;
+    el?.addEventListener("wheel", shiftWheel, { passive: false });
     return () => {
       detach();
+      el?.removeEventListener("wheel", shiftWheel);
       board.dispose();
     };
   });

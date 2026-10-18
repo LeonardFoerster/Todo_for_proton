@@ -8,6 +8,9 @@
    * Erscheint verzögert beim Überfahren und sofort bei Tastaturfokus; verschwindet beim Verlassen,
    * Klicken, Scrollen und mit `Esc`. Im Leerlauf läuft nichts (nur ein Timer während des Wartens).
    * Rein visuell (`aria-hidden`): Die Elemente tragen ihren Namen schon per `aria-label`.
+   *
+   * Als `popover` gezeigt: so liegt der Tooltip in der obersten Ebene – auch über modalen Dialogen
+   * (die sonst alles andere verdecken).
    */
   import { onMount, tick } from "svelte";
 
@@ -50,7 +53,18 @@
     text = label;
     placed = false;
     await tick();
-    if (tip && anchor === target) place(target, tip);
+    if (tip && anchor === target) {
+      showOnTop(tip);
+      place(target, tip);
+    }
+  }
+
+  function showOnTop(el: HTMLElement) {
+    try {
+      if (!el.matches(":popover-open")) el.showPopover();
+    } catch {
+      // Ohne Popover-API (ältere Engines, jsdom): fest positioniert genügt außerhalb von Dialogen.
+    }
   }
 
   /** Neben das Element setzen (Seite aus `data-tooltip-side`), dann ins Fenster schieben. */
@@ -135,6 +149,7 @@
     class:placed
     role="tooltip"
     aria-hidden="true"
+    popover="manual"
     style:left="{left}px"
     style:top="{top}px"
   >
@@ -146,6 +161,13 @@
   .tooltip {
     position: fixed;
     z-index: 100;
+    /* Popover-Vorgaben des Browsers (zentriert, Rahmen, Scrollen) aufheben. */
+    inset: auto;
+    width: max-content;
+    height: auto;
+    margin: 0;
+    border: 0;
+    overflow: hidden;
     max-width: min(320px, calc(100vw - 16px));
     padding: 3px 8px;
     border-radius: var(--radius-sm);

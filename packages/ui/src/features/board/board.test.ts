@@ -125,6 +125,26 @@ describe("kanban board", () => {
     expect(cursor()).toBe("Bericht");
   });
 
+  it("Shift + mouse wheel scrolls the board horizontally", async () => {
+    await setup();
+    const el = board();
+    const wheel = (init: WheelEventInit) => {
+      const e = new WheelEvent("wheel", { bubbles: true, cancelable: true, ...init });
+      within(column("Einkaufen")).getAllByRole("option")[0].dispatchEvent(e);
+      return e;
+    };
+    el.scrollLeft = 0;
+    const shifted = wheel({ shiftKey: true, deltaY: 120 });
+    expect(shifted.defaultPrevented).toBe(true);
+    expect(el.scrollLeft).toBe(120);
+    const lines = wheel({ shiftKey: true, deltaY: 3, deltaMode: 1 });
+    expect(lines.defaultPrevented).toBe(true);
+    expect(el.scrollLeft).toBe(240);
+    const plain = wheel({ deltaY: 120 });
+    expect(plain.defaultPrevented, "ohne Umschalt: Spalte scrollt senkrecht wie gewohnt").toBe(false);
+    expect(el.scrollLeft).toBe(240);
+  });
+
   it("virtualizes long columns", async () => {
     const { client, work } = await setup();
     for (let i = 0; i < 300; i++) await client.createTask({ title: `Viel ${i}`, listId: work.id });

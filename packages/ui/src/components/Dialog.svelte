@@ -13,6 +13,9 @@
   }
 
   let { title, onclose, children, width = 480 }: Props = $props();
+  /** Eindeutig je Dialog – verschachtelte Dialoge dürfen sich nicht dieselbe Titel-ID teilen. */
+  const uid = $props.id();
+  const titleId = `dialog-title-${uid}`;
   let dialog: HTMLDialogElement;
 
   onMount(() => {
@@ -28,7 +31,7 @@
 <dialog
   bind:this={dialog}
   style:--width="{width}px"
-  aria-labelledby="dialog-title"
+  aria-labelledby={titleId}
   tabindex="-1"
   oncancel={(e) => {
     e.preventDefault();
@@ -39,7 +42,7 @@
   }}
 >
   <header>
-    <h2 id="dialog-title">{title}</h2>
+    <h2 id={titleId}>{title}</h2>
     <IconButton label="Schließen" shortcut="Esc" icon={X} size={28} onclick={onclose} />
   </header>
   <div class="content">{@render children()}</div>

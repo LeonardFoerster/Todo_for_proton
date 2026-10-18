@@ -6,7 +6,7 @@
   import Tooltips from "./components/Tooltips.svelte";
   import { toasts } from "./components/toasts.svelte";
   import Sidebar from "./features/sidebar/Sidebar.svelte";
-  import QuickAdd from "./features/quick-add/QuickAdd.svelte";
+  import NewTaskDialog from "./features/new-task/NewTaskDialog.svelte";
   import TaskDetail from "./features/task-detail/TaskDetail.svelte";
   import SelectionBar from "./features/task-list/SelectionBar.svelte";
   import TaskList from "./features/task-list/TaskList.svelte";
@@ -79,7 +79,9 @@
   let showSettings = $state(false);
   /** Einstellungen/Login werden erst bei Bedarf geladen (eigener Chunk). */
   let SettingsDialog = $state<typeof SettingsDialogType | null>(null);
-  let quickAdd = $state<QuickAdd>();
+  /** Fenster „Neue Task“ (ersetzt die Eingabezeile über der Liste). */
+  let showNewTask = $state(false);
+  let newTaskDialog = $state<NewTaskDialog>();
   let taskList = $state<TaskList>();
   let board = $state<Board>();
   let reportedReady = false;
@@ -154,7 +156,7 @@
 
   function newTask() {
     drawerOpen = false;
-    quickAdd?.focus();
+    showNewTask = true;
   }
 
   async function openSettings() {
@@ -313,7 +315,7 @@
     else selectedId = null;
   }
 
-  shortcuts.setModal(() => showShortcuts || showSettings || !!deleteTarget || !!renameDialog);
+  shortcuts.setModal(() => showShortcuts || showSettings || showNewTask || !!deleteTarget || !!renameDialog);
   shortcuts.register(
     {
       keys: ["shift+f10", "contextmenu"],
@@ -348,11 +350,12 @@
     { keys: ["n"], description: "Neue Task", group: "Allgemein", run: newTask },
     {
       keys: ["alt+l"],
-      description: "Liste für neue Tasks wählen (im Eingabefeld)",
+      description: "Liste für neue Tasks wählen (im Fenster „Neue Task“)",
       group: "Allgemein",
       inInputs: true,
+      inModal: true,
       when: () => (document.activeElement as HTMLElement | null)?.getAttribute("aria-label") === "Neue Task",
-      run: () => quickAdd?.openListPicker(),
+      run: () => newTaskDialog?.openListPicker(),
     },
     { keys: ["ctrl+n"], description: "Neue Task (auch beim Tippen)", group: "Allgemein", inInputs: true, run: newTask },
     {
@@ -635,24 +638,6 @@
     <div class="pane-body">
       {#if ready && (route.view !== "list" || lists.lists.some((l) => l.id === route.listId))}
         {#key routeHash(route)}
-          {#if route.view !== "completed"}
-            <QuickAdd
-              bind:this={quickAdd}
-              {lists}
-              listId={routeListId(route)}
-              shownListId={showBoard
-                ? undefined
-                : route.view === "list"
-                  ? route.listId
-                  : route.view === "inbox"
-                    ? lists.inbox?.id
-                    : undefined}
-              onopenlist={(id) =>
-                router.navigate(id === lists.inbox?.id ? { view: "inbox" } : { view: "list", listId: id })}
-              defaultDue={route.view === "today" ? todayPlus(0) : null}
-              placeholder={route.view === "today" ? "Task für heute hinzufügen" : "Task hinzufügen – z. B. „Zahnarzt anrufen morgen“"}
-            />
-          {/if}
           <div class="list-slot">
             {#if showBoard}
               <Board
@@ -681,6 +666,23 @@
 </div>
 <Toaster />
 <Tooltips />
+{#if showNewTask}
+  <NewTaskDialog
+    bind:this={newTaskDialog}
+    {lists}
+    listId={routeListId(route)}
+    shownListId={showBoard
+      ? undefined
+      : route.view === "list"
+        ? route.listId
+        : route.view === "inbox"
+          ? lists.inbox?.id
+          : undefined}
+    onopenlist={(id) => router.navigate(id === lists.inbox?.id ? { view: "inbox" } : { view: "list", listId: id })}
+    defaultDue={route.view === "today" ? todayPlus(0) : null}
+    onclose={() => (showNewTask = false)}
+  />
+{/if}
 {#if listMenu}
   <Menu
     label="Aktionen für Liste {listMenu.list.name}"

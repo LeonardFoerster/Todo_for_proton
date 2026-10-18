@@ -123,7 +123,8 @@ describe("multi-select mode", () => {
 
   it("keeps Ctrl+A native in text fields", async () => {
     const { user } = await setup();
-    await user.click(screen.getByRole("textbox", { name: "Neue Task" }));
+    await user.click(within(screen.getByRole("navigation", { name: "Navigation" })).getByRole("button", { name: /^Neue Task/ }));
+    await user.click(await screen.findByRole("textbox", { name: "Neue Task" }));
     await user.keyboard("abc{Control>}a{/Control}");
     expect(status()).toBeUndefined();
   });

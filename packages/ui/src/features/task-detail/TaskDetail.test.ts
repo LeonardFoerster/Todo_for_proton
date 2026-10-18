@@ -22,17 +22,24 @@ async function setup() {
   return { client, work, task, user: userEvent.setup() };
 }
 
-describe("Quick-Add", () => {
-  it("creates on Enter, parses the day word and stays focused", async () => {
+describe("Neue Task (Fenster)", () => {
+  /** „+ Neue Task“ öffnet das Fenster; liefert sein Eingabefeld (fokussiert). */
+  async function openNewTask(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(within(screen.getByRole("navigation", { name: "Navigation" })).getByRole("button", { name: /^Neue Task/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Neue Task" });
+    const input = within(dialog).getByRole("textbox", { name: "Neue Task" });
+    await waitFor(() => expect(document.activeElement).toBe(input));
+    return input;
+  }
+
+  it("creates on Enter, parses the day word and closes", async () => {
     const { client, user } = await setup();
-    const input = screen.getByRole("textbox", { name: "Neue Task" });
-    await user.click(input);
+    await openNewTask(user);
     await user.keyboard("Zahnarzt anrufen morgen");
-    expect(screen.getByText("Morgen")).toBeTruthy();
+    expect(within(screen.getByRole("dialog")).getByText("Morgen")).toBeTruthy();
     await user.keyboard("{Enter}");
     await screen.findByRole("option", { name: /^Zahnarzt anrufen/ });
-    expect(document.activeElement).toBe(input);
-    expect((input as HTMLInputElement).value).toBe("");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     const page = await client.listTasks({ view: { kind: "inbox" } }, { limit: 10 });
     const created = page.items.find((t) => t.title === "Zahnarzt anrufen")!;
     expect(created.due).toEqual({ kind: "date", date: isoDate(addDays(new Date(), 1)) });
@@ -42,22 +49,21 @@ describe("Quick-Add", () => {
     const { client, work, user } = await setup();
     location.hash = `#/list/${work.id}`;
     await screen.findByRole("heading", { name: "Arbeit" });
-    await user.click(screen.getByRole("textbox", { name: "Neue Task" }));
+    await openNewTask(user);
     await user.keyboard("Review{Enter}");
     await screen.findByRole("option", { name: /^Review/ });
     location.hash = "#/today";
     await screen.findByRole("heading", { name: "Heute" });
-    await user.click(screen.getByRole("textbox", { name: "Neue Task" }));
+    await openNewTask(user);
     await user.keyboard("Anrufen{Enter}");
     await screen.findByRole("option", { name: /^Anrufen/ });
     const inList = await client.listTasks({ view: { kind: "list", listId: work.id } }, { limit: 10 });
     expect(inList.items.map((t) => t.title)).toEqual(["Review"]);
   });
 
-  it("N-button focuses quick add", async () => {
-    const { user } = await setup();
-    await user.click(screen.getByRole("button", { name: /Neue Task/ }));
-    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Neue Task" }));
+  it("the main pane has no quick-add row any more", async () => {
+    await setup();
+    expect(screen.queryByRole("textbox", { name: "Neue Task" })).toBeNull();
   });
 });
 

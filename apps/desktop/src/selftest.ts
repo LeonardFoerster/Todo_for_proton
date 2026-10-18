@@ -197,6 +197,19 @@ p707.push(
 const field = (label: string) =>
   until(label, () => document.querySelector<HTMLInputElement & HTMLTextAreaElement>(`[aria-label="${label}"]`));
 
+/** „+ Neue Task“ in der Seitenleiste öffnet das Fenster „Neue Task“; liefert dessen Eingabefeld. */
+async function openNewTask(): Promise<HTMLInputElement> {
+  (await until("Neue Task", () => document.querySelector<HTMLElement>('aside nav button[title^="Neue Task"], aside nav button[aria-label="Neue Task"]'))).click();
+  const input = await until("Fenster Neue Task", () =>
+    document.querySelector<HTMLInputElement>('dialog[open] input[aria-label="Neue Task"]'),
+  );
+  await until("Fokus", () => document.activeElement === input);
+  return input;
+}
+
+/** Fenster ist nach dem Anlegen zu. */
+const newTaskClosed = () => until("Fenster zu", () => !document.querySelector('dialog[open] input[aria-label="Neue Task"]'));
+
 async function openTask(title: RegExp) {
   (await until(`Zeile ${title}`, () => byRole("option", title))).click();
   await until("Detail-Panel", () => document.querySelector('[aria-label="Task-Details"] textarea'));
@@ -217,13 +230,13 @@ const p708a: Step[] = [
     },
   ],
   [
-    "Quick-Add mit „morgen“, Feld bleibt fokussiert",
+    "Neue Task mit „morgen“ (Fenster schließt nach Enter)",
     async () => {
-      const input = await field("Neue Task");
+      const input = await openNewTask();
       type(input, "Persistenz prüfen morgen");
       key(input, "Enter");
       await until("neue Zeile", () => byRole("option", /^Persistenz prüfen, Fällig/));
-      if (document.activeElement !== input) throw new Error("Fokus verloren");
+      await newTaskClosed();
     },
   ],
   [
@@ -351,18 +364,17 @@ function press(k: string, init: KeyboardEventInit = {}) {
 // P7-10: anlegen → abhaken → löschen nur mit der Tastatur.
 const p710: Step[] = [
   [
-    "N fokussiert Quick-Add, Enter legt zwei Tasks an",
+    "N öffnet „Neue Task“, Enter legt an und schließt (zweimal)",
     async () => {
       await click("link", /^Eingang/);
-      press("n");
-      const input = await until("Fokus Quick-Add", () => document.activeElement?.getAttribute("aria-label") === "Neue Task" && (document.activeElement as HTMLInputElement));
       for (const title of ["Tastatur A", "Tastatur B"]) {
+        press("n");
+        const input = await until("Fokus Neue Task", () => document.activeElement?.getAttribute("aria-label") === "Neue Task" && (document.activeElement as HTMLInputElement));
         type(input, title);
         press("Enter");
         await until(title, () => byRole("option", title));
+        await newTaskClosed();
       }
-      press("Escape");
-      if (document.activeElement === input) throw new Error("Quick-Add noch fokussiert");
     },
   ],
   [
@@ -587,7 +599,7 @@ const p802create: Step[] = [
     "Quick-Add „Von A“ im Eingang",
     async () => {
       await until("h1 Eingang", () => heading() === "Eingang");
-      const input = await field("Neue Task");
+      const input = await openNewTask();
       type(input, "Von A");
       key(input, "Enter");
       await until("Zeile", () => byRole("option", /^Von A/));
@@ -694,7 +706,7 @@ const p802auth: Step[] = [
   [
     "Lokal weiterarbeiten: Quick-Add „Ohne Sitzung“",
     async (client) => {
-      const input = await field("Neue Task");
+      const input = await openNewTask();
       type(input, "Ohne Sitzung");
       key(input, "Enter");
       await until("Zeile", () => byRole("option", /^Ohne Sitzung/));
@@ -1233,7 +1245,7 @@ const p1A: Step[] = [
     async () => {
       location.hash = "#/inbox";
       await until("h1 Eingang", () => heading() === "Eingang");
-      const input = await field("Neue Task");
+      const input = await openNewTask();
       type(input, P1_TASK);
       key(input, "Enter");
       await row(P1_TASK);
@@ -1305,8 +1317,7 @@ const p2board: Step[] = [
   [
     "Quick-Add: Liste „Einkaufen“ wählen (Alt+L) und anlegen",
     async (client) => {
-      const input = await field("Neue Task");
-      input.focus();
+      const input = await openNewTask();
       key(input, "l", { altKey: true });
       await click("menuitem", "Einkaufen");
       type(input, "Eier");
@@ -1323,6 +1334,22 @@ const p2board: Step[] = [
       if (!titles.includes("Eier")) throw new Error(titles.join(","));
       await client.deleteTasks([(await client.listTasks({ view: { kind: "list", listId: shop.id } }, { limit: 10 })).items.find((t) => t.title === "Eier")!.id]);
       return titles.join(",");
+    },
+  ],
+  [
+    "Tooltip im Fenster „Neue Task“ liegt über dem Dialog",
+    async () => {
+      const input = await openNewTask();
+      const pickerButton = input.parentElement!.querySelector<HTMLElement>("button[aria-haspopup=menu]")!;
+      pickerButton.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+      await sleep(600);
+      const tip = [...document.querySelectorAll<HTMLElement>('[role="tooltip"]')].find((t) => t.textContent?.includes("Liste wählen"));
+      const onTop = tip?.matches(":popover-open") ?? false;
+      pickerButton.dispatchEvent(new PointerEvent("pointerout", { bubbles: true }));
+      key(input, "Escape");
+      await newTaskClosed();
+      if (!tip || !onTop) throw new Error(tip ? "Tooltip nicht in der obersten Ebene" : "kein Tooltip");
+      return "als Popover über dem modalen Dialog";
     },
   ],
   [
@@ -1449,6 +1476,21 @@ const p2perf: Step[] = [
       );
       const ms = (await frame()) - t0;
       return `${ms.toFixed(0)} ms (12 Spalten, je erste Seite 200)`;
+    },
+  ],
+  [
+    "Umschalt + Mausrad scrollt das Board waagerecht",
+    async () => {
+      const board = document.querySelector<HTMLElement>('[aria-label="Kanban-Board"]')!;
+      board.scrollLeft = 0;
+      const card = board.querySelector<HTMLElement>('[role="option"]')!;
+      const e = new WheelEvent("wheel", { bubbles: true, cancelable: true, shiftKey: true, deltaY: 300 });
+      card.dispatchEvent(e);
+      await frame();
+      if (board.scrollLeft <= 0) throw new Error(`scrollLeft ${board.scrollLeft} (Breite ${board.scrollWidth}/${board.clientWidth})`);
+      const after = board.scrollLeft;
+      board.scrollLeft = 0;
+      return `scrollLeft 0 → ${after}`;
     },
   ],
   [

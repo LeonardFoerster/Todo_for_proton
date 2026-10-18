@@ -21,6 +21,10 @@
     /** Vorgabe ohne Schlüsselwort (z. B. „heute“ in der Heute-Ansicht). */
     defaultDue?: DueDto | null;
     placeholder?: string;
+    /** Nach erfolgreichem Anlegen (z. B. Fenster schließen). */
+    onadded?: () => void;
+    /** `Esc` im Feld; ohne Angabe: Text leeren und Fokus abgeben. */
+    onescape?: () => void;
   }
 
   let {
@@ -30,6 +34,8 @@
     onopenlist,
     defaultDue = null,
     placeholder = "Task hinzufügen",
+    onadded,
+    onescape,
   }: Props = $props();
 
   const client = useCoreClient();
@@ -81,12 +87,13 @@
       const task = await client.createTask({ title, listId: target });
       if (dueToSet) await client.updateTask(task.id, { due: dueToSet });
       announce(title, task.listId);
+      onadded?.();
     } catch (e) {
       value = title;
       toasts.show({ message: `Nicht angelegt: ${(e as Error).message}`, tone: "danger" });
     } finally {
       busy = false;
-      input.focus();
+      input?.focus();
     }
   }
 </script>
@@ -108,6 +115,7 @@
       } else if (e.key === "Escape") {
         // Selbst behandelt: Text leeren, Fokus abgeben (die globale Esc-Aktion nicht zusätzlich).
         e.preventDefault();
+        if (onescape) return onescape();
         value = "";
         input.blur();
       }

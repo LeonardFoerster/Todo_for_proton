@@ -29,12 +29,17 @@ const open = async (client: FakeCoreClient) =>
 describe("keyboard", () => {
   it("create → complete → delete without the mouse", async () => {
     const { client, user } = await setup();
+    // „N“ öffnet das Fenster „Neue Task“; Enter legt an und schließt es.
     await user.keyboard("n");
-    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Neue Task" }));
-    await user.keyboard("Erste{Enter}Zweite{Enter}");
+    expect(await screen.findByRole("dialog", { name: "Neue Task" })).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Neue Task" })));
+    await user.keyboard("Erste{Enter}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Neue Task" })).toBeNull());
+    await user.keyboard("n");
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Neue Task" })));
+    await user.keyboard("Zweite{Enter}");
     await screen.findByRole("option", { name: "Zweite" });
-    await user.keyboard("{Escape}"); // Quick-Add verlassen
-    expect(document.activeElement).toBe(document.body);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     await user.keyboard("{ArrowDown}");
     expect(selected()?.getAttribute("aria-label")).toBe("Erste");
@@ -70,10 +75,21 @@ describe("keyboard", () => {
 
   it("typing in fields never triggers shortcuts", async () => {
     const { client, user } = await setup(["A"]);
-    await user.click(screen.getByRole("textbox", { name: "Neue Task" }));
+    await user.click(within(screen.getByRole("navigation", { name: "Navigation" })).getByRole("button", { name: /^Neue Task/ }));
+    await user.click(await screen.findByRole("textbox", { name: "Neue Task" }));
     await user.keyboard("jn e k{Enter}");
     await screen.findByRole("option", { name: "jn e k" });
     expect(await open(client)).toEqual(["A", "jn e k"]);
+  });
+
+  it("Esc closes the new-task window without adding anything", async () => {
+    const { client, user } = await setup(["A"]);
+    await user.keyboard("n");
+    await screen.findByRole("dialog", { name: "Neue Task" });
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Neue Task" })));
+    await user.keyboard("Verworfen{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(await open(client)).toEqual(["A"]);
   });
 
   it("G then T navigates, ? shows the shortcut overview", async () => {
