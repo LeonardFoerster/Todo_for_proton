@@ -3,24 +3,41 @@
   import { Hash } from "../../icons";
 
   interface Props {
+    /** Mit dem (getrimmten, nicht leeren) Namen; beim Umbenennen nur, wenn er sich ändert. */
     oncreate: (name: string) => Promise<void> | void;
     oncancel: () => void;
+    /** Umbenennen: bisheriger Name (vorausgewählt). */
+    initial?: string;
+    label?: string;
   }
 
-  let { oncreate, oncancel }: Props = $props();
-  let name = $state("");
+  let { oncreate, oncancel, initial = "", label = "Name der neuen Liste" }: Props = $props();
+  // svelte-ignore state_referenced_locally
+  let name = $state(initial);
   let input: HTMLInputElement;
   let busy = false;
+  /** Abgebrochen oder gespeichert: Das `blur` beim Verschwinden darf nicht noch einmal speichern. */
+  let finished = false;
 
-  onMount(() => input.focus());
+  function cancel() {
+    if (finished) return;
+    finished = true;
+    oncancel();
+  }
+
+  onMount(() => {
+    input.focus();
+    if (initial) input.select();
+  });
 
   async function submit() {
     const value = name.trim();
-    if (!value) return oncancel();
-    if (busy) return;
+    if (!value || value === initial) return cancel();
+    if (busy || finished) return;
     busy = true;
     try {
       await oncreate(value);
+      finished = true;
     } finally {
       busy = false;
     }
@@ -34,12 +51,12 @@
     bind:value={name}
     maxlength="100"
     placeholder="Name der Liste"
-    aria-label="Name der neuen Liste"
+    aria-label={label}
     onkeydown={(e) => {
       if (e.key === "Enter") void submit();
-      if (e.key === "Escape") oncancel();
+      if (e.key === "Escape") cancel();
     }}
-    onblur={() => (name.trim() ? void submit() : oncancel())}
+    onblur={() => (finished ? undefined : name.trim() ? void submit() : cancel())}
   />
 </div>
 

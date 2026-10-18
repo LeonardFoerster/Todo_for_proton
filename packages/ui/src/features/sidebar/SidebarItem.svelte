@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { IconComponent } from "../../icons";
+  import { GripVertical, type IconComponent } from "../../icons";
 
   interface Props {
     href: string;
@@ -11,9 +11,27 @@
     /** Eingeklappt statt Icon (unterscheidet Listen). */
     monogram?: string;
     onnavigate?: () => void;
+    /** Benutzerliste: ID für Kürzel/Ziehen, Kontextmenü, Griff zum Umsortieren. */
+    listId?: string;
+    oncontextmenu?: (e: MouseEvent) => void;
+    ondragstart?: (e: PointerEvent) => void;
+    dragging?: boolean;
   }
 
-  let { href, icon: Icon, label, count, active = false, collapsed = false, monogram, onnavigate }: Props = $props();
+  let {
+    href,
+    icon: Icon,
+    label,
+    count,
+    active = false,
+    collapsed = false,
+    monogram,
+    onnavigate,
+    listId,
+    oncontextmenu,
+    ondragstart,
+    dragging = false,
+  }: Props = $props();
 </script>
 
 <a
@@ -21,12 +39,28 @@
   class="item"
   class:active
   class:collapsed
+  class:dragging
+  data-list-id={listId}
   aria-current={active ? "page" : undefined}
   aria-label={collapsed ? label : undefined}
   data-tooltip={collapsed ? label : undefined}
   data-tooltip-side="right"
   onclick={onnavigate}
+  {oncontextmenu}
 >
+  {#if ondragstart && !collapsed}
+    <span
+      class="grip"
+      aria-hidden="true"
+      onpointerdown={(e) => ondragstart(e)}
+      onclick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+    >
+      <GripVertical size={14} strokeWidth={1.75} />
+    </span>
+  {/if}
   {#if collapsed && monogram}
     <span class="monogram" aria-hidden="true">{monogram}</span>
   {:else}
@@ -107,6 +141,27 @@
   .active .monogram {
     background: var(--color-accent-fill);
     color: var(--color-on-accent);
+  }
+  .grip {
+    position: absolute;
+    left: -2px;
+    top: 50%;
+    display: grid;
+    place-items: center;
+    width: 14px;
+    height: 24px;
+    color: var(--color-text-muted);
+    opacity: 0;
+    transform: translateY(-50%);
+    cursor: grab;
+    touch-action: none;
+  }
+  .item:hover .grip {
+    opacity: 1;
+  }
+  .dragging {
+    opacity: 0.6;
+    background: var(--color-bg-selected);
   }
   .dot {
     position: absolute;

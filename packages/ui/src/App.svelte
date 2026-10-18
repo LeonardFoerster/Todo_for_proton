@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { CoreClient } from "@tasks/core-client";
-  import { onMount, untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import IconButton from "./components/IconButton.svelte";
   import Toaster from "./components/Toaster.svelte";
   import Tooltips from "./components/Tooltips.svelte";
@@ -11,7 +11,24 @@
   import SelectionBar from "./features/task-list/SelectionBar.svelte";
   import TaskList from "./features/task-list/TaskList.svelte";
   import ShortcutHelp from "./features/shell/ShortcutHelp.svelte";
-  import { CircleCheck, FolderInput, Keyboard, ListChecks, PanelLeft, Settings, Trash, Undo } from "./icons";
+  import {
+    ArrowDown,
+    ArrowUp,
+    CircleCheck,
+    Ellipsis,
+    FolderInput,
+    Keyboard,
+    ListChecks,
+    PanelLeft,
+    Pencil,
+    Settings,
+    Trash,
+    Undo,
+  } from "./icons";
+  import Menu, { type MenuItem } from "./components/Menu.svelte";
+  import DeleteListDialog from "./features/lists/DeleteListDialog.svelte";
+  import RenameListDialog from "./features/lists/RenameListDialog.svelte";
+  import type { TaskListDto } from "@tasks/core-client";
   import type SettingsDialogType from "./features/account/SettingsDialog.svelte";
   import { setCoreClient } from "./lib/context";
   import { ListsState } from "./lib/lists.svelte";
@@ -48,6 +65,11 @@
   /** Im Detail-Panel geöffnete Task; folgt der Auswahl, solange das Panel offen ist. */
   let openId = $state<string | null>(null);
   let showShortcuts = $state(false);
+  /** Listen verwalten (P2-03): Menü, Inline-Umbenennen in der Seitenleiste, Dialoge. */
+  let listMenu = $state<{ list: TaskListDto; x: number; y: number } | null>(null);
+  let renamingId = $state<string | null>(null);
+  let renameDialog = $state<TaskListDto | null>(null);
+  let deleteTarget = $state<TaskListDto | null>(null);
   let showSettings = $state(false);
   /** Einstellungen/Login werden erst bei Bedarf geladen (eigener Chunk). */
   let SettingsDialog = $state<typeof SettingsDialogType | null>(null);
@@ -188,6 +210,82 @@
     selectedId = openId = null;
   }
 
+  // --- Listen verwalten (P2-03) ----------------------------------------------------------------
+
+  /** Seitenleiste sichtbar und ausgeklappt → inline umbenennen, sonst per Dialog. */
+  function startRename(list: TaskListDto) {
+    const narrow = typeof matchMedia === "function" && matchMedia("(max-width: 699px)").matches;
+    if (!collapsed && (!narrow || drawerOpen)) renamingId = list.id;
+    else renameDialog = list;
+  }
+
+  async function renameList(list: TaskListDto, name: string) {
+    try {
+      await lists.rename(list.id, name);
+      renamingId = null;
+    } catch (e) {
+      renamingId = null;
+      toasts.show({ message: `Nicht umbenannt: ${(e as Error).message}`, tone: "danger" });
+      throw e;
+    }
+  }
+
+  /** Benutzerliste an Einfügeposition `to` schieben; Fokus bleibt auf ihrem Eintrag. */
+  async function moveList(id: string, to: number) {
+    const hadFocus = (document.activeElement as HTMLElement | null)?.dataset.listId === id;
+    const done = lists.move(id, to).catch((e: Error) => {
+      toasts.show({ message: `Liste nicht verschoben: ${e.message}`, tone: "danger" });
+    });
+    if (hadFocus) {
+      await tick();
+      document.querySelector<HTMLElement>(`[data-list-id="${CSS.escape(id)}"]`)?.focus();
+    }
+    await done;
+  }
+
+  async function confirmDelete() {
+    const list = deleteTarget;
+    deleteTarget = null;
+    if (!list) return;
+    try {
+      const moved = await lists.remove(list.id);
+      const rest = moved === 0 ? "" : ` · ${moved === 1 ? "1 Task" : `${moved} Tasks`} im Eingang`;
+      toasts.show({ message: `Liste „${list.name}“ gelöscht${rest}` });
+    } catch (e) {
+      toasts.show({ message: `Nicht gelöscht: ${(e as Error).message}`, tone: "danger" });
+    }
+  }
+
+  function listMenuItems(list: TaskListDto): MenuItem[] {
+    const user = lists.userLists;
+    const i = user.findIndex((l) => l.id === list.id);
+    return [
+      { label: "Umbenennen", icon: Pencil, action: () => startRename(list) },
+      { label: "Nach oben", icon: ArrowUp, shortcut: "Alt+↑", disabled: i <= 0, action: () => void moveList(list.id, i - 1) },
+      {
+        label: "Nach unten",
+        icon: ArrowDown,
+        shortcut: "Alt+↓",
+        disabled: i < 0 || i >= user.length - 1,
+        action: () => void moveList(list.id, i + 2),
+      },
+      { label: "Löschen…", icon: Trash, danger: true, action: () => (deleteTarget = list) },
+    ];
+  }
+
+  /** Fokussierter Benutzerlisten-Eintrag in der Seitenleiste (für Kürzel). */
+  function focusedList(): TaskListDto | undefined {
+    const id = (document.activeElement as HTMLElement | null)?.dataset?.listId;
+    return id ? lists.userLists.find((l) => l.id === id) : undefined;
+  }
+
+  function openListMenuAt(list: TaskListDto, el: Element) {
+    const r = el.getBoundingClientRect();
+    listMenu = { list, x: r.left, y: r.bottom + 4 };
+  }
+
+  const currentList = $derived(route.view === "list" ? lists.userLists.find((l) => l.id === route.listId) : undefined);
+
   function escape(e: KeyboardEvent) {
     const target = e.target as HTMLElement | null;
     if (showShortcuts) showShortcuts = false;
@@ -199,8 +297,38 @@
     else selectedId = null;
   }
 
-  shortcuts.setModal(() => showShortcuts || showSettings);
+  shortcuts.setModal(() => showShortcuts || showSettings || !!deleteTarget || !!renameDialog);
   shortcuts.register(
+    {
+      keys: ["shift+f10", "contextmenu"],
+      label: "Umschalt+F10",
+      description: "Listenaktionen (fokussierte Liste)",
+      group: "Listen",
+      when: () => !!focusedList(),
+      run: () => openListMenuAt(focusedList()!, document.activeElement!),
+    },
+    {
+      keys: ["alt+arrowup"],
+      description: "Liste nach oben (fokussierte Liste)",
+      group: "Listen",
+      when: () => !!focusedList(),
+      run: () => {
+        const list = focusedList()!;
+        const i = lists.userLists.indexOf(list);
+        if (i > 0) void moveList(list.id, i - 1);
+      },
+    },
+    {
+      keys: ["alt+arrowdown"],
+      description: "Liste nach unten (fokussierte Liste)",
+      group: "Listen",
+      when: () => !!focusedList(),
+      run: () => {
+        const list = focusedList()!;
+        const i = lists.userLists.indexOf(list);
+        if (i < lists.userLists.length - 1) void moveList(list.id, i + 2);
+      },
+    },
     { keys: ["n"], description: "Neue Task", group: "Allgemein", run: newTask },
     { keys: ["ctrl+n"], description: "Neue Task (auch beim Tippen)", group: "Allgemein", inInputs: true, run: newTask },
     {
@@ -330,6 +458,11 @@
       account={sync.account}
       onnewtask={newTask}
       oncreatelist={createList}
+      {renamingId}
+      onlistmenu={(list, x, y) => (listMenu = { list, x, y })}
+      onrename={renameList}
+      onrenamecancel={() => (renamingId = null)}
+      onmovelist={(id, to) => void moveList(id, to)}
       ontogglecollapse={toggleCollapse}
       onnavigate={() => (drawerOpen = false)}
       onlogin={() => void openSettings()}
@@ -395,6 +528,13 @@
             disabled={!hasList()}
             onclick={() => taskList?.startSelection()}
           />
+          {#if currentList}
+            <IconButton
+              label="Listenaktionen"
+              icon={Ellipsis}
+              onclick={(e) => openListMenuAt(currentList!, e.currentTarget)}
+            />
+          {/if}
           <IconButton label="Tastaturkürzel" shortcut="?" icon={Keyboard} onclick={() => (showShortcuts = true)} />
           <IconButton label="Einstellungen" icon={Settings} onclick={() => void openSettings()} />
         </span>
@@ -427,6 +567,25 @@
 </div>
 <Toaster />
 <Tooltips />
+{#if listMenu}
+  <Menu
+    label="Aktionen für Liste {listMenu.list.name}"
+    items={listMenuItems(listMenu.list)}
+    x={listMenu.x}
+    y={listMenu.y}
+    onclose={() => (listMenu = null)}
+  />
+{/if}
+{#if deleteTarget}
+  <DeleteListDialog list={deleteTarget} {lists} onconfirm={() => void confirmDelete()} onclose={() => (deleteTarget = null)} />
+{/if}
+{#if renameDialog}
+  <RenameListDialog
+    list={renameDialog}
+    onrename={(name) => renameList(renameDialog!, name)}
+    onclose={() => (renameDialog = null)}
+  />
+{/if}
 {#if showShortcuts}
   <ShortcutHelp shortcuts={shortcuts.list()} onclose={() => (showShortcuts = false)} />
 {/if}

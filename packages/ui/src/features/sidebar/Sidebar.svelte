@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { SyncStatusDto } from "@tasks/core-client";
+  import type { SyncStatusDto, TaskListDto } from "@tasks/core-client";
   import logo from "../../assets/logo.png";
   import Button from "../../components/Button.svelte";
   import IconButton from "../../components/IconButton.svelte";
@@ -23,6 +23,14 @@
     onnavigate?: () => void;
     onlogin?: () => void;
     onsync?: () => void;
+    /** Liste, die gerade inline umbenannt wird. */
+    renamingId?: string | null;
+    /** Kontextmenü einer Benutzerliste an Position (Viewport). */
+    onlistmenu?: (list: TaskListDto, x: number, y: number) => void;
+    onrename?: (list: TaskListDto, name: string) => Promise<void>;
+    onrenamecancel?: () => void;
+    /** Benutzerliste an Einfügeposition `to` (Index unter den Benutzerlisten) schieben. */
+    onmovelist?: (id: string, to: number) => void;
   }
 
   let {
@@ -37,9 +45,57 @@
     onnavigate,
     onlogin,
     onsync,
+    renamingId = null,
+    onlistmenu,
+    onrename,
+    onrenamecancel,
+    onmovelist,
   }: Props = $props();
 
   let addingList = $state(false);
+  let listsEl = $state<HTMLUListElement>();
+  /** Ziehen einer Liste: ID, Startindex, Einfügeposition, Linie (px im `<ul>`). */
+  let drag = $state<{ id: string; from: number; to: number; line: number } | null>(null);
+
+  function menuAt(list: TaskListDto, e: MouseEvent) {
+    e.preventDefault();
+    onlistmenu?.(list, e.clientX, e.clientY);
+  }
+
+  /** Einfügeposition aus der Zeiger-Höhe: vor der ersten Zeile, deren Mitte darunter liegt. */
+  function dropIndex(y: number): { to: number; line: number } {
+    const items = [...(listsEl?.querySelectorAll<HTMLElement>(":scope > li[data-index]") ?? [])];
+    const top = listsEl?.getBoundingClientRect().top ?? 0;
+    for (const [i, li] of items.entries()) {
+      const r = li.getBoundingClientRect();
+      if (y < r.top + r.height / 2) return { to: i, line: r.top - top };
+    }
+    const last = items.at(-1)?.getBoundingClientRect();
+    return { to: items.length, line: last ? last.bottom - top : 0 };
+  }
+
+  function startDrag(e: PointerEvent, list: TaskListDto, from: number) {
+    if (e.button !== 0 || !onmovelist) return;
+    e.preventDefault();
+    e.stopPropagation();
+    drag = { id: list.id, from, to: from, line: 0 };
+    const move = (ev: PointerEvent) => {
+      if (drag) drag = { ...drag, ...dropIndex(ev.clientY) };
+    };
+    const end = (ev: PointerEvent) => {
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", end);
+      removeEventListener("pointercancel", end);
+      const done = drag;
+      drag = null;
+      if (done && ev.type === "pointerup" && done.to !== done.from && done.to !== done.from + 1) {
+        onmovelist(done.id, done.to);
+      }
+    };
+    addEventListener("pointermove", move);
+    addEventListener("pointerup", end);
+    addEventListener("pointercancel", end);
+  }
 
   function countFor(kind: string): string | undefined {
     if (kind === "inbox") return formatCount(lists.counts.inbox);
@@ -98,20 +154,36 @@
         <span class="divider"></span>
       {/if}
     </div>
-    <ul class="group" aria-labelledby={collapsed ? undefined : "lists-label"}>
-      {#each lists.userLists as list (list.id)}
-        <li>
-          <SidebarItem
-            href={routeHash({ view: "list", listId: list.id })}
-            icon={Hash}
-            label={list.name}
-            monogram={[...list.name][0]}
-            active={route.view === "list" && route.listId === list.id}
-            {collapsed}
-            {onnavigate}
-          />
+    <ul class="group lists" aria-labelledby={collapsed ? undefined : "lists-label"} bind:this={listsEl}>
+      {#each lists.userLists as list, i (list.id)}
+        <li data-index={i}>
+          {#if renamingId === list.id && !collapsed}
+            <NewListInput
+              initial={list.name}
+              label="Neuer Name der Liste"
+              oncreate={(name) => onrename?.(list, name).catch(() => {})}
+              oncancel={() => onrenamecancel?.()}
+            />
+          {:else}
+            <SidebarItem
+              href={routeHash({ view: "list", listId: list.id })}
+              icon={Hash}
+              label={list.name}
+              monogram={[...list.name][0]}
+              active={route.view === "list" && route.listId === list.id}
+              {collapsed}
+              {onnavigate}
+              listId={list.id}
+              oncontextmenu={onlistmenu ? (e) => menuAt(list, e) : undefined}
+              ondragstart={onmovelist ? (e) => startDrag(e, list, i) : undefined}
+              dragging={drag?.id === list.id}
+            />
+          {/if}
         </li>
       {/each}
+      {#if drag && drag.to !== drag.from && drag.to !== drag.from + 1}
+        <li class="drop-line" style:top="{drag.line - 1}px" aria-hidden="true"></li>
+      {/if}
       {#if addingList && !collapsed}
         <li>
           <NewListInput
@@ -224,6 +296,18 @@
     width: 24px;
     height: 1px;
     background: var(--color-border);
+  }
+  .lists {
+    position: relative;
+  }
+  .drop-line {
+    position: absolute;
+    left: var(--space-2);
+    right: var(--space-2);
+    height: 2px;
+    border-radius: 1px;
+    background: var(--color-accent);
+    pointer-events: none;
   }
   .hint {
     padding: var(--space-1) 10px;

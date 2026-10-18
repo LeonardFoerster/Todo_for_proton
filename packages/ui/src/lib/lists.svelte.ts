@@ -1,4 +1,4 @@
-import type { CoreClient, TaskListDto, TaskQueryDto } from "@tasks/core-client";
+import type { CoreClient, MoveListTargetDto, TaskListDto, TaskQueryDto } from "@tasks/core-client";
 import { routeQuery } from "./views";
 
 /** So viele offene Tasks zählt die Sidebar höchstens (darüber „999+“). */
@@ -43,6 +43,58 @@ export class ListsState {
   async reloadLists() {
     this.lists = await this.client.listTaskLists();
     this.loaded = true;
+  }
+
+  /** Umbenennen (optimistisch; bei Fehler neu laden und weiterwerfen). */
+  async rename(id: string, name: string): Promise<void> {
+    const trimmed = name.trim();
+    this.lists = this.lists.map((l) => (l.id === id ? { ...l, name: trimmed } : l));
+    try {
+      const saved = await this.client.renameTaskList(id, trimmed);
+      this.lists = this.lists.map((l) => (l.id === id ? saved : l));
+    } catch (e) {
+      await this.reloadLists();
+      throw e;
+    }
+  }
+
+  /** Löschen (Tasks wandern im Core in den Eingang); liefert deren Anzahl. */
+  async remove(id: string): Promise<number> {
+    const moved = await this.client.deleteTaskList(id);
+    this.lists = this.lists.filter((l) => l.id !== id);
+    return moved;
+  }
+
+  /**
+   * Benutzerliste optimistisch an Einfügeposition `to` (Index unter den Benutzerlisten vor dem
+   * Entfernen) schieben und speichern. Eingang bleibt vorn. Bei Fehler neu laden und weiterwerfen.
+   */
+  async move(id: string, to: number): Promise<void> {
+    const user = this.userLists;
+    const from = user.findIndex((l) => l.id === id);
+    if (from < 0) return;
+    const rest = user.filter((l) => l.id !== id);
+    const at = Math.max(0, Math.min(rest.length, to > from ? to - 1 : to));
+    if (at === from) return;
+    const target: MoveListTargetDto = { after: rest[at - 1]?.id, before: rest[at]?.id };
+    const inbox = this.inbox;
+    this.lists = [...(inbox ? [inbox] : []), ...rest.slice(0, at), user[from], ...rest.slice(at)];
+    try {
+      await this.client.moveTaskList(id, target);
+    } catch (e) {
+      await this.reloadLists();
+      throw e;
+    }
+  }
+
+  /** Offene bzw. erledigte Tasks einer Liste zählen (für den Lösch-Dialog, höchstens 999+). */
+  async countTasks(listId: string): Promise<{ open: number; done: number }> {
+    const view = { kind: "list" as const, listId };
+    const [open, all] = await Promise.all([
+      this.count({ view, status: "open" }),
+      this.count({ view }),
+    ]);
+    return { open, done: Math.max(0, all - open) };
   }
 
   private scheduleCounts() {
