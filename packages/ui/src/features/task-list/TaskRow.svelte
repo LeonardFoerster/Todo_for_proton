@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { TaskSummaryDto } from "@tasks/core-client";
   import Checkbox from "../../components/Checkbox.svelte";
+  import SelectBox from "../../components/SelectBox.svelte";
   import { Flag, GripVertical, Hash, Trash } from "../../icons";
   import { dueLabel } from "../../lib/format-date";
 
@@ -8,16 +9,33 @@
     task: TaskSummaryDto;
     /** Listenname in Sammelansichten (Heute, Geplant, Alle). */
     listName?: string;
+    /** Cursor: fokussierte Zeile (Tastatur, Detail). */
     selected?: boolean;
+    /** Auswahlmodus an: Auswahlkästchen zeigen, `aria-selected` = `checked`. */
+    selectable?: boolean;
+    /** In der Mehrfachauswahl. */
+    checked?: boolean;
     ontoggle: (task: TaskSummaryDto, done: boolean) => void;
-    onopen: (task: TaskSummaryDto) => void;
+    /** Klick auf die Zeile (Modifikatortasten entscheiden in der Liste). */
+    onopen: (task: TaskSummaryDto, e: MouseEvent) => void;
     ondelete?: (task: TaskSummaryDto) => void;
     /** Ziehen am Griff beginnt (nur in sortierbaren Ansichten gesetzt). */
     ondragstart?: (e: PointerEvent, task: TaskSummaryDto) => void;
     dragging?: boolean;
   }
 
-  let { task, listName, selected = false, ontoggle, onopen, ondelete, ondragstart, dragging = false }: Props = $props();
+  let {
+    task,
+    listName,
+    selected = false,
+    selectable = false,
+    checked = false,
+    ontoggle,
+    onopen,
+    ondelete,
+    ondragstart,
+    dragging = false,
+  }: Props = $props();
 
   const done = $derived(task.status === "done");
   const due = $derived(task.due ? dueLabel(task.due) : null);
@@ -30,15 +48,17 @@
   class="row"
   class:done
   class:selected
+  class:selectable
+  class:checked
   class:dragging
   role="option"
-  aria-selected={selected}
+  aria-selected={selectable ? checked : selected}
   aria-label={[task.title, done ? "erledigt" : null, due?.long].filter(Boolean).join(", ")}
   tabindex={selected ? 0 : -1}
   data-task-id={task.id}
   onclick={(e) => {
     e.currentTarget.focus({ preventScroll: true });
-    onopen(task);
+    onopen(task, e);
   }}
 >
   {#if ondragstart}
@@ -51,6 +71,7 @@
       <GripVertical size={14} strokeWidth={1.75} />
     </span>
   {/if}
+  {#if selectable}<SelectBox {checked} />{/if}
   <Checkbox
     checked={done}
     label={done ? `Wieder öffnen: ${task.title}` : `Erledigt: ${task.title}`}
@@ -104,8 +125,16 @@
   .row:hover {
     background: var(--color-bg-hover);
   }
-  .row.selected {
+  .row.selected,
+  .row.selectable.checked {
     background: var(--color-bg-selected);
+  }
+  /* Im Auswahlmodus färbt nur die Auswahl; der Cursor behält den Balken links. */
+  .row.selectable.selected:not(.checked) {
+    background: transparent;
+  }
+  .row.selectable.selected:not(.checked):hover {
+    background: var(--color-bg-hover);
   }
   .row.selected::before {
     content: "";
@@ -232,8 +261,12 @@
     display: flex;
     background: var(--color-bg-hover);
   }
-  .row.selected:hover .actions {
+  .row.selected:hover .actions,
+  .row.checked:hover .actions {
     background: var(--color-bg-selected);
+  }
+  .row.selectable.selected:not(.checked):hover .actions {
+    background: var(--color-bg-hover);
   }
   .action {
     display: grid;

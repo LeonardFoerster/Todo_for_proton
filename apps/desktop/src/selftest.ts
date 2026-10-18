@@ -694,7 +694,100 @@ const p002: Step[] = [
   ],
 ];
 
-const SUITES: Record<string, Step[]> = { p002, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
+// P0-04 bis P0-07: Mehrfachauswahl in der echten WebView (synthetische Ereignisse, keine Eingaben am Desktop).
+const SELECT_N = 250;
+const multiselectable = () => document.querySelector('[role="listbox"]')?.getAttribute("aria-multiselectable") === "true";
+const selectionCount = () => Number(/(\d+) ausgewählt/.exec(document.querySelector('[role="toolbar"] [role="status"]')?.textContent ?? "")?.[1] ?? -1);
+const checkedTitles = () =>
+  [...document.querySelectorAll<HTMLElement>('[role="option"][aria-selected="true"]')].map((o) => o.getAttribute("aria-label")).join(",");
+const row = (title: string) => until(`Zeile ${title}`, () => byRole("option", title));
+
+/** Tasten gehen wie echte an das fokussierte Element (bzw. `body`). */
+const focused = (): HTMLElement => (document.activeElement as HTMLElement | null) ?? document.body;
+
+function clickWith(el: HTMLElement, init: MouseEventInit = {}) {
+  el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...init }));
+}
+
+const p0sel: Step[] = [
+  [
+    `Liste „Auswahl“ mit ${SELECT_N} Tasks`,
+    async (client) => {
+      const list = await client.createTaskList("Auswahl");
+      for (let i = 0; i < SELECT_N; i += 50) {
+        await Promise.all(
+          Array.from({ length: Math.min(50, SELECT_N - i) }, (_, j) =>
+            client.createTask({ title: `W${String(i + j + 1).padStart(3, "0")}`, listId: list.id }),
+          ),
+        );
+      }
+      location.hash = `#/list/${list.id}`;
+      await until("h1 Auswahl", () => heading() === "Auswahl");
+      await row("W001");
+    },
+  ],
+  [
+    "Modus per Button an, Esc aus",
+    async () => {
+      await click("button", "Auswählen");
+      await until("Modus an", () => multiselectable() && selectionCount() === 0);
+      key(focused(), "Escape");
+      await until("Modus aus", () => !multiselectable() && byRole("button", "Auswählen"));
+    },
+  ],
+  [
+    "Strg+Klick startet ab Cursor, schließt das Detail",
+    async () => {
+      (await row("W002")).click();
+      await until("Detail offen", () => document.querySelector('[aria-label="Task-Details"]'));
+      clickWith(await row("W004"), { ctrlKey: true });
+      await until("W002+W004", () => checkedTitles() === "W002,W004");
+      if (document.querySelector('[aria-label="Task-Details"]')) throw new Error("Detail noch offen");
+      return checkedTitles();
+    },
+  ],
+  [
+    "Umschalt+Klick fügt Bereich hinzu",
+    async () => {
+      clickWith(await row("W006"), { shiftKey: true });
+      await until("Bereich", () => checkedTitles() === "W002,W004,W005,W006");
+      return `${selectionCount()} ausgewählt`;
+    },
+  ],
+  [
+    "Umschalt+↓ erweitert, X schaltet um",
+    async () => {
+      key(focused(), "Escape");
+      await until("Modus aus", () => !multiselectable());
+      const first = await row("W001");
+      first.focus();
+      first.click();
+      key(focused(), "Escape"); // Detail zu, Cursor bleibt
+      key(focused(), "ArrowDown", { shiftKey: true });
+      key(focused(), "ArrowDown", { shiftKey: true });
+      await until("W001–W003", () => checkedTitles() === "W001,W002,W003");
+      key(focused(), "x");
+      await until("W003 ab", () => checkedTitles() === "W001,W002");
+      return checkedTitles();
+    },
+  ],
+  [
+    `Strg+A wählt alle ${SELECT_N} (nachgeladene Seiten)`,
+    async () => {
+      const t0 = performance.now();
+      key(focused(), "a", { ctrlKey: true });
+      await until(`${SELECT_N} ausgewählt`, () => selectionCount() === SELECT_N, 5000);
+      const ms = performance.now() - t0;
+      key(focused(), "a", { ctrlKey: true });
+      await until("keine", () => selectionCount() === 0);
+      key(focused(), "Escape");
+      await until("Modus aus", () => !multiselectable());
+      return `${ms.toFixed(0)} ms`;
+    },
+  ],
+];
+
+const SUITES: Record<string, Step[]> = { p002, p0sel, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
   p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */

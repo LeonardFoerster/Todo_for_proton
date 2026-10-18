@@ -22,6 +22,8 @@
     oncontextmenu?: (e: MouseEvent) => void;
     /** ARIA-Rolle des Containers (`list` oder `listbox`). */
     role?: "list" | "listbox";
+    /** Listbox mit Mehrfachauswahl (`aria-multiselectable`). */
+    multiselectable?: boolean;
   }
 
   let {
@@ -37,6 +39,7 @@
     oncontextmenu,
     label,
     role = "list",
+    multiselectable = false,
   }: Props = $props();
 
   let viewport: HTMLDivElement;
@@ -75,6 +78,7 @@
   {oncontextmenu}
   {role}
   aria-label={label}
+  aria-multiselectable={role === "listbox" && multiselectable ? true : undefined}
   tabindex="-1"
 >
   <div class="spacer" style:height="{items.length * rowHeight}px">

@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { TaskSummaryDto } from "@tasks/core-client";
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import Button from "../../components/Button.svelte";
   import Menu, { type MenuItem } from "../../components/Menu.svelte";
   import { toasts } from "../../components/toasts.svelte";
@@ -12,6 +12,7 @@
   import type { Route } from "../../lib/router.svelte";
   import { deleteWithUndo } from "../../lib/task-actions";
   import { listName, routeIcon, SMART_VIEWS } from "../../lib/views";
+  import { SelectionState } from "./selection.svelte";
   import { TaskListState, toSummary } from "./task-list-state.svelte";
   import TaskRow from "./TaskRow.svelte";
 
@@ -42,6 +43,9 @@
   const EmptyIcon = routeIcon(view);
   const emptyText =
     view.view === "list" ? "Diese Liste ist leer." : (SMART_VIEWS.find((v) => v.kind === view.view)?.empty ?? "");
+
+  /** Mehrfachauswahl dieser Ansicht (P0); endet mit der Ansicht. */
+  export const selection = new SelectionState();
 
   let list = $state<VirtualList<TaskSummaryDto>>();
   let drag = $state<{ id: string; from: number; to: number } | null>(null);
@@ -82,6 +86,91 @@
   function open(task: TaskSummaryDto) {
     selectedId = task.id;
     onopen?.(task.id);
+  }
+
+  // --- Mehrfachauswahl -------------------------------------------------------------------------
+
+  /** IDs in Anzeigereihenfolge (O(n), nur für Bereiche). */
+  const order = () => rows.items.map((t) => t.id);
+
+  /** Auswahl gemessen an der ganzen Ansicht (Tri-State „Alle auswählen“). */
+  const allState = $derived<"none" | "some" | "all">(
+    selection.count === 0 ? "none" : !rows.hasMore && selection.count >= rows.items.length ? "all" : "some",
+  );
+
+  // Zeilen, die die Ansicht verlassen (Sync, Löschen, Verschieben), fallen aus der Auswahl – ein
+  // Effekt über die ganze Menge, nicht pro Zeile.
+  $effect(() => {
+    const items = rows.items;
+    untrack(() => {
+      if (selection.count > 0) selection.prune(new Set(items.map((t) => t.id)));
+    });
+  });
+
+  /**
+   * Klick auf eine Zeile. Ohne Modus öffnet er; Strg/Umschalt starten den Modus (Cursor-Zeile bzw.
+   * Bereich ab Cursor, wie im Dateimanager). Im Modus: Klick/Strg schaltet um, Umschalt fügt den
+   * Bereich Anker → Zeile hinzu.
+   */
+  function rowClick(task: TaskSummaryDto, e: MouseEvent) {
+    const additive = e.ctrlKey || e.metaKey;
+    if (!selection.active) {
+      if (!additive && !e.shiftKey) {
+        open(task);
+        return;
+      }
+      const cursor = selectedId && rows.byId(selectedId) ? selectedId : null;
+      if (e.shiftKey) {
+        selection.enter();
+        selection.range(task.id, order(), cursor);
+      } else {
+        selection.enter(cursor ? [cursor] : []);
+        if (task.id !== cursor) selection.toggle(task.id);
+      }
+    } else if (e.shiftKey) {
+      selection.range(task.id, order(), selectedId);
+    } else {
+      selection.toggle(task.id);
+    }
+    selectedId = task.id;
+  }
+
+  export function startSelection() {
+    selection.enter();
+  }
+
+  export function exitSelection() {
+    selection.exit();
+  }
+
+  export function selectionAll(): "none" | "some" | "all" {
+    return allState;
+  }
+
+  /** Alle Tasks der Ansicht (fehlende Seiten werden nachgeladen) bzw. – sind es schon alle – keine. */
+  export async function toggleAll() {
+    selection.enter();
+    if (allState === "all") {
+      selection.clear();
+      return;
+    }
+    selection.selectAll(await rows.loadAll());
+  }
+
+  /** `X`/Leertaste im Modus: Cursor-Zeile umschalten. */
+  export function toggleCursor() {
+    if (selectedId && rows.byId(selectedId)) selection.toggle(selectedId);
+  }
+
+  /** Umschalt+↑/↓: Cursor bewegen und Auswahl erweitern (startet den Modus). */
+  export function extendSelection(delta: -1 | 1) {
+    selection.enter();
+    const ids = order();
+    const next = selection.extend(delta, selectedId && rows.byId(selectedId) ? selectedId : null, ids);
+    if (!next) return;
+    selectedId = next;
+    list?.scrollToIndex(ids.indexOf(next));
+    void focusSelected();
   }
 
   // --- Sortieren -------------------------------------------------------------------------------
@@ -242,6 +331,7 @@
       role="listbox"
       label="Tasks"
       rowHeight={ROW}
+      multiselectable={selection.active}
       onEndReached={rows.hasMore ? () => void rows.loadMore() : undefined}
       oncontextmenu={contextMenu}
     >
@@ -250,9 +340,11 @@
           {task}
           listName={showListNames ? names.get(task.listId) : undefined}
           selected={task.id === selectedId}
+          selectable={selection.active}
+          checked={selection.active && selection.has(task.id)}
           dragging={drag?.id === task.id}
           ontoggle={toggle}
-          onopen={open}
+          onopen={rowClick}
           ondelete={(t) => void deleteTask(t)}
           ondragstart={sortable ? startDrag : undefined}
         />

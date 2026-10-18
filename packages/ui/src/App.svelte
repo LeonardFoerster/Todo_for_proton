@@ -1,15 +1,16 @@
 <script lang="ts">
   import type { CoreClient } from "@tasks/core-client";
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import IconButton from "./components/IconButton.svelte";
   import Toaster from "./components/Toaster.svelte";
   import { toasts } from "./components/toasts.svelte";
   import Sidebar from "./features/sidebar/Sidebar.svelte";
   import QuickAdd from "./features/quick-add/QuickAdd.svelte";
   import TaskDetail from "./features/task-detail/TaskDetail.svelte";
+  import SelectionBar from "./features/task-list/SelectionBar.svelte";
   import TaskList from "./features/task-list/TaskList.svelte";
   import ShortcutHelp from "./features/shell/ShortcutHelp.svelte";
-  import { Keyboard, PanelLeft, Settings } from "./icons";
+  import { Keyboard, ListChecks, PanelLeft, Settings } from "./icons";
   import type SettingsDialogType from "./features/account/SettingsDialog.svelte";
   import { setCoreClient } from "./lib/context";
   import { ListsState } from "./lib/lists.svelte";
@@ -55,6 +56,13 @@
 
   const route = $derived(router.route);
   const title = $derived(routeTitle(route, lists.lists));
+  /** Mehrfachauswahl der aktuellen Ansicht (gehört der TaskList, endet mit ihr). */
+  const selection = $derived(taskList?.selection);
+
+  // Auswahlmodus schließt das Detail-Panel.
+  $effect(() => {
+    if (selection?.active) untrack(() => (openId = null));
+  });
 
   onMount(() => {
     const stops = [router.listen(), followSystemTheme(), shortcuts.attach(window), trackInputMode()];
@@ -152,6 +160,7 @@
   const shortcuts = new ShortcutRegistry();
   const hasList = () => !!taskList && taskList.items().length > 0;
   const selected = () => taskList?.items().find((t) => t.id === selectedId);
+  const selecting = () => !!selection?.active;
 
   /** Auswahl verschieben; ohne Auswahl die erste bzw. letzte Zeile. */
   function selectBy(delta: -1 | 1) {
@@ -177,6 +186,7 @@
     else if (target && target.matches("input, textarea, select")) target.blur();
     else if (openId) closeDetail();
     else if (drawerOpen) drawerOpen = false;
+    else if (selecting()) taskList?.exitSelection();
     else selectedId = null;
   }
 
@@ -206,19 +216,54 @@
       label: "Leertaste / E",
       description: "Erledigt umschalten",
       group: "Liste",
-      when: () => !!selected(),
+      when: () => !selecting() && !!selected(),
       run: () => taskList?.toggleTask(selected()!),
     },
     {
       keys: ["enter"],
       description: "Details öffnen",
       group: "Liste",
-      when: () => !!selected(),
+      when: () => !selecting() && !!selected(),
       run: () => (openId = selectedId),
     },
-    { keys: ["delete"], description: "Löschen (mit Rückgängig)", group: "Liste", when: () => !!selected(), run: () => void taskList?.deleteTask() },
+    {
+      keys: ["delete"],
+      description: "Löschen (mit Rückgängig)",
+      group: "Liste",
+      when: () => !selecting() && !!selected(),
+      run: () => void taskList?.deleteTask(),
+    },
     { keys: ["alt+arrowup"], description: "Nach oben verschieben", group: "Liste", when: () => !!selected(), run: () => taskList?.moveSelected(-1) },
     { keys: ["alt+arrowdown"], description: "Nach unten verschieben", group: "Liste", when: () => !!selected(), run: () => taskList?.moveSelected(1) },
+    {
+      keys: ["ctrl+a"],
+      description: "Alle auswählen (sind es schon alle: keine)",
+      group: "Auswahl",
+      when: hasList,
+      run: () => void taskList?.toggleAll(),
+    },
+    {
+      keys: ["x", "space"],
+      label: "X / Leertaste",
+      description: "Task aus- oder abwählen",
+      group: "Auswahl",
+      when: () => selecting() && !!selected(),
+      run: () => taskList?.toggleCursor(),
+    },
+    {
+      keys: ["shift+arrowdown"],
+      description: "Auswahl nach unten erweitern",
+      group: "Auswahl",
+      when: hasList,
+      run: () => taskList?.extendSelection(1),
+    },
+    {
+      keys: ["shift+arrowup"],
+      description: "Auswahl nach oben erweitern",
+      group: "Auswahl",
+      when: hasList,
+      run: () => taskList?.extendSelection(-1),
+    },
     { keys: ["g i"], description: "Eingang", group: "Ansichten", run: () => goTo("inbox") },
     { keys: ["g t"], description: "Heute", group: "Ansichten", run: () => goTo("today") },
     { keys: ["g u"], description: "Geplant", group: "Ansichten", run: () => goTo("upcoming") },
@@ -251,10 +296,26 @@
         <IconButton label="Navigation öffnen" icon={PanelLeft} onclick={() => (drawerOpen = true)} />
       </span>
       <h1 id="view-title">{title}</h1>
-      <span class="header-actions">
-        <IconButton label="Tastaturkürzel" shortcut="?" icon={Keyboard} onclick={() => (showShortcuts = true)} />
-        <IconButton label="Einstellungen" icon={Settings} onclick={() => void openSettings()} />
-      </span>
+      {#if selection?.active && taskList}
+        <SelectionBar
+          all={taskList.selectionAll()}
+          count={selection.count}
+          ontoggleall={() => void taskList?.toggleAll()}
+          ondone={() => taskList?.exitSelection()}
+        />
+      {:else}
+        <span class="header-actions">
+          <IconButton
+            label="Auswählen"
+            shortcut="Strg+A"
+            icon={ListChecks}
+            disabled={!hasList()}
+            onclick={() => taskList?.startSelection()}
+          />
+          <IconButton label="Tastaturkürzel" shortcut="?" icon={Keyboard} onclick={() => (showShortcuts = true)} />
+          <IconButton label="Einstellungen" icon={Settings} onclick={() => void openSettings()} />
+        </span>
+      {/if}
     </header>
     <div class="pane-body">
       {#if ready && (route.view !== "list" || lists.lists.some((l) => l.id === route.listId))}

@@ -31,3 +31,5 @@ export { default as Keyboard } from "@lucide/svelte/icons/keyboard";
 export { default as Copy } from "@lucide/svelte/icons/copy";
 export { default as ExternalLink } from "@lucide/svelte/icons/external-link";
 export { default as ShieldCheck } from "@lucide/svelte/icons/shield-check";
+export { default as ListChecks } from "@lucide/svelte/icons/list-checks";
+export { default as FolderInput } from "@lucide/svelte/icons/folder-input";
