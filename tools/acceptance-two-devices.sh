@@ -9,6 +9,7 @@
 # Aufruf:  tools/acceptance-two-devices.sh [AUSGABE-ORDNER]
 # Fenster öffnen sich sichtbar (keine Eingaben am Desktop nötig). Dauer: ~3–5 min.
 # Abschnitt 5 (P0-07): Sammelaktionen der Mehrfachauswahl über beide Profile.
+# Abschnitt 6 (P1-03): Abhaken verlässt den Eingang, Upload ohne manuellen Sync.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -114,9 +115,11 @@ else
     say "  [A] Sync startete nicht"; failures=$((failures + 1))
 fi
 # Neustart: der Start-Sync holt nach – auch ihn abschießen (fester Zeitpunkt nach dem Start).
-pid=$(start A p802sync 400)
+# Langsameres Backend (1 s je Aufruf): Auf einer schnellen Maschine ist beim ersten Abbruch oft nur
+# noch ein Segment offen, das bei 400 ms schon vor 2,5 s oben wäre.
+pid=$(start A p802sync 1000)
 sleep 2.5
-killed "$pid" "2,5 s nach Neustart (Start-Sync)"
+killed "$pid" "2,5 s nach Neustart (Start-Sync, Backend 1 s je Aufruf)"
 run A p802sync
 run B p802sync
 count() { "$CLI" --db "$OUT/$1/tasks.db" ls Masse | awk '{print $NF}' | sort | uniq | wc -l; }
@@ -154,6 +157,17 @@ say "  B: ${b:0:120}…"
 [ "$a" = "$r" ]; check "nach Neustart von A unverändert" $?
 [[ $a == "Sammel 100: S102 S104 S101 S103 S105 "* ]]; check "50 gelöscht, Block S101+S103 hinter S104" $?
 [[ $a == *"· Ziel 50: S051 S052 "* ]]; check "50 in „Ziel“, Reihenfolge erhalten" $?
+
+say ""
+say "== 6. Abhaken im Eingang → verschwindet, automatisch hochgeladen → B sieht sie unter „Erledigt“ =="
+run A p1A
+passed A p1A; check "A: Zeile verlässt den Eingang, Upload ohne manuellen Sync in ≤ 6 s" $?
+run B p1B
+a=$(state A p1A)
+b=$(state B p1B)
+say "  A: $a"
+say "  B: $b"
+[ "$a" = "Abhaken-Test erledigt=true im Eingang=false" ] && [ "$a" = "$b" ]; check "B: erledigt, nicht mehr im Eingang" $?
 
 say ""
 if [ $failures -eq 0 ]; then say "ERGEBNIS: alle Prüfungen bestanden"; else say "ERGEBNIS: $failures Prüfung(en) fehlgeschlagen"; fi

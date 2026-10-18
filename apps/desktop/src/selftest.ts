@@ -1121,7 +1121,111 @@ const p0bulkB: Step[] = [
 const p0bulkLocal: Step[] = [["Zustand", async (client) => p0state(client)]];
 
 
-const SUITES: Record<string, Step[]> = { p002, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
+// P1-03: automatischer Upload nach lokalen Änderungen (ADR-022) – ohne `sync.now`.
+
+/** Wartet auf einen erfolgreichen Lauf nach `since` (Date.now) mit leerer Outbox; liefert ms seit `since`. */
+async function uploadedSince(client: CoreClient, since: number, timeoutMs = 10_000): Promise<number> {
+  const end = performance.now() + timeoutMs;
+  for (;;) {
+    const st = await client.sync.status();
+    if (st.state === "idle" && st.pendingOps === 0 && st.lastSuccess && Date.parse(st.lastSuccess) >= since) {
+      return Date.now() - since;
+    }
+    if (performance.now() > end) throw new Error(`timeout: ${st.state}, ${st.pendingOps} ausstehend`);
+    await sleep(50);
+  }
+}
+
+/** Abhaken über das runde Kästchen in der Zeile; wartet, bis die Zeile die Ansicht verlassen hat (P1-01). */
+async function completeInView(title: string) {
+  (await until(`Haken ${title}`, () => byRole("checkbox", `Erledigt: ${title}`))).click();
+  await until(`${title} verschwunden`, () => !byRole("option", title) && !byRole("option", `${title}, erledigt`), 3000);
+}
+
+const P1_TASK = "Abhaken-Test";
+
+async function p1state(client: CoreClient): Promise<string> {
+  const done = (await client.listTasks({ view: { kind: "completed" } }, { limit: 500 })).items;
+  const open = (await client.listTasks({ view: { kind: "inbox" }, status: "open" }, { limit: 500 })).items;
+  return `${P1_TASK} erledigt=${done.some((t) => t.title === P1_TASK)} im Eingang=${open.some((t) => t.title === P1_TASK)}`;
+}
+
+const p1sync: Step[] = [
+  ["Bereit: synchronisiert", async (client) => syncedNow(client)],
+  [
+    "Eine Änderung wird ohne Zutun hochgeladen",
+    async (client) => {
+      const t0 = Date.now();
+      await client.createTask({ title: "P1 einzeln" });
+      const ms = await uploadedSince(client, t0);
+      if (ms > 4000) throw new Error(`${ms} ms`);
+      return `${ms} ms (Debounce 1,5 s + Lauf)`;
+    },
+  ],
+  [
+    "Serie: 8 Änderungen im Sekundentakt → erster Upload ≤ 5,5 s",
+    async (client) => {
+      const runs: number[] = [];
+      let last = "";
+      const stop = client.onSyncStatus((st) => {
+        if (st.state === "syncing" && last !== "syncing") runs.push(Date.now());
+        last = st.state;
+      });
+      try {
+        const t0 = Date.now();
+        const task = await client.createTask({ title: "P1 Serie" });
+        for (let i = 1; i < 8; i++) {
+          await sleep(1000);
+          if (i % 3 === 1) await client.updateTask(task.id, { title: `P1 Serie ${i}` });
+          else if (i % 3 === 2) await client.completeTask(task.id, i % 2 === 0);
+          else await client.createTask({ title: `P1 Serie neu ${i}` });
+        }
+        await uploadedSince(client, Date.now() - 100);
+        const first = runs.find((r) => r >= t0);
+        if (first === undefined) throw new Error("kein Lauf");
+        const after = first - t0;
+        if (after > 5500) throw new Error(`erster Lauf erst nach ${after} ms`);
+        return `erster Lauf nach ${after} ms, ${runs.filter((r) => r >= t0).length} Läufe für 8 Änderungen in ${((Date.now() - t0) / 1000).toFixed(1)} s`;
+      } finally {
+        stop();
+      }
+    },
+  ],
+];
+
+/** Abnahme Abschnitt 6, Gerät A: im Eingang abhaken → Zeile weg, ohne manuellen Sync oben. */
+const p1A: Step[] = [
+  ["Bereit: synchronisiert", async (client) => syncedNow(client)],
+  [
+    `„${P1_TASK}“ anlegen (Quick-Add)`,
+    async () => {
+      location.hash = "#/inbox";
+      await until("h1 Eingang", () => heading() === "Eingang");
+      const input = await field("Neue Task");
+      type(input, P1_TASK);
+      key(input, "Enter");
+      await row(P1_TASK);
+    },
+  ],
+  [
+    "Im Eingang abhaken: Zeile verschwindet, Upload ohne Zutun",
+    async (client) => {
+      const t0 = Date.now();
+      await completeInView(P1_TASK);
+      const ms = await uploadedSince(client, t0);
+      if (ms > 6000) throw new Error(`${ms} ms`);
+      return `oben nach ${ms} ms`;
+    },
+  ],
+  ["Zustand", async (client) => p1state(client)],
+];
+
+const p1B: Step[] = [
+  ["Synchronisiert", async (client) => syncedNow(client)],
+  ["Zustand", async (client) => p1state(client)],
+];
+
+const SUITES: Record<string, Step[]> = { p002, p1sync, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
   p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */
