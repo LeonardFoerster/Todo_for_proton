@@ -41,6 +41,10 @@ desktop-dev:
 desktop-build:
     cd apps/desktop && pnpm install --frozen-lockfile && pnpm tauri build --no-bundle
 
+# Release-Build für den aktuellen Benutzer installieren/aktualisieren (~/.local, Starter „Tasks“)
+desktop-install:
+    tools/install-desktop.sh
+
 # TS-Typen der DTOs neu erzeugen (packages/core-client/src/generated; läuft auch mit `just test`)
 types:
     cargo test -p todo-core -p todo-desktop --lib export_bindings
