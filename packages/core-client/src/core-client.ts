@@ -56,6 +56,17 @@ export interface CoreClient {
   deleteTask(id: string): Promise<void>;
   listTasks(query: TaskQueryDto, page: PageRequestDto): Promise<PageDto<TaskSummaryDto>>;
 
+  // Sammelaktionen (ADR-021): ein Aufruf, ein Commit, ein `onChange`. Unbekannte IDs werden
+  // übersprungen; Ergebnis = tatsächlich geänderte Tasks. Höchstens 2 000 je Aufruf.
+  /** Abhaken bzw. wieder öffnen; Tasks im Zielzustand fehlen im Ergebnis. */
+  completeTasks(ids: string[], done: boolean): Promise<TaskDto[]>;
+  /** Liefert die gelöschten Tasks im Zustand davor (für `restoreTasks`). */
+  deleteTasks(ids: string[]): Promise<TaskDto[]>;
+  /** Verschiebt die Tasks als Block in bisheriger Reihenfolge; ohne `listId` in ihre gemeinsame Liste. */
+  moveTasks(ids: string[], target: MoveTargetDto): Promise<TaskDto[]>;
+  /** Kopien gelöschter Tasks mit **neuen** IDs, alle Felder, alte Position (Rückgängig). */
+  restoreTasks(tasks: TaskDto[]): Promise<TaskDto[]>;
+
   auth: AuthClient;
   sync: SyncClient;
 

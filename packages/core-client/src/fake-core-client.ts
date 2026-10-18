@@ -23,6 +23,7 @@ const INBOX_ID = "00000000-0000-7000-8000-000000000001";
 const TITLE_MAX = 500;
 const LIST_NAME_MAX = 100;
 const PAGE_LIMIT_MAX = 500;
+const BULK_LIMIT_MAX = 2000;
 
 export interface FakeOptions {
   /** Künstliche Latenz je Aufruf in ms (UI-Entwicklung). */
@@ -188,31 +189,7 @@ export class FakeCoreClient implements CoreClient {
       if (target.after === id || target.before === id) {
         throw new CoreClientError("validation", "a task cannot be its own neighbour");
       }
-      const siblings = this.ordered(listId).filter((r) => r.task.id !== id);
-      const index = (nid: string | null | undefined) => {
-        if (nid == null) return -1;
-        const i = siblings.findIndex((r) => r.task.id === nid);
-        if (i < 0) throw new CoreClientError("validation", `neighbour ${nid} is not in the target list`);
-        return i;
-      };
-      const ai = index(target.after);
-      const bi = index(target.before);
-      let lo: number;
-      let hi: number;
-      if (target.after != null && target.before != null) {
-        if (bi !== ai + 1) throw new CoreClientError("validation", "neighbours are not adjacent");
-        lo = siblings[ai].order;
-        hi = siblings[bi].order;
-      } else if (target.after != null) {
-        lo = siblings[ai].order;
-        hi = siblings[ai + 1]?.order ?? lo + 2;
-      } else if (target.before != null) {
-        hi = siblings[bi].order;
-        lo = siblings[bi - 1]?.order ?? hi - 2;
-      } else {
-        lo = siblings.at(-1)?.order ?? 0;
-        hi = lo + 2;
-      }
+      const [lo, hi] = this.bounds(listId, new Set([id]), target);
       row.task.listId = listId;
       row.order = (lo + hi) / 2;
       this.touch(row);
@@ -224,6 +201,81 @@ export class FakeCoreClient implements CoreClient {
     this.run(() => {
       // Wie im Core: Löschen unbekannter IDs ist ein No-op.
       if (this.rows.delete(id)) this.emit([id], []);
+    });
+
+  // --- Sammelaktionen: ein Event je Aufruf, unbekannte IDs übersprungen (wie ADR-021) ---------
+
+  completeTasks = (ids: string[], done: boolean) =>
+    this.run(() => {
+      const status = done ? "done" : "open";
+      const changed = this.existing(ids).filter((row) => row.task.status !== status);
+      for (const row of changed) {
+        row.task.status = status;
+        row.task.completedAt = done ? this.iso() : null;
+        this.touch(row);
+      }
+      return this.emitRows(changed);
+    });
+
+  deleteTasks = (ids: string[]) =>
+    this.run(() => {
+      const rows = this.existing(ids);
+      const before = rows.map((row) => this.dto(row));
+      for (const row of rows) this.rows.delete(row.task.id);
+      this.emitRows(rows);
+      return before;
+    });
+
+  moveTasks = (ids: string[], target: MoveTargetDto) =>
+    this.run(() => {
+      const rows = this.existing(ids).sort(byOrder(this.lists));
+      if (rows.length === 0) return [];
+      const listId = target.listId ?? rows[0].task.listId;
+      if (target.listId == null && rows.some((r) => r.task.listId !== listId)) {
+        throw new CoreClientError("validation", "tasks are in different lists; a target list is required");
+      }
+      this.list(listId);
+      const moving = new Set(rows.map((r) => r.task.id));
+      if ([target.after, target.before].some((n) => n != null && moving.has(n))) {
+        throw new CoreClientError("validation", "a moved task cannot be a neighbour");
+      }
+      const [lo, hi] = this.bounds(listId, moving, target);
+      const changed: Row[] = [];
+      rows.forEach((row, i) => {
+        const order = lo + ((hi - lo) * (i + 1)) / (rows.length + 1);
+        if (row.task.listId === listId && row.order === order) return;
+        row.task.listId = listId;
+        row.order = order;
+        this.touch(row);
+        changed.push(row);
+      });
+      return this.emitRows(changed);
+    });
+
+  restoreTasks = (tasks: TaskDto[]) =>
+    this.run(() => {
+      checkBulk(tasks.length);
+      const at = this.iso();
+      const rows = tasks.map((t): Row => {
+        const order = Number(t.sortKey);
+        if (!t.sortKey || Number.isNaN(order)) {
+          throw new CoreClientError("validation", `invalid sort key: ${JSON.stringify(t.sortKey)}`);
+        }
+        if ((t.status === "done") !== (t.completedAt != null)) {
+          throw new CoreClientError("validation", "completed_at must be set exactly when the task is done");
+        }
+        const task: TaskDto = {
+          ...t,
+          id: this.newId(),
+          listId: this.lists.has(t.listId) ? t.listId : INBOX_ID,
+          title: validName(t.title, TITLE_MAX, "title"),
+          due: t.due ? validDue(t.due) : null,
+          updatedAt: at,
+        };
+        return { task, order };
+      });
+      for (const row of rows) this.rows.set(row.task.id, row);
+      return this.emitRows(rows);
     });
 
   listTasks = (query: TaskQueryDto, page: PageRequestDto) =>
@@ -338,6 +390,55 @@ export class FakeCoreClient implements CoreClient {
     });
   }
 
+  /** Ein Event für alle Zeilen (keins, wenn leer); liefert sie als DTOs. */
+  private emitRows(rows: Row[]): TaskDto[] {
+    if (rows.length > 0) {
+      this.emit(
+        rows.map((r) => r.task.id),
+        [],
+      );
+    }
+    return rows.map((r) => this.dto(r));
+  }
+
+  /** Existierende Zeilen zu `ids` ohne Duplikate (Reihenfolge wie `ids`). */
+  private existing(ids: string[]): Row[] {
+    checkBulk(ids.length);
+    const rows: Row[] = [];
+    for (const id of new Set(ids)) {
+      const row = this.rows.get(id);
+      if (row) rows.push(row);
+    }
+    return rows;
+  }
+
+  /** Reihenfolgewerte unter- und oberhalb der Zielposition (Nachbarn wie `MoveTargetDto`). */
+  private bounds(listId: string, moving: Set<string>, target: MoveTargetDto): [number, number] {
+    const siblings = this.ordered(listId).filter((r) => !moving.has(r.task.id));
+    const index = (nid: string | null | undefined) => {
+      if (nid == null) return -1;
+      const i = siblings.findIndex((r) => r.task.id === nid);
+      if (i < 0) throw new CoreClientError("validation", `neighbour ${nid} is not in the target list`);
+      return i;
+    };
+    const ai = index(target.after);
+    const bi = index(target.before);
+    if (target.after != null && target.before != null) {
+      if (bi !== ai + 1) throw new CoreClientError("validation", "neighbours are not adjacent");
+      return [siblings[ai].order, siblings[bi].order];
+    }
+    if (target.after != null) {
+      const lo = siblings[ai].order;
+      return [lo, siblings[ai + 1]?.order ?? lo + 2];
+    }
+    if (target.before != null) {
+      const hi = siblings[bi].order;
+      return [siblings[bi - 1]?.order ?? hi - 2, hi];
+    }
+    const lo = siblings.at(-1)?.order ?? 0;
+    return [lo, lo + 2];
+  }
+
   private list(id: string): TaskListDto {
     const list = this.lists.get(id);
     if (!list) throw new CoreClientError("notFound", `not found: list ${id}`);
@@ -378,6 +479,12 @@ export class FakeCoreClient implements CoreClient {
 
   private newId(): string {
     return crypto.randomUUID();
+  }
+}
+
+function checkBulk(n: number) {
+  if (n > BULK_LIMIT_MAX) {
+    throw new CoreClientError("validation", `at most ${BULK_LIMIT_MAX} tasks per call, got ${n}`);
   }
 }
 

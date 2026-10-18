@@ -144,3 +144,62 @@ fn sync_and_auth_without_keyring() {
     let err = h.invoke("auth_begin_login", json!({})).unwrap_err();
     assert_eq!(err["kind"], "unavailable");
 }
+
+#[test]
+fn bulk_commands_through_ipc() {
+    let h = harness();
+    h.ok("ensure_inbox", json!({}));
+    let list = h.ok("create_task_list", json!({ "name": "Arbeit" }));
+    let ids: Vec<Value> = ["a", "b", "c"]
+        .iter()
+        .map(|t| h.ok("create_task", json!({ "input": { "title": t } }))["id"].clone())
+        .collect();
+    let titles = |view: Value| -> Vec<String> {
+        h.ok(
+            "list_tasks",
+            json!({ "query": { "view": view }, "page": { "limit": 50 } }),
+        )["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["title"].as_str().unwrap().to_owned())
+            .collect()
+    };
+
+    let done = h.ok(
+        "complete_tasks",
+        json!({ "ids": [ids[0], ids[1], "0190f5c4-0000-7000-8000-000000000000"], "done": true }),
+    );
+    assert_eq!(
+        done.as_array().unwrap().len(),
+        2,
+        "unbekannte ID übersprungen"
+    );
+
+    let moved = h.ok(
+        "move_tasks",
+        json!({ "ids": [ids[2], ids[0]], "target": { "listId": list["id"] } }),
+    );
+    assert_eq!(moved.as_array().unwrap().len(), 2);
+    assert_eq!(
+        titles(json!({ "kind": "list", "listId": list["id"] })),
+        ["a", "c"]
+    );
+
+    let deleted = h.ok("delete_tasks", json!({ "ids": [ids[0], ids[2]] }));
+    assert_eq!(deleted[0]["title"], "a");
+    assert!(titles(json!({ "kind": "list", "listId": list["id"] })).is_empty());
+
+    let restored = h.ok("restore_tasks", json!({ "tasks": deleted }));
+    assert_ne!(restored[0]["id"], ids[0], "neue ID");
+    assert_eq!(restored[0]["status"], "done");
+    assert_eq!(
+        titles(json!({ "kind": "list", "listId": list["id"] })),
+        ["a", "c"]
+    );
+
+    let err = h
+        .invoke("delete_tasks", json!({ "ids": ["kaputt"] }))
+        .unwrap_err();
+    assert_eq!(err["kind"], "validation");
+}

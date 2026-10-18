@@ -103,6 +103,47 @@ pub async fn delete_task(state: State<'_, AppState>, id: String) -> Result<()> {
     Ok(())
 }
 
+// --- Sammelaktionen (ein Core-Aufruf, ein Commit, ein `local_change`) ---------------------------
+
+#[tauri::command]
+pub async fn complete_tasks(
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+    done: bool,
+) -> Result<Vec<TaskDto>> {
+    let tasks = state.api.complete_tasks(ids, done).await?;
+    state.sync.local_change();
+    Ok(tasks)
+}
+
+#[tauri::command]
+pub async fn delete_tasks(state: State<'_, AppState>, ids: Vec<String>) -> Result<Vec<TaskDto>> {
+    let tasks = state.api.delete_tasks(ids).await?;
+    state.sync.local_change();
+    Ok(tasks)
+}
+
+#[tauri::command]
+pub async fn move_tasks(
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+    target: MoveTargetDto,
+) -> Result<Vec<TaskDto>> {
+    let tasks = state.api.move_tasks(ids, target).await?;
+    state.sync.local_change();
+    Ok(tasks)
+}
+
+#[tauri::command]
+pub async fn restore_tasks(
+    state: State<'_, AppState>,
+    tasks: Vec<TaskDto>,
+) -> Result<Vec<TaskDto>> {
+    let tasks = state.api.restore_tasks(tasks).await?;
+    state.sync.local_change();
+    Ok(tasks)
+}
+
 #[tauri::command]
 pub async fn list_tasks(
     state: State<'_, AppState>,

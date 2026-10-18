@@ -41,6 +41,10 @@ export class TauriCoreClient implements CoreClient {
   moveTask: CoreClient["moveTask"] = (id, target) => invoke("move_task", { id, target });
   deleteTask: CoreClient["deleteTask"] = (id) => invoke("delete_task", { id });
   listTasks: CoreClient["listTasks"] = (query, page) => invoke("list_tasks", { query, page });
+  completeTasks: CoreClient["completeTasks"] = (ids, done) => invoke("complete_tasks", { ids, done });
+  deleteTasks: CoreClient["deleteTasks"] = (ids) => invoke("delete_tasks", { ids });
+  moveTasks: CoreClient["moveTasks"] = (ids, target) => invoke("move_tasks", { ids, target });
+  restoreTasks: CoreClient["restoreTasks"] = (tasks) => invoke("restore_tasks", { tasks });
 
   auth: CoreClient["auth"] = {
     info: () => invoke("auth_info"),

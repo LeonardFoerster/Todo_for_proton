@@ -666,7 +666,35 @@ const p802auth: Step[] = [
   ],
 ];
 
-const SUITES: Record<string, Step[]> = { base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
+// P0-02: Sammel-Commands einmal über die echte IPC (ohne UI).
+const p002: Step[] = [
+  [
+    "complete_tasks / move_tasks / delete_tasks / restore_tasks",
+    async (client) => {
+      const list = await client.createTaskList("Sammel-IPC");
+      const ids: string[] = [];
+      for (const title of ["s1", "s2", "s3"]) ids.push((await client.createTask({ title, listId: list.id })).id);
+      const events: string[][] = [];
+      const off = client.onChange((e) => events.push(e.tasks));
+      const done = await client.completeTasks([...ids, ids[0]], true);
+      const moved = await client.moveTasks([ids[2], ids[1]], { listId: list.id, before: ids[0] });
+      const deleted = await client.deleteTasks(ids);
+      const restored = await client.restoreTasks(deleted);
+      await until("4 Events", () => events.length >= 4);
+      off();
+      const order = (await client.listTasks({ view: { kind: "list", listId: list.id } }, { limit: 10 })).items;
+      const titles = order.map((t) => t.title).join(",");
+      if (done.length !== 3 || moved.length !== 2 || deleted.length !== 3 || restored.length !== 3) {
+        throw new Error(`Ergebnisse ${done.length}/${moved.length}/${deleted.length}/${restored.length}`);
+      }
+      if (titles !== "s2,s3,s1" || !order.every((t) => t.status === "done")) throw new Error(`Reihenfolge ${titles}`);
+      if (events.length !== 4) throw new Error(`${events.length} Events`);
+      return `je 1 Event, Reihenfolge ${titles}`;
+    },
+  ],
+];
+
+const SUITES: Record<string, Step[]> = { p002, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
   p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */

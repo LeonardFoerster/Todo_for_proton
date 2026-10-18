@@ -142,4 +142,82 @@ describe("FakeCoreClient", () => {
     expect(states).toEqual(["idle", "disabled"]);
     await expect(core.auth.pollLogin(step.flow)).rejects.toMatchObject({ kind: "auth" });
   });
+
+  describe("bulk operations", () => {
+    async function bulkSetup() {
+      const { core } = await setup();
+      const work = await core.createTaskList("Arbeit");
+      const ids: Record<string, string> = {};
+      for (const t of "abcdef") ids[t] = (await core.createTask({ title: t })).id;
+      for (const t of "xyz") ids[t] = (await core.createTask({ title: t, listId: work.id })).id;
+      const events: ChangedEventDto[] = [];
+      core.onChange((e) => events.push(e));
+      await Promise.resolve();
+      const flush = async () => {
+        await Promise.resolve();
+        return events.splice(0);
+      };
+      const list = { view: { kind: "list", listId: work.id } } as TaskQueryDto;
+      return { core, work, ids, flush, list, of: (s: string) => [...s].map((c) => ids[c]) };
+    }
+
+    it("moves a block in display order to start, middle and end with one event each", async () => {
+      const { core, flush, of } = await bulkSetup();
+      await core.moveTasks(of("eb"), { before: of("a")[0] });
+      expect((await titles(core)).join("")).toBe("beacdf");
+      expect(await flush()).toEqual([{ tasks: of("be"), lists: [] }]);
+      await core.moveTasks(of("fb"), { after: of("c")[0], before: of("d")[0] });
+      expect((await titles(core)).join("")).toBe("eacbfd");
+      await core.moveTasks(of("ea"), {});
+      expect((await titles(core)).join("")).toBe("cbfdea");
+      expect(await flush()).toHaveLength(2);
+    });
+
+    it("moves into another list and rejects invalid targets", async () => {
+      const { core, work, of, list } = await bulkSetup();
+      const moved = await core.moveTasks(of("db"), { listId: work.id, after: of("x")[0] });
+      expect(moved.map((t) => t.title)).toEqual(["b", "d"]);
+      expect((await titles(core, list)).join("")).toBe("xbdyz");
+      await expect(core.moveTasks(of("ax"), {})).rejects.toMatchObject({ kind: "validation" });
+      await expect(core.moveTasks(of("ac"), { after: of("c")[0] })).rejects.toMatchObject({ kind: "validation" });
+      await expect(core.moveTasks(of("a"), { listId: "nope" })).rejects.toMatchObject({ kind: "notFound" });
+    });
+
+    it("completes and reopens, skipping unknown ids and tasks already in the target state", async () => {
+      const { core, flush, of } = await bulkSetup();
+      await core.completeTask(of("a")[0], true);
+      await flush();
+      const done = await core.completeTasks([...of("abc"), "unknown", ...of("b")], true);
+      expect(done.map((t) => t.title)).toEqual(["b", "c"]);
+      expect(await flush()).toEqual([{ tasks: of("bc"), lists: [] }]);
+      expect(await core.completeTasks(of("bc"), true)).toEqual([]);
+      expect(await flush()).toEqual([]);
+      expect((await core.completeTasks(of("abc"), false)).every((t) => t.completedAt === null)).toBe(true);
+      await expect(core.completeTasks(Array(2001).fill("x"), true)).rejects.toMatchObject({ kind: "validation" });
+    });
+
+    it("deletes with snapshots and restores them with new ids at the old position", async () => {
+      const { core, flush, of } = await bulkSetup();
+      await core.completeTask(of("c")[0], true);
+      await flush();
+      const deleted = await core.deleteTasks([...of("ec"), "unknown"]);
+      expect(deleted.map((t) => t.title)).toEqual(["e", "c"]);
+      expect((await titles(core)).join("")).toBe("abdf");
+      expect(await flush()).toEqual([{ tasks: of("ec"), lists: [] }]);
+
+      const restored = await core.restoreTasks(deleted);
+      expect(restored.map((t) => t.id)).not.toContain(of("c")[0]);
+      expect((await titles(core)).join("")).toBe("abcdef");
+      expect(restored[1]).toMatchObject({ title: "c", status: "done", createdAt: deleted[1].createdAt });
+      expect(await flush()).toEqual([{ tasks: restored.map((t) => t.id), lists: [] }]);
+    });
+
+    it("restores into the inbox when the list is gone", async () => {
+      const { core, work, of } = await bulkSetup();
+      const deleted = await core.deleteTasks(of("y"));
+      await core.deleteTaskList(work.id);
+      const [restored] = await core.restoreTasks(deleted);
+      expect(restored.listId).toBe((await core.ensureInbox()).id);
+    });
+  });
 });

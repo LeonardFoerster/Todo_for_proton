@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-restore-tasks"
+description = "Enables the restore_tasks command without any pre-configured scope."
+commands.allow = ["restore_tasks"]
+
+[[permission]]
+identifier = "deny-restore-tasks"
+description = "Denies the restore_tasks command without any pre-configured scope."
+commands.deny = ["restore_tasks"]
