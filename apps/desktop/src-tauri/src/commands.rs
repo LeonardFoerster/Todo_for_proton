@@ -1,5 +1,16 @@
-//! Dünne `async`-Commands, 1:1 zu `CoreApi` (Namen wie die Use-Cases). Schreibende Commands
-//! melden dem Sync-Treiber eine lokale Änderung (Debounce-Push).
+//! Dünne `async`-Commands, 1:1 zu `CoreApi` (Namen wie die Use-Cases).
+//!
+//! **Sync-Auslöser (ADR-022):** Genau die schreibenden Commands melden nach Erfolg **einmal**
+//! `state.sync.local_change()` – der Scheduler lädt dann nach 1,5 s Ruhe hoch, bei einer Serie
+//! spätestens 5 s nach der ersten Änderung:
+//! - Listen: `create_task_list`, `rename_task_list`, `delete_task_list`
+//! - Tasks: `create_task`, `update_task` (Titel, Notizen, Priorität, Fälligkeit), `complete_task`
+//!   (abhaken/öffnen), `move_task` (Liste/Reihenfolge), `delete_task`
+//! - Sammelaktionen (ein Aufruf = eine Meldung): `complete_tasks`, `delete_tasks`, `move_tasks`,
+//!   `restore_tasks`
+//!
+//! Lesende Commands (`list_*`, `get_task`, `ensure_inbox`, `auth_*`, `sync_*`, `app_ready`) melden
+//! nichts. Nachweis: `tests/commands.rs` (`only_writing_commands_trigger_a_sync`).
 
 use tauri::State;
 use todo_core::api::dto::{

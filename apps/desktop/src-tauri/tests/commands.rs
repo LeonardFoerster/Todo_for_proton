@@ -11,7 +11,7 @@ use tauri::{
 use todo_desktop::state::Options;
 
 struct Harness {
-    _app: App<MockRuntime>,
+    app: App<MockRuntime>,
     window: WebviewWindow<MockRuntime>,
     _dir: tempfile::TempDir,
 }
@@ -31,7 +31,7 @@ fn harness() -> Harness {
         .build()
         .unwrap();
     Harness {
-        _app: app,
+        app,
         window,
         _dir: dir,
     }
@@ -202,4 +202,68 @@ fn bulk_commands_through_ipc() {
         .invoke("delete_tasks", json!({ "ids": ["kaputt"] }))
         .unwrap_err();
     assert_eq!(err["kind"], "validation");
+}
+
+/// ADR-022: Jedes schreibende Command meldet genau eine lokale Änderung (→ Upload), lesende keine.
+#[test]
+fn only_writing_commands_trigger_a_sync() {
+    use tauri::Manager;
+    let h = harness();
+    let changes = || {
+        h.app
+            .state::<todo_desktop::state::AppState>()
+            .sync
+            .local_changes()
+    };
+    let expect = |cmd: &str, args: Value, delta: u64| -> Value {
+        let before = changes();
+        let out = h.ok(cmd, args);
+        assert_eq!(changes() - before, delta, "{cmd}");
+        out
+    };
+    let inbox = expect("ensure_inbox", json!({}), 0);
+    let list = expect("create_task_list", json!({ "name": "Arbeit" }), 1);
+    expect(
+        "rename_task_list",
+        json!({ "id": list["id"], "name": "Büro" }),
+        1,
+    );
+    let a = expect("create_task", json!({ "input": { "title": "a" } }), 1);
+    let b = expect("create_task", json!({ "input": { "title": "b" } }), 1);
+    expect(
+        "update_task",
+        json!({ "id": a["id"], "patch": { "notes": "n" } }),
+        1,
+    );
+    expect("complete_task", json!({ "id": a["id"], "done": true }), 1);
+    expect("complete_task", json!({ "id": a["id"], "done": false }), 1);
+    expect(
+        "move_task",
+        json!({ "id": b["id"], "target": { "before": a["id"] } }),
+        1,
+    );
+    expect(
+        "complete_tasks",
+        json!({ "ids": [a["id"], b["id"]], "done": true }),
+        1,
+    );
+    expect(
+        "move_tasks",
+        json!({ "ids": [a["id"], b["id"]], "target": { "listId": list["id"] } }),
+        1,
+    );
+    let deleted = expect("delete_tasks", json!({ "ids": [a["id"]] }), 1);
+    expect("restore_tasks", json!({ "tasks": deleted }), 1);
+    expect("delete_task", json!({ "id": b["id"] }), 1);
+    expect("delete_task_list", json!({ "id": list["id"] }), 1);
+
+    expect("list_task_lists", json!({}), 0);
+    expect(
+        "list_tasks",
+        json!({ "query": { "view": { "kind": "list", "listId": inbox["id"] } }, "page": { "limit": 10 } }),
+        0,
+    );
+    expect("sync_status", json!({}), 0);
+    expect("auth_info", json!({}), 0);
+    expect("app_ready", json!({}), 0);
 }

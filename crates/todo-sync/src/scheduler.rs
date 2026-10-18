@@ -6,7 +6,8 @@
 //! als [`SchedulerEvent::SyncFinished`] zurückmelden), einen einzigen Timer auf
 //! `timer_in_ms` stellen (vorherigen ersetzen; `None` = keinen) und den Status anzeigen.
 //!
-//! Regeln: Debounce nach lokalen Änderungen; exponentieller Backoff mit Jitter bei Fehlern;
+//! Regeln: Debounce nach lokalen Änderungen mit Höchstwartezeit (eine Serie wird spätestens
+//! `max_wait_ms` nach ihrer ersten Änderung hochgeladen, ADR-022); exponentieller Backoff mit Jitter bei Fehlern;
 //! `Retry-After` bei Drosselung; im Hintergrund oder offline **kein Timer** (keine
 //! Leerlauf-CPU); periodischer Pull nur bei sichtbarem Fenster und mit wachsendem Abstand,
 //! solange nichts passiert.
@@ -87,7 +88,11 @@ pub struct Actions {
 /// Zeiten des Automaten.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SchedulerConfig {
+    /// Ruhe nach einer lokalen Änderung, bevor hochgeladen wird.
     pub debounce_ms: u64,
+    /// Spätestens so lange nach der ersten Änderung einer Serie wird hochgeladen, auch wenn
+    /// weiter geändert wird (sonst verschöbe jede Änderung den Upload erneut).
+    pub max_wait_ms: u64,
     pub backoff_min_ms: u64,
     pub backoff_max_ms: u64,
     /// Anteil zufälliger Streuung des Backoffs (0.2 = ±20 %).
@@ -101,7 +106,8 @@ pub struct SchedulerConfig {
 impl Default for SchedulerConfig {
     fn default() -> Self {
         Self {
-            debounce_ms: 3_000,
+            debounce_ms: 1_500,
+            max_wait_ms: 5_000,
             backoff_min_ms: 5_000,
             backoff_max_ms: 10 * 60 * 1000,
             jitter: 0.2,
@@ -123,6 +129,8 @@ pub struct Scheduler {
     rerun: bool,
     /// Wann der nächste Lauf fällig ist (Debounce, Retry oder periodischer Pull).
     deadline: Option<Timestamp>,
+    /// Erste noch nicht hochgeladene lokale Änderung der laufenden Serie (für `max_wait_ms`).
+    burst_since: Option<Timestamp>,
     failures: u32,
     /// Abstand bis zum nächsten periodischen Pull.
     poll_wait_ms: u64,
@@ -153,6 +161,7 @@ impl Scheduler {
             running: false,
             rerun: false,
             deadline: None,
+            burst_since: None,
             failures: 0,
             rate_limited_until: None,
             newer_format: false,
@@ -177,6 +186,7 @@ impl Scheduler {
                 self.enabled = on;
                 self.auth_required = false;
                 self.deadline = None;
+                self.burst_since = None;
                 self.failures = 0;
                 sync_now = on;
             }
@@ -186,7 +196,10 @@ impl Scheduler {
                 if self.running {
                     self.rerun = true;
                 } else if self.failures == 0 {
-                    self.deadline = Some(at(now, self.config.debounce_ms));
+                    let since = *self.burst_since.get_or_insert(now);
+                    let due =
+                        at(now, self.config.debounce_ms).min(at(since, self.config.max_wait_ms));
+                    self.deadline = Some(due);
                 }
             }
             SchedulerEvent::AppFocused => {
@@ -207,6 +220,7 @@ impl Scheduler {
             SchedulerEvent::NetworkDown => {
                 self.online = false;
                 self.deadline = None;
+                self.burst_since = None;
             }
             SchedulerEvent::TimerFired => {
                 sync_now = self.deadline.is_some_and(|due| now >= due);
@@ -292,6 +306,7 @@ impl Scheduler {
         if sync_now {
             self.running = true;
             self.deadline = None;
+            self.burst_since = None;
             self.status = SyncStatus::Syncing;
         } else if !self.running && self.deadline.is_none() && self.wants_poll() {
             self.deadline = Some(at(now, self.poll_wait_ms));
@@ -489,14 +504,91 @@ mod tests {
         running(&mut s);
         let first = s.handle(SchedulerEvent::LocalChange { pending_ops: 1 }, ts(1_000));
         assert!(!first.sync_now);
-        assert_eq!(first.timer_in_ms, Some(3_000));
+        assert_eq!(first.timer_in_ms, Some(1_500));
         let second = s.handle(SchedulerEvent::LocalChange { pending_ops: 2 }, ts(2_000));
-        assert_eq!(second.timer_in_ms, Some(3_000), "Debounce neu gestartet");
+        assert_eq!(second.timer_in_ms, Some(1_500), "Debounce neu gestartet");
         assert!(
-            !s.handle(SchedulerEvent::TimerFired, ts(4_000)).sync_now,
+            !s.handle(SchedulerEvent::TimerFired, ts(3_000)).sync_now,
             "zu früh"
         );
-        assert!(s.handle(SchedulerEvent::TimerFired, ts(5_000)).sync_now);
+        assert!(s.handle(SchedulerEvent::TimerFired, ts(3_500)).sync_now);
+    }
+
+    /// ADR-022: Änderungen im Sekundentakt verschieben den Upload nicht endlos – spätestens 5 s
+    /// nach der ersten Änderung der Serie, danach beginnt eine neue Serie.
+    #[test]
+    fn a_burst_of_changes_uploads_within_max_wait() {
+        let mut s = scheduler();
+        running(&mut s);
+        let mut started = Vec::new();
+        for second in 0..12 {
+            let now = ts(10_000 + second * 1_000);
+            if s.handle(SchedulerEvent::TimerFired, now).sync_now {
+                started.push(second);
+                s.handle(ok(0, SyncReport::default()), now);
+            }
+            let actions = s.handle(SchedulerEvent::LocalChange { pending_ops: 1 }, now);
+            let due = actions.timer_in_ms.expect("Timer");
+            assert!(due <= 1_500, "nie länger als der Debounce: {due}");
+        }
+        assert_eq!(
+            started,
+            [5, 10],
+            "je Serie ein Lauf, spätestens 5 s nach ihrem Beginn"
+        );
+    }
+
+    #[test]
+    fn last_change_of_a_burst_is_capped_by_max_wait() {
+        let mut s = scheduler();
+        running(&mut s);
+        s.handle(SchedulerEvent::LocalChange { pending_ops: 1 }, ts(1_000));
+        let late = s.handle(SchedulerEvent::LocalChange { pending_ops: 2 }, ts(5_000));
+        assert_eq!(
+            late.timer_in_ms,
+            Some(1_000),
+            "1 000 + 5 000 statt 5 000 + 1 500"
+        );
+        assert!(s.handle(SchedulerEvent::TimerFired, ts(6_000)).sync_now);
+    }
+
+    #[test]
+    fn change_during_a_run_triggers_exactly_one_more() {
+        let mut s = scheduler();
+        running(&mut s);
+        s.handle(SchedulerEvent::LocalChange { pending_ops: 1 }, ts(1_000));
+        assert!(s.handle(SchedulerEvent::TimerFired, ts(2_500)).sync_now);
+        let during = s.handle(SchedulerEvent::LocalChange { pending_ops: 1 }, ts(2_600));
+        assert!(!during.sync_now);
+        assert!(
+            s.handle(ok(1, SyncReport::default()), ts(3_000)).sync_now,
+            "gleich nochmal"
+        );
+        assert!(!s.handle(ok(0, SyncReport::default()), ts(3_200)).sync_now);
+    }
+
+    #[test]
+    fn offline_and_backoff_ignore_the_burst_window() {
+        let mut s = scheduler();
+        running(&mut s);
+        s.handle(SchedulerEvent::NetworkDown, ts(1_000));
+        let offline = s.handle(SchedulerEvent::LocalChange { pending_ops: 1 }, ts(1_100));
+        assert_eq!(offline.timer_in_ms, None, "offline kein Timer");
+        assert!(s.handle(SchedulerEvent::NetworkUp, ts(9_000)).sync_now);
+        let failed = s.handle(
+            SchedulerEvent::SyncFinished(SyncOutcome {
+                result: Err(CoreError::Network("weg".into())),
+                pending_ops: 1,
+            }),
+            ts(9_100),
+        );
+        let backoff = failed.timer_in_ms.expect("Backoff");
+        let change = s.handle(SchedulerEvent::LocalChange { pending_ops: 2 }, ts(9_200));
+        assert_eq!(
+            change.timer_in_ms,
+            Some(backoff - 100),
+            "Backoff bleibt, kein schnellerer Upload"
+        );
     }
 
     #[test]
@@ -726,9 +818,9 @@ mod tests {
         feed(&mut s, SchedulerEvent::SetEnabled(true));
         feed(&mut s, ok(0, quiet()));
         feed(&mut s, SchedulerEvent::LocalChange { pending_ops: 1 });
-        feed(&mut s, SchedulerEvent::TimerFired); // +1 s: zu früh
-        feed(&mut s, SchedulerEvent::TimerFired); // +2 s: zu früh
-        let fire = feed(&mut s, SchedulerEvent::TimerFired); // +3 s
+        let early = feed(&mut s, SchedulerEvent::TimerFired); // +1 s: zu früh (Debounce 1,5 s)
+        assert!(!early.sync_now);
+        let fire = feed(&mut s, SchedulerEvent::TimerFired); // +2 s
         assert!(fire.sync_now);
         let done = feed(&mut s, ok(0, quiet()));
         assert!(matches!(done.status, SyncStatus::Idle { .. }));

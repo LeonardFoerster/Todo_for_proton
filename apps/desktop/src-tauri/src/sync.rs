@@ -7,7 +7,10 @@
 
 use std::{
     fmt,
-    sync::{Arc, Mutex, PoisonError},
+    sync::{
+        atomic::{AtomicU64, Ordering as AtomicOrdering},
+        Arc, Mutex, PoisonError,
+    },
     time::Duration,
 };
 
@@ -47,6 +50,8 @@ enum Msg {
 pub struct SyncHandle {
     tx: UnboundedSender<Msg>,
     status: Arc<Mutex<SyncStatusDto>>,
+    /// Anzahl gemeldeter lokaler Änderungen (Nachweis der Auslöser, ADR-022).
+    local_changes: Arc<AtomicU64>,
 }
 
 impl fmt::Debug for SyncHandle {
@@ -63,7 +68,14 @@ impl SyncHandle {
 
     /// Nach jedem lokalen Schreibvorgang: Debounce-Push planen.
     pub fn local_change(&self) {
+        self.local_changes.fetch_add(1, AtomicOrdering::Relaxed);
         let _ = self.tx.send(Msg::LocalChange);
+    }
+
+    /// Bisher gemeldete lokale Änderungen (Tests der Sync-Auslöser).
+    #[must_use]
+    pub fn local_changes(&self) -> u64 {
+        self.local_changes.load(AtomicOrdering::Relaxed)
     }
 
     /// Nach Login (`Some`) bzw. Logout (`None`).
@@ -109,7 +121,11 @@ pub fn spawn(
         sink,
     };
     runtime.spawn(driver.run(rx));
-    SyncHandle { tx, status }
+    SyncHandle {
+        tx,
+        status,
+        local_changes: Arc::default(),
+    }
 }
 
 struct Driver {
@@ -334,7 +350,7 @@ mod tests {
         handle.local_change();
         settle().await;
         assert_eq!(runner.runs.load(Ordering::SeqCst), 1, "noch im Debounce");
-        tokio::time::advance(Duration::from_millis(3_100)).await;
+        tokio::time::advance(Duration::from_millis(1_600)).await;
         settle().await;
         assert_eq!(runner.runs.load(Ordering::SeqCst), 2);
     }
