@@ -52,6 +52,7 @@ fn full_flow_persists_across_restart() {
             block_on(api.create_task(CreateTaskDto {
                 title: title.into(),
                 list_id: None,
+                ..CreateTaskDto::default()
             }))
             .expect("create")
         };
@@ -103,6 +104,7 @@ fn parallel_creates_get_distinct_sort_keys() {
         api.create_task(CreateTaskDto {
             title: format!("T{i}"),
             list_id: None,
+            ..CreateTaskDto::default()
         })
     });
     let tasks = block_on(futures::future::join_all(creates));

@@ -284,7 +284,8 @@ impl From<Page<TaskSummary>> for PageDto<TaskSummaryDto> {
 
 // --- Eingaben ----------------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Neue Task; fehlende Felder = Standard (leere Notiz, keine Priorität, nicht fällig).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct CreateTaskDto {
@@ -292,6 +293,15 @@ pub struct CreateTaskDto {
     /// `None` = Inbox.
     #[cfg_attr(test, ts(optional = nullable))]
     pub list_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub priority: Option<PriorityDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub due: Option<DueDto>,
 }
 
 /// Zu ändernde Felder; fehlend = unverändert. `due: null` entfernt die Fälligkeit,

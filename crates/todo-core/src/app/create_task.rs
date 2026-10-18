@@ -2,19 +2,22 @@
 
 use super::{key_after, Deps, EnsureInbox};
 use crate::{
-    domain::{Task, TaskListId},
+    domain::{Due, Priority, Task, TaskListId},
     ports::ChangeSet,
     CoreError, CoreResult,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CreateTaskInput {
     pub title: String,
     /// Zielliste; `None` = Inbox.
     pub list_id: Option<TaskListId>,
+    pub notes: String,
+    pub priority: Priority,
+    pub due: Option<Due>,
 }
 
-/// Legt eine offene Task am Ende der Zielliste an.
+/// Legt eine offene Task am Ende der Zielliste an – mit allen Anfangswerten in einem Commit.
 #[derive(Debug, Clone)]
 pub struct CreateTask {
     deps: Deps,
@@ -41,7 +44,11 @@ impl CreateTask {
             None => EnsureInbox::new(self.deps.clone()).execute().await?.id(),
         };
         let key = key_after(repo.last_sort_key(list_id).await?.as_ref())?;
-        let task = Task::new(list_id, &input.title, key, self.deps.clock.as_ref())?;
+        let clock = self.deps.clock.as_ref();
+        let mut task = Task::new(list_id, &input.title, key, clock)?;
+        task.set_notes(&input.notes, clock);
+        task.set_priority(input.priority, clock);
+        task.set_due(input.due, clock)?;
         repo.commit(ChangeSet::new().upsert_task(task.clone()))
             .await?;
         Ok(task)
@@ -55,13 +62,14 @@ mod tests {
     use super::*;
     use crate::{
         app::{collect_all, test_util::deps, CreateTaskList, CreateTaskListInput},
-        ports::{SmartView, TaskQuery},
+        ports::{SmartView, TaskQuery, TaskRepository},
     };
 
     fn create(uc: &CreateTask, title: &str, list_id: Option<TaskListId>) -> CoreResult<Task> {
         block_on(uc.execute(CreateTaskInput {
             title: title.into(),
             list_id,
+            ..CreateTaskInput::default()
         }))
     }
 
@@ -96,6 +104,24 @@ mod tests {
         .unwrap();
         let task = create(&CreateTask::new(deps), "Bericht", Some(list.id())).unwrap();
         assert_eq!(task.list_id(), list.id());
+    }
+
+    #[test]
+    fn with_initial_fields_in_one_commit() {
+        let (deps, repo) = deps();
+        let due = Due::Date(crate::domain::NaiveDate::from_ymd_opt(2026, 10, 24).unwrap());
+        let task = block_on(CreateTask::new(deps).execute(CreateTaskInput {
+            title: "Übungsblatt 3".into(),
+            notes: "Aufgaben 1–4".into(),
+            priority: Priority::High,
+            due: Some(due.clone()),
+            ..CreateTaskInput::default()
+        }))
+        .unwrap();
+        assert_eq!(task.notes(), "Aufgaben 1–4");
+        assert_eq!(task.priority(), Priority::High);
+        assert_eq!(task.due(), Some(&due));
+        assert_eq!(block_on(repo.get_task(task.id())).unwrap(), Some(task));
     }
 
     #[test]

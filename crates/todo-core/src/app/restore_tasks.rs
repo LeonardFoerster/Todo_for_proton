@@ -130,6 +130,7 @@ mod tests {
                 block_on(create.execute(CreateTaskInput {
                     title: (*t).into(),
                     list_id: None,
+                    ..CreateTaskInput::default()
                 }))
                 .unwrap()
             })
@@ -240,6 +241,7 @@ mod tests {
         let task = block_on(CreateTask::new(deps.clone()).execute(CreateTaskInput {
             title: "x".into(),
             list_id: Some(list.id()),
+            ..CreateTaskInput::default()
         }))
         .unwrap();
         let deleted = block_on(DeleteTasks::new(deps.clone()).execute(DeleteTasksInput {
@@ -263,6 +265,7 @@ mod tests {
         let task = block_on(CreateTask::new(deps.clone()).execute(CreateTaskInput {
             title: "x".into(),
             list_id: None,
+            ..CreateTaskInput::default()
         }))
         .unwrap();
         let uc = RestoreTasks::new(deps);

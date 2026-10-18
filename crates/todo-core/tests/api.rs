@@ -91,6 +91,7 @@ fn full_flow_inbox_create_move_complete_list() {
         block_on(api.create_task(CreateTaskDto {
             title: title.into(),
             list_id: None,
+            ..CreateTaskDto::default()
         }))
         .unwrap()
     };
@@ -186,6 +187,7 @@ fn update_due_today_view_and_deletes() {
     let t = block_on(api.create_task(CreateTaskDto {
         title: "Bericht".into(),
         list_id: None,
+        ..CreateTaskDto::default()
     }))
     .unwrap();
 
@@ -253,7 +255,8 @@ fn invalid_input_maps_to_validation() {
     assert!(matches!(
         block_on(api.create_task(CreateTaskDto {
             title: " ".into(),
-            list_id: None
+            list_id: None,
+            ..CreateTaskDto::default()
         })),
         Err(CoreError::Validation(_))
     ));
@@ -266,6 +269,7 @@ fn invalid_input_maps_to_validation() {
     let task = block_on(api.create_task(CreateTaskDto {
         title: "x".into(),
         list_id: None,
+        ..CreateTaskDto::default()
     }))
     .unwrap();
     events.take();

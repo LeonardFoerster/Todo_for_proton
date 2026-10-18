@@ -1340,7 +1340,7 @@ const p2board: Step[] = [
     "Tooltip im Fenster „Neue Task“ liegt über dem Dialog",
     async () => {
       const input = await openNewTask();
-      const pickerButton = input.parentElement!.querySelector<HTMLElement>("button[aria-haspopup=menu]")!;
+      const pickerButton = await until("Listenwahl", () => document.querySelector<HTMLElement>('dialog[open] button[aria-label^="Liste: "]'));
       pickerButton.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
       await sleep(600);
       const tip = [...document.querySelectorAll<HTMLElement>('[role="tooltip"]')].find((t) => t.textContent?.includes("Liste wählen"));
@@ -1644,7 +1644,34 @@ const p2layout: Step[] = [
   ],
 ];
 
-const SUITES: Record<string, Step[]> = { p002, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
+// P3-03: Fenster „Neue Task“ mit erkannten Angaben und Notiz – ein `createTask` über die echte IPC.
+const p3new: Step[] = [
+  [
+    "Neue Task mit Uhrzeit, Priorität und Notiz",
+    async (client) => {
+      const input = await openNewTask();
+      type(input, "Sprechstunde morgen um 14:00 !1");
+      await until("Titelvorschau", () => document.querySelector("dialog[open] .hint strong")?.textContent === "Sprechstunde");
+      await click("button", "Priorität: Hoch");
+      await click("button", /Notiz/);
+      const notes = await field("Notiz");
+      type(notes, "Fragen zu Blatt 3");
+      key(notes, "Enter", { ctrlKey: true });
+      await newTaskClosed();
+      await until("neue Zeile", () => byRole("option", /^Sprechstunde/));
+      const all = await client.listTasks({ view: { kind: "all" } }, { limit: 50 });
+      const summary = all.items.find((t) => t.title === "Sprechstunde");
+      if (!summary) throw new Error("nicht angelegt");
+      const task = await client.getTask(summary.id);
+      if (task.priority !== "high" || task.notes !== "Fragen zu Blatt 3" || task.due?.kind !== "dateTime") {
+        throw new Error(JSON.stringify({ priority: task.priority, notes: task.notes, due: task.due }));
+      }
+      return `fällig ${new Date(task.due.at).toLocaleString("de-DE")} (${task.due.tz})`;
+    },
+  ],
+];
+
+const SUITES: Record<string, Step[]> = { p002, p3new, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
   p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */

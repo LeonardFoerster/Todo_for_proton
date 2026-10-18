@@ -325,6 +325,7 @@ mod tests {
         api.create_task(CreateTaskDto {
             title: "a".into(),
             list_id: None,
+            ..CreateTaskDto::default()
         })
         .await
         .unwrap();

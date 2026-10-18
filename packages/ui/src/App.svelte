@@ -348,15 +348,22 @@
       },
     },
     { keys: ["n"], description: "Neue Task", group: "Allgemein", run: newTask },
-    {
-      keys: ["alt+l"],
-      description: "Liste für neue Tasks wählen (im Fenster „Neue Task“)",
+    ...(
+      [
+        ["alt+d", "Fälligkeit", () => newTaskDialog?.toggleDue()],
+        ["alt+p", "Priorität", () => newTaskDialog?.openPriority()],
+        ["alt+l", "Liste", () => newTaskDialog?.openListPicker()],
+        ["alt+n", "Notiz", () => newTaskDialog?.toggleNotes()],
+      ] as const
+    ).map(([key, what, run]) => ({
+      keys: [key],
+      description: `${what} (im Fenster „Neue Task“)`,
       group: "Allgemein",
       inInputs: true,
       inModal: true,
-      when: () => (document.activeElement as HTMLElement | null)?.getAttribute("aria-label") === "Neue Task",
-      run: () => newTaskDialog?.openListPicker(),
-    },
+      when: () => !!document.activeElement?.closest("[data-new-task]"),
+      run,
+    })),
     { keys: ["ctrl+n"], description: "Neue Task (auch beim Tippen)", group: "Allgemein", inInputs: true, run: newTask },
     {
       keys: ["?"],

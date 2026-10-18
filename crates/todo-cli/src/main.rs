@@ -274,7 +274,13 @@ async fn execute(api: &CoreApi, command: Command, remote: Option<PathBuf>) -> Re
                 Some(list) => Some(resolve_list(api, &list).await?),
                 None => None,
             };
-            let task = api.create_task(CreateTaskDto { title, list_id }).await?;
+            let task = api
+                .create_task(CreateTaskDto {
+                    title,
+                    list_id,
+                    ..CreateTaskDto::default()
+                })
+                .await?;
             println!(
                 "{}",
                 line(

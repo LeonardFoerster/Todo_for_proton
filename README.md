@@ -33,7 +33,9 @@ iOS folgen (siehe [Plattformen](#plattformen) und [Roadmap](#roadmap)).
 
 **Aufgaben**
 - Tasks mit Titel, Notizen, Priorität und Fälligkeit (Datum oder Datum + Uhrzeit mit Zeitzone).
-- Fenster „Neue Task" (`N`) mit natürlicher Eingabe für Tage („Zahnarzt anrufen **morgen**") und Listenwahl.
+- Fenster „Neue Task" (`N`) mit natürlicher Eingabe: „Übungsblatt 3 **bis Fr 14:00 !1 @uni**" erkennt Tag
+  (`morgen`, `Fr`, `24.10.`), Uhrzeit, Priorität (`!1`–`!3`) und Liste; dazu Chips zum Nachjustieren, optionale Notiz
+  und „Weitere anlegen" für mehrere Tasks am Stück.
 - Ansichten: **Eingang, Heute, Geplant, Alle Tasks, Erledigt** – plus eigene Listen. Abgehakte Tasks verlassen die
   offenen Ansichten und stehen unter „Erledigt"; jede Aktion lässt sich im Hinweis unten links **rückgängig** machen.
 - Manuelle Reihenfolge per Drag & Drop oder `Alt+↑/↓`.
@@ -190,6 +192,7 @@ Repositorys.
 | Aktion | Kürzel |
 |---|---|
 | Neue Task | `N`, `Strg+N` |
+| Im Fenster „Neue Task": Fälligkeit / Priorität / Liste / Notiz | `Alt+D` / `Alt+P` / `Alt+L` / `Alt+N` |
 | Navigieren / Öffnen | `↑/↓` bzw. `J/K` / `Enter` |
 | Erledigt umschalten / Löschen | `Leertaste` bzw. `E` / `Entf` |
 | Umsortieren | `Alt+↑/↓` |
@@ -218,7 +221,7 @@ eine Sammelaktion = ein Aufruf), und im Leerlauf läuft nichts.
 ## Roadmap
 
 1. **Linux-Desktop** – ✅ Prototyp fertig (lokal, Sync, Listen, Kanban, Mehrfachauswahl).
-2. **Abschluss Prototyp** – Live-Abnahme über Proton Drive, kleinere Nachträge, Inhalt des Fensters „Neue Task".
+2. **Abschluss Prototyp** – Live-Abnahme über Proton Drive, kleinere Nachträge.
 3. **Web-App** – Kern als WebAssembly im Web Worker, Speicher im Browser, Sync aus dem Browser.
 4. **Windows** – Tauri 2 mit WebView2, Installer, Schlüsselablage im Windows-Anmeldeinformationsspeicher.
 5. **Android** – Tauri 2 Mobile, Android Keystore, Touch-Bedienung (Zeilenhöhe 44 px, Gesten).

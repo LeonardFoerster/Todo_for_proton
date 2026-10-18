@@ -128,6 +128,7 @@ impl Device {
         block_on(self.api.create_task(CreateTaskDto {
             title: title.into(),
             list_id: list.map(str::to_owned),
+            ..CreateTaskDto::default()
         }))
         .expect("create task")
     }

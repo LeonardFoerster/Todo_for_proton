@@ -22,7 +22,8 @@ async function setup() {
 }
 
 const quickAdd = () => within(screen.getByRole("dialog", { name: "Neue Task" })).getByRole("textbox", { name: "Neue Task" });
-const picker = () => quickAdd().parentElement!.querySelector<HTMLButtonElement>("button[aria-haspopup=menu]")!;
+const picker = () =>
+  within(screen.getByRole("dialog", { name: "Neue Task" })).getByRole<HTMLButtonElement>("button", { name: /^Liste: / });
 /** Fenster „Neue Task“ öffnen (Taste N) und warten, bis das Feld fokussiert ist. */
 async function openNewTask(user: ReturnType<typeof userEvent.setup>) {
   (document.activeElement as HTMLElement | null)?.blur();

@@ -57,6 +57,7 @@ mod tests {
         let task = block_on(CreateTask::new(deps.clone()).execute(CreateTaskInput {
             title: "x".into(),
             list_id: None,
+            ..CreateTaskInput::default()
         }))
         .unwrap();
         let complete = CompleteTask::new(deps.clone());

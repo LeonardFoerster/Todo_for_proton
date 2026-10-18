@@ -90,6 +90,7 @@ mod tests {
         let task = block_on(CreateTask::new(deps.clone()).execute(CreateTaskInput {
             title: "Milch".into(),
             list_id: None,
+            ..CreateTaskInput::default()
         }))
         .unwrap();
         (UpdateTask::new(deps), repo, task)

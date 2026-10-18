@@ -175,6 +175,9 @@ impl CoreApi {
         let input = CreateTaskInput {
             title: input.title,
             list_id: input.list_id.as_deref().map(list_id).transpose()?,
+            notes: input.notes.unwrap_or_default(),
+            priority: input.priority.map(Into::into).unwrap_or_default(),
+            due: input.due.map(TryInto::try_into).transpose()?,
         };
         Ok((&CreateTask::new(self.deps.clone()).execute(input).await?).into())
     }
@@ -587,6 +590,7 @@ mod bulk_tests {
                 block_on(api.create_task(CreateTaskDto {
                     title: (*t).into(),
                     list_id: None,
+                    ..CreateTaskDto::default()
                 }))
                 .unwrap()
                 .id

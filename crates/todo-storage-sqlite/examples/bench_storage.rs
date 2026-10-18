@@ -176,6 +176,7 @@ fn main() {
                 block_on(api.create_task(CreateTaskDto {
                     title: "neu".into(),
                     list_id: None,
+                    ..CreateTaskDto::default()
                 }))
                 .expect("create"),
             );

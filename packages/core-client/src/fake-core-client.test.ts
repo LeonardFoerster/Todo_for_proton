@@ -36,6 +36,17 @@ describe("FakeCoreClient", () => {
     await expect(core.createTask({ title: "x".repeat(501) })).rejects.toBeInstanceOf(CoreClientError);
   });
 
+  it("creates tasks with initial notes, priority and due", async () => {
+    const { core } = await setup();
+    const t = await core.createTask({
+      title: "Blatt 3",
+      notes: "Aufgabe 1–4",
+      priority: "high",
+      due: { kind: "date", date: "2026-10-23" },
+    });
+    expect(t).toMatchObject({ notes: "Aufgabe 1–4", priority: "high", due: { kind: "date", date: "2026-10-23" } });
+  });
+
   it("emits change events with exactly the written ids", async () => {
     const { core } = await setup();
     const events: ChangedEventDto[] = [];

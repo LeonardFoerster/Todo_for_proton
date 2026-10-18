@@ -66,6 +66,7 @@ mod tests {
                 block_on(create.execute(CreateTaskInput {
                     title: (*t).into(),
                     list_id: None,
+                    ..CreateTaskInput::default()
                 }))
                 .unwrap()
             })

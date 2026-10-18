@@ -148,6 +148,7 @@ mod tests {
                 let task = block_on(create.execute(CreateTaskInput {
                     title: c.to_string(),
                     list_id: Some(list),
+                    ..CreateTaskInput::default()
                 }))
                 .unwrap();
                 tasks.insert(c, task);
@@ -353,6 +354,7 @@ mod tests {
                 block_on(create.execute(CreateTaskInput {
                     title: format!("n{i}"),
                     list_id: Some(s.other),
+                    ..CreateTaskInput::default()
                 }))
                 .unwrap()
                 .id()
