@@ -186,9 +186,12 @@ pub fn open_segment(
 
 /// Ops müssen genau den Bereich des Headers lückenlos und in Reihenfolge abdecken.
 fn check_ops(header: &SegmentHeader, ops: &[Op]) -> Result<(), SegmentError> {
-    let in_order = ops.iter().zip(header.seq_from..).all(|(op, seq)| {
-        op.id.device == header.device && op.hlc.device == header.device && op.id.seq == seq
-    });
+    let in_order = ops
+        .iter()
+        .zip(header.seq_from..=header.seq_to)
+        .all(|(op, seq)| {
+            op.id.device == header.device && op.hlc.device == header.device && op.id.seq == seq
+        });
     if in_order && ops.len() as u64 == header.count() {
         Ok(())
     } else {

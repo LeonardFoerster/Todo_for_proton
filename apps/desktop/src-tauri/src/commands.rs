@@ -253,13 +253,15 @@ pub async fn app_ready(state: State<'_, AppState>) -> Result<()> {
 
 // --- Nur Debug-Builds (`dev.rs`) ----------------------------------------------------------------
 
-/// Selbsttest-Suiten aus `TASKS_SELFTEST` (Release: immer `None`).
+/// Selbsttest-Suiten aus `TASKS_SELFTEST` (nur im Debug-Build registriert).
+#[cfg(debug_assertions)]
 #[tauri::command]
 pub async fn dev_selftest() -> Result<Option<String>> {
     Ok(crate::dev::selftest_suites())
 }
 
-/// Berichtszeilen des Selbsttests auf stdout; `exit` beendet danach die App (Release: no-op).
+/// Berichtszeilen des Selbsttests auf stdout; `exit` beendet danach die App (nur Debug-Build).
+#[cfg(debug_assertions)]
 #[tauri::command]
 pub async fn dev_selftest_report<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -267,7 +269,7 @@ pub async fn dev_selftest_report<R: tauri::Runtime>(
     exit: bool,
 ) -> Result<()> {
     crate::dev::selftest_line(&line);
-    if exit && cfg!(debug_assertions) {
+    if exit {
         app.exit(0);
     }
     Ok(())

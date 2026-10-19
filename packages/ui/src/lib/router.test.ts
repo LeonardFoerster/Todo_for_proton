@@ -8,6 +8,7 @@ describe("router", () => {
     expect(parseHash("#/today")).toEqual({ view: "today" });
     expect(parseHash("#/list/abc-1")).toEqual({ view: "list", listId: "abc-1" });
     expect(parseHash("#/bogus")).toEqual({ view: "inbox" });
+    expect(parseHash("#/list/%E0%A4%A")).toEqual({ view: "inbox" });
     expect(routeHash({ view: "list", listId: "a b" })).toBe("#/list/a%20b");
     expect(parseHash(routeHash({ view: "list", listId: "a b" }))).toEqual({ view: "list", listId: "a b" });
   });

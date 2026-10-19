@@ -150,6 +150,11 @@ pub fn apply_remote<S: ReplicaStore + ?Sized>(
     let mut receipt = RemoteReceipt::default();
     let mut groups: BTreeMap<EntityRef, Vec<Op>> = BTreeMap::new();
     for op in &batch.ops {
+        // Auch Snapshot-Ops (ohne `Op::validate`): absurde Zeitstempel überall gleich verwerfen.
+        if op.hlc.wall_ms > super::hlc::MAX_WALL_MS {
+            receipt.clock_skews += 1;
+            continue;
+        }
         if clock.hlc_mut().observe(&op.hlc, batch.now).is_err() {
             receipt.clock_skews += 1;
         }

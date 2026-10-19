@@ -23,7 +23,7 @@ if [[ ${1:-} == --uninstall ]]; then
     exit 0
 fi
 
-(cd apps/desktop && pnpm install --frozen-lockfile --silent && pnpm tauri build --no-bundle)
+(cd apps/desktop && pnpm install --frozen-lockfile --silent && pnpm tauri build --no-bundle -- --locked)
 
 # Laufende installierte Instanz beenden, sonst ist das Binary „busy“.
 pkill -x tasks-app 2>/dev/null && sleep 0.5 || true

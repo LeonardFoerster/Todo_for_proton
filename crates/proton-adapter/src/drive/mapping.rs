@@ -36,6 +36,9 @@ pub(crate) struct Link {
     pub(crate) trashed: Option<i64>,
     pub(crate) node_key: String,
     pub(crate) node_passphrase: String,
+    /// Signatur eines Adress-Keys über die Klartext-Passphrase (Pflicht beim Entsperren).
+    #[serde(default)]
+    pub(crate) node_passphrase_signature: Option<String>,
     #[serde(default)]
     pub(crate) file_properties: Option<FileProperties>,
     #[serde(default)]
@@ -71,6 +74,13 @@ impl Link {
         self.file_properties.as_ref()?.content_key_packet.as_deref()
     }
 
+    pub(crate) fn content_key_packet_signature(&self) -> Option<&str> {
+        self.file_properties
+            .as_ref()?
+            .content_key_packet_signature
+            .as_deref()
+    }
+
     pub(crate) fn node_hash_key(&self) -> Option<&str> {
         self.folder_properties.as_ref()?.node_hash_key.as_deref()
     }
@@ -93,6 +103,9 @@ impl Link {
 pub(crate) struct FileProperties {
     #[serde(default)]
     pub(crate) content_key_packet: Option<String>,
+    /// Signatur des Node-Keys über den Klartext-Session-Key.
+    #[serde(default)]
+    pub(crate) content_key_packet_signature: Option<String>,
     #[serde(default)]
     pub(crate) active_revision: Option<ActiveRevision>,
 }
@@ -179,8 +192,15 @@ pub(crate) struct VolumeShare {
 pub(crate) struct Share {
     #[serde(rename = "AddressID")]
     pub(crate) address_id: String,
+    #[serde(rename = "VolumeID", default)]
+    pub(crate) volume_id: Option<String>,
+    #[serde(rename = "LinkID", default)]
+    pub(crate) link_id: Option<String>,
     pub(crate) key: String,
     pub(crate) passphrase: String,
+    /// Signatur des Adress-Keys über die Klartext-Passphrase.
+    #[serde(default)]
+    pub(crate) passphrase_signature: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -248,6 +268,9 @@ pub(crate) struct RevisionResponse {
 pub(crate) struct RevisionBlocks {
     #[serde(default)]
     pub(crate) blocks: Vec<Block>,
+    /// Signatur eines Adress-Keys über die aneinandergehängten Block-Hashes.
+    #[serde(default)]
+    pub(crate) manifest_signature: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -257,6 +280,9 @@ pub(crate) struct Block {
     #[serde(rename = "BareURL")]
     pub(crate) bare_url: String,
     pub(crate) token: String,
+    /// SHA-256 des verschlüsselten Blocks (base64).
+    #[serde(default)]
+    pub(crate) hash: Option<String>,
 }
 
 #[derive(Deserialize)]

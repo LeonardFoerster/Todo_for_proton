@@ -118,7 +118,7 @@ fn main() -> ExitCode {
     {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("Fehler: {e}");
+            eprintln!("Fehler: {}", safe(&e.to_string()));
             ExitCode::FAILURE
         }
     }
@@ -219,7 +219,7 @@ async fn sync(api: &CoreApi, remote: PathBuf) -> Result<()> {
         started.elapsed().as_millis()
     );
     for warning in &report.warnings {
-        println!("Warnung: {warning}");
+        println!("Warnung: {}", safe(warning));
     }
     let pending = engine.pending().await?;
     if pending > 0 {
@@ -257,12 +257,12 @@ async fn execute(api: &CoreApi, command: Command, remote: Option<PathBuf>) -> Re
         Command::Lists => {
             for list in api.list_task_lists().await? {
                 let inbox = if list.is_inbox { "  (Inbox)" } else { "" };
-                println!("{}  {}{inbox}", short(&list.id), list.name);
+                println!("{}  {}{inbox}", short(&list.id), safe(&list.name));
             }
         }
         Command::ListAdd { name } => {
             let list = api.create_task_list(name).await?;
-            println!("Liste angelegt: {}  {}", short(&list.id), list.name);
+            println!("Liste angelegt: {}  {}", short(&list.id), safe(&list.name));
         }
         Command::ListRm { list } => {
             let id = resolve_list(api, &list).await?;
@@ -338,8 +338,8 @@ async fn execute(api: &CoreApi, command: Command, remote: Option<PathBuf>) -> Re
                 .find(|l| l.id == task.list_id)
                 .map_or_else(|| task.list_id.clone(), |l| l.name);
             println!("ID:        {}", task.id);
-            println!("Titel:     {}", task.title);
-            println!("Liste:     {list}");
+            println!("Titel:     {}", safe(&task.title));
+            println!("Liste:     {}", safe(&list));
             println!("Status:    {}", status_text(task.status));
             println!("Priorität: {}", prio_text(task.priority));
             println!(
@@ -352,13 +352,13 @@ async fn execute(api: &CoreApi, command: Command, remote: Option<PathBuf>) -> Re
                 println!("Erledigt:  {at}");
             }
             if !task.notes.is_empty() {
-                println!("Notizen:\n{}", task.notes);
+                println!("Notizen:\n{}", safe(&task.notes));
             }
         }
         Command::Done { id, done } => {
             let id = resolve_task(api, &id).await?;
             let task = api.complete_task(id, done).await?;
-            println!("{}: {}", status_text(task.status), task.title);
+            println!("{}: {}", status_text(task.status), safe(&task.title));
         }
         Command::Edit {
             id,
@@ -375,7 +375,7 @@ async fn execute(api: &CoreApi, command: Command, remote: Option<PathBuf>) -> Re
             };
             let id = resolve_task(api, &id).await?;
             let task = api.update_task(id, patch).await?;
-            println!("Geändert: {}", task.title);
+            println!("Geändert: {}", safe(&task.title));
         }
         Command::Mv {
             id,
@@ -399,7 +399,7 @@ async fn execute(api: &CoreApi, command: Command, remote: Option<PathBuf>) -> Re
                 },
             };
             let task = api.move_task(id, target).await?;
-            println!("Verschoben: {}", task.title);
+            println!("Verschoben: {}", safe(&task.title));
         }
         Command::Rm { id } => {
             let id = resolve_task(api, &id).await?;
@@ -564,7 +564,7 @@ fn line(
         TaskStatusDto::Open => "[ ]",
         TaskStatusDto::Done => "[x]",
     };
-    let mut out = format!("{check} {}  {title}", short(id));
+    let mut out = format!("{check} {}  {}", short(id), safe(title));
     if let Some(due) = due {
         out.push_str(&format!("  · fällig {}", due_text(due)));
     }
@@ -573,6 +573,22 @@ fn line(
     }
     if has_notes {
         out.push_str("  · +Notiz");
+    }
+    out
+}
+
+/// Text aus dem Sync (andere Geräte, Server) terminalsicher machen: Steuerzeichen außer
+/// Zeilenumbruch und Tab sowie Bidi-Steuerzeichen werden als `\u{…}` ausgegeben, damit keine
+/// Escape-Sequenzen (Fenstertitel, Zwischenablage, Zeilen überschreiben) ins Terminal gelangen.
+pub(crate) fn safe(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        let bidi = matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}');
+        if (c.is_control() && c != '\n' && c != '\t') || bidi {
+            out.extend(c.escape_unicode());
+        } else {
+            out.push(c);
+        }
     }
     out
 }
@@ -596,13 +612,32 @@ fn prio_text(priority: PriorityDto) -> &'static str {
 fn due_text(due: &DueDto) -> String {
     match due {
         DueDto::Date { date } => date.clone(),
-        DueDto::DateTime { at, tz } => format!("{at} ({tz})"),
+        DueDto::DateTime { at, tz } => format!("{at} ({})", safe(tz)),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_text_is_terminal_safe() {
+        let title = "Milch\u{1b}]0;SPOOF\u{7}\u{1b}[2K\rx\u{202e}";
+        let shown = line(
+            "0192aaaa-0000-7000-8000-000000000000",
+            TaskStatusDto::Open,
+            title,
+            PriorityDto::None,
+            None,
+            false,
+        );
+        assert!(
+            !shown.chars().any(|c| c.is_control() || c == '\u{202e}'),
+            "{shown:?}"
+        );
+        assert!(shown.contains("Milch\\u{1b}]0;SPOOF\\u{7}"), "{shown:?}");
+        assert_eq!(safe("a\nb\tc"), "a\nb\tc", "Umbruch und Tab bleiben");
+    }
 
     #[test]
     fn utc_day_boundaries() {

@@ -19,6 +19,82 @@ use todo_sync::SchedulerEvent;
 
 use crate::state::{AppState, Options};
 
+/// Alle Commands; die Selbsttest-Commands nur im Debug-Build (im Release-Build wären sie
+/// wirkungslos, gehören aber nicht zur Angriffsfläche der WebView).
+#[cfg(debug_assertions)]
+macro_rules! handlers {
+    () => {
+        tauri::generate_handler![
+            commands::ensure_inbox,
+            commands::list_task_lists,
+            commands::create_task_list,
+            commands::rename_task_list,
+            commands::move_task_list,
+            commands::delete_task_list,
+            commands::create_task,
+            commands::get_task,
+            commands::update_task,
+            commands::complete_task,
+            commands::move_task,
+            commands::delete_task,
+            commands::complete_tasks,
+            commands::delete_tasks,
+            commands::move_tasks,
+            commands::restore_tasks,
+            commands::list_tasks,
+            commands::auth_info,
+            commands::auth_current,
+            commands::auth_begin_login,
+            commands::auth_open_browser,
+            commands::auth_poll_login,
+            commands::auth_cancel_login,
+            commands::auth_logout,
+            commands::sync_status,
+            commands::sync_now,
+            commands::set_online,
+            commands::app_ready,
+            commands::dev_selftest,
+            commands::dev_selftest_report,
+        ]
+    };
+}
+
+#[cfg(not(debug_assertions))]
+macro_rules! handlers {
+    () => {
+        tauri::generate_handler![
+            commands::ensure_inbox,
+            commands::list_task_lists,
+            commands::create_task_list,
+            commands::rename_task_list,
+            commands::move_task_list,
+            commands::delete_task_list,
+            commands::create_task,
+            commands::get_task,
+            commands::update_task,
+            commands::complete_task,
+            commands::move_task,
+            commands::delete_task,
+            commands::complete_tasks,
+            commands::delete_tasks,
+            commands::move_tasks,
+            commands::restore_tasks,
+            commands::list_tasks,
+            commands::auth_info,
+            commands::auth_current,
+            commands::auth_begin_login,
+            commands::auth_open_browser,
+            commands::auth_poll_login,
+            commands::auth_cancel_login,
+            commands::auth_logout,
+            commands::sync_status,
+            commands::sync_now,
+            commands::set_online,
+            commands::app_ready,
+        ]
+    };
+}
+
 /// Startzeitpunkt des Prozesses (so früh wie möglich in [`run`] gesetzt).
 static STARTED: OnceLock<Instant> = OnceLock::new();
 
@@ -82,38 +158,7 @@ pub fn builder<R: Runtime>(base: tauri::Builder<R>, options: Options) -> tauri::
         Ok(())
     })
     .on_window_event(window_event)
-    .invoke_handler(tauri::generate_handler![
-        commands::ensure_inbox,
-        commands::list_task_lists,
-        commands::create_task_list,
-        commands::rename_task_list,
-        commands::move_task_list,
-        commands::delete_task_list,
-        commands::create_task,
-        commands::get_task,
-        commands::update_task,
-        commands::complete_task,
-        commands::move_task,
-        commands::delete_task,
-        commands::complete_tasks,
-        commands::delete_tasks,
-        commands::move_tasks,
-        commands::restore_tasks,
-        commands::list_tasks,
-        commands::auth_info,
-        commands::auth_current,
-        commands::auth_begin_login,
-        commands::auth_open_browser,
-        commands::auth_poll_login,
-        commands::auth_cancel_login,
-        commands::auth_logout,
-        commands::sync_status,
-        commands::sync_now,
-        commands::set_online,
-        commands::app_ready,
-        commands::dev_selftest,
-        commands::dev_selftest_report,
-    ])
+    .invoke_handler(handlers!())
 }
 
 /// Fenster sichtbar/versteckt → Scheduler (Pull bei Fokus, keine Timer im Hintergrund).

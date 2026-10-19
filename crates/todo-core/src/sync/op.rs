@@ -217,6 +217,12 @@ impl Op {
                 self.id.device, self.id.seq
             )));
         }
+        if self.hlc.wall_ms > super::hlc::MAX_WALL_MS {
+            return Err(CoreError::Validation(format!(
+                "op {}/{}: hlc is implausibly far in the future",
+                self.id.device, self.id.seq
+            )));
+        }
         let check = |field: FieldName, value: &FieldValue| {
             if field.applies_to(&self.entity) && field.accepts(value) {
                 Ok(())
@@ -400,6 +406,16 @@ mod tests {
                 FieldValue::Timestamp(Timestamp::from_millis(-3)),
             ),
         ]
+    }
+
+    #[test]
+    fn implausibly_far_future_hlc_is_rejected() {
+        let d = device();
+        let mut far = op(d, 1, EntityRef::Task(TaskId::new()), OpKind::Delete);
+        far.hlc.wall_ms = u64::MAX;
+        assert!(far.validate().is_err());
+        far.hlc.wall_ms = super::super::MAX_WALL_MS;
+        assert!(far.validate().is_ok(), "Grenze selbst ist erlaubt");
     }
 
     #[test]

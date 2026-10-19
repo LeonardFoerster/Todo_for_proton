@@ -20,6 +20,7 @@ use reqwest::Method;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use sha1::{Digest, Sha1};
+use sha2::Sha256;
 use todo_core::{
     domain::Timestamp,
     ports::{
@@ -30,7 +31,7 @@ use todo_core::{
 };
 
 use super::{
-    crypto::{random, verification_token, DriveCrypto, PrivateKey, SessionKey},
+    crypto::{random, verification_token, DriveCrypto, PrivateKey, PublicKey, SessionKey},
     mapping::{
         AddressesResponse, ChildrenResponse, ConflictDetails, CreatedFile, CreatedFolder,
         CreatedRevision, Events, LatestEvent, Link, LinkResponse, MultiResponse, RevisionResponse,
@@ -52,6 +53,14 @@ const BLOCKS_PAGE_SIZE: usize = 50;
 const MAX_EVENT_PAGES: usize = 20;
 /// Tiefe, bis zu der unbekannte Elternordner aus Events nachgeladen werden.
 const MAX_RESOLVE_DEPTH: usize = 16;
+/// Höchstens so viele Seiten je Ordnerinhalt (150 Einträge je Seite).
+const MAX_CHILDREN_PAGES: usize = 200;
+/// Höchstgröße einer Datei: weit über allem, was die Sync-Engine schreibt (Segmente und
+/// Snapshots sind auf 64 MiB unkomprimiert begrenzt).
+const MAX_FILE_SIZE: u64 = 128 * 1024 * 1024;
+/// Rekursives Listing: höchstens so tief und so viele Einträge.
+const MAX_LIST_DEPTH: usize = 8;
+const MAX_LIST_ENTRIES: usize = 100_000;
 
 /// PGP-Provider mit thread-sicheren Schlüsseltypen.
 pub(crate) trait Pgp:
@@ -149,16 +158,36 @@ struct Context<P: Pgp> {
     address_email: String,
     address_id: String,
     address_keys: Vec<UnlockedAddressKey<P>>,
+    /// Öffentliche Adress-Keys: Gegen sie werden Passphrasen, Namen und Manifeste geprüft.
+    verifiers: Vec<PublicKey<P>>,
     root: Arc<Folder<P>>,
 }
 
+/// Entschlüsselter Name, der als Pfadsegment taugt (kein `/`, `\`, `.`, `..`, keine
+/// Steuerzeichen): Sonst ergäbe er einen verschachtelten oder ungültigen Pfad.
+fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name.contains(['/', '\\'])
+        && !name.chars().any(char::is_control)
+}
+
 impl<P: Pgp> Context<P> {
-    /// Signiert Namen, Passphrasen, Blöcke und Manifeste: primärer Adress-Key.
+    /// Signiert Namen, Passphrasen, Blöcke und Manifeste: der primäre Adress-Key, sofern er weder
+    /// kompromittiert noch veraltet ist, sonst der erste solche (`context` stellt sicher, dass
+    /// es einen gibt).
     fn signing_key(&self) -> &PrivateKey<P> {
-        let key = self
+        let usable: Vec<&UnlockedAddressKey<P>> = self
             .address_keys
             .iter()
+            .filter(|k| !k.flags.is_compromised() && !k.flags.is_obsolete())
+            .collect();
+        let key = usable
+            .iter()
             .find(|k| k.primary)
+            .or_else(|| usable.first())
+            .copied()
             .unwrap_or(&self.address_keys[0]);
         &key.private_key
     }
@@ -241,7 +270,7 @@ fn split(path: &RemotePath) -> (&str, &str) {
 
 fn decode<T: DeserializeOwned>(value: Value, what: &str) -> CoreResult<T> {
     serde_json::from_value(value)
-        .map_err(|e| CoreError::RemoteRejected(format!("unexpected {what} response: {e}")))
+        .map_err(|e| CoreError::RemoteRejected(crate::api_client::decode_error(what, &e)))
 }
 
 fn now() -> Timestamp {
@@ -337,6 +366,20 @@ impl<P: Pgp> Drive<P> {
         let share: Share = self
             .get("/drive/shares/{share}", format!("/drive/shares/{share_id}"))
             .await?;
+        // Share muss zum Volume und zu dessen Wurzel gehören.
+        if share
+            .volume_id
+            .as_deref()
+            .is_some_and(|v| v != volume.volume_id)
+            || share
+                .link_id
+                .as_deref()
+                .is_some_and(|l| l != volume.share.link_id)
+        {
+            return Err(CoreError::RemoteRejected(
+                "share does not belong to the volume".into(),
+            ));
+        }
         let addresses: AddressesResponse = self
             .get("/core/v4/addresses", "/core/v4/addresses".into())
             .await?;
@@ -348,9 +391,27 @@ impl<P: Pgp> Drive<P> {
         let address_keys =
             self.crypto
                 .unlock_address_keys(address.keys, &user_keys, &key_password)?;
-        let share_key = self
-            .crypto
-            .unlock_share(&address_keys, &share.key, &share.passphrase)?;
+        // Als kompromittiert markierte Keys bestätigen nichts mehr.
+        let verifiers: Vec<PublicKey<P>> = address_keys
+            .iter()
+            .filter(|k| !k.flags.is_compromised())
+            .map(|k| k.public_key.clone())
+            .collect();
+        if !address_keys
+            .iter()
+            .any(|k| !k.flags.is_compromised() && !k.flags.is_obsolete())
+        {
+            return Err(CoreError::RemoteRejected(
+                "no usable address key for signing".into(),
+            ));
+        }
+        let share_key = self.crypto.unlock_share(
+            &address_keys,
+            &verifiers,
+            &share.key,
+            &share.passphrase,
+            share.passphrase_signature.as_deref(),
+        )?;
 
         let root_id = volume.share.link_id;
         let root: LinkResponse = self
@@ -359,7 +420,7 @@ impl<P: Pgp> Drive<P> {
                 format!("/drive/shares/{share_id}/links/{root_id}"),
             )
             .await?;
-        let root = self.unlock_folder(&share_key, &root.link, String::new())?;
+        let root = self.unlock_folder(&share_key, &verifiers, &root.link, String::new())?;
         self.cache().add_folder(Arc::clone(&root));
 
         let ctx = Arc::new(Context {
@@ -368,23 +429,30 @@ impl<P: Pgp> Drive<P> {
             address_email: address.email,
             address_id: address.id,
             address_keys,
+            verifiers,
             root,
         });
         *slot = Some(Arc::clone(&ctx));
         Ok(ctx)
     }
 
+    /// Entsperrt einen Ordner; Passphrase und Hash-Key müssen signiert sein (fail closed).
     fn unlock_folder(
         &self,
         parent_key: &PrivateKey<P>,
+        verifiers: &[PublicKey<P>],
         link: &Link,
         path: String,
     ) -> CoreResult<Arc<Folder<P>>> {
-        let key = self
-            .crypto
-            .unlock_node(parent_key, &link.node_key, &link.node_passphrase)?;
+        let key = self.crypto.unlock_node(
+            parent_key,
+            verifiers,
+            &link.node_key,
+            &link.node_passphrase,
+            link.node_passphrase_signature.as_deref(),
+        )?;
         let hash_key = match link.node_hash_key() {
-            Some(armored) => self.crypto.decrypt_hash_key(&key, armored)?,
+            Some(armored) => self.crypto.decrypt_hash_key(&key, verifiers, armored)?,
             None => return Err(CoreError::RemoteRejected("folder without hash key".into())),
         };
         Ok(Arc::new(Folder {
@@ -395,7 +463,8 @@ impl<P: Pgp> Drive<P> {
         }))
     }
 
-    /// Ordnerinhalt (aus dem Cache oder frisch). Nicht entschlüsselbare Namen werden übersprungen.
+    /// Ordnerinhalt (aus dem Cache oder frisch). Namen, die sich nicht entschlüsseln oder deren
+    /// Signatur sich nicht prüfen lässt, und ungültige Namen werden übersprungen.
     async fn children(
         &self,
         ctx: &Context<P>,
@@ -409,7 +478,7 @@ impl<P: Pgp> Drive<P> {
         }
         let mut by_name: HashMap<String, Link> = HashMap::new();
         let mut undecryptable = 0;
-        for page in 0.. {
+        for page in 0..MAX_CHILDREN_PAGES {
             let response: ChildrenResponse = self
                 .get(
                     "/drive/shares/{share}/folders/{link}/children",
@@ -421,9 +490,15 @@ impl<P: Pgp> Drive<P> {
                 .await?;
             let count = response.links.len();
             for link in response.links {
-                let Ok(name) = self.crypto.decrypt_name(&folder.key, &link.name) else {
-                    undecryptable += 1;
-                    continue;
+                let name = match self
+                    .crypto
+                    .decrypt_name(&folder.key, &ctx.verifiers, &link.name)
+                {
+                    Ok(name) if valid_name(&name) => name,
+                    _ => {
+                        undecryptable += 1;
+                        continue;
+                    }
                 };
                 let keep_existing = by_name
                     .get(&name)
@@ -437,7 +512,10 @@ impl<P: Pgp> Drive<P> {
             }
         }
         if undecryptable > 0 {
-            tracing::warn!(undecryptable, "skipped children with undecryptable names");
+            tracing::warn!(
+                undecryptable,
+                "skipped children with unverifiable or invalid names"
+            );
         }
         let children = Arc::new(by_name);
         let mut cache = self.cache();
@@ -476,7 +554,7 @@ impl<P: Pgp> Drive<P> {
                 .get(name)
                 .filter(|l| l.is_folder() && l.is_active())
             {
-                let folder = self.unlock_folder(&parent.key, link, path)?;
+                let folder = self.unlock_folder(&parent.key, &ctx.verifiers, link, path)?;
                 self.cache().add_folder(Arc::clone(&folder));
                 return Ok(Some(folder));
             }
@@ -495,7 +573,7 @@ impl<P: Pgp> Drive<P> {
                     .ok_or_else(|| {
                         CoreError::Conflict("name is taken by a file or draft".into())
                     })?;
-                let folder = self.unlock_folder(&parent.key, link, path)?;
+                let folder = self.unlock_folder(&parent.key, &ctx.verifiers, link, path)?;
                 self.cache().add_folder(Arc::clone(&folder));
                 Ok(Some(folder))
             }
@@ -595,12 +673,17 @@ impl<P: Pgp> Drive<P> {
         let packet = link
             .content_key_packet()
             .ok_or_else(|| CoreError::RemoteRejected("file without content key".into()))?;
-        let node_key =
+        if link.size.is_some_and(|size| size > MAX_FILE_SIZE) {
+            return Err(CoreError::RemoteRejected("file is too large".into()));
+        }
+        let node_key = self.unlock_file(ctx, parent, link)?;
+        let session_key =
             self.crypto
-                .unlock_node(&parent.key, &link.node_key, &link.node_passphrase)?;
-        let session_key = self.crypto.session_key(&node_key, packet)?;
+                .session_key(&node_key, packet, link.content_key_packet_signature())?;
 
+        let max_blocks = usize::try_from(MAX_FILE_SIZE).unwrap_or(usize::MAX) / self.block_size + 1;
         let mut blocks = Vec::new();
+        let mut manifest_signature = None;
         let mut from = 1;
         loop {
             let page: RevisionResponse = self
@@ -613,31 +696,76 @@ impl<P: Pgp> Drive<P> {
                 )
                 .await?;
             let count = page.revision.blocks.len();
-            from = page
+            let next = page
                 .revision
                 .blocks
                 .iter()
                 .map(|b| b.index)
                 .max()
-                .unwrap_or(from)
-                + 1;
+                .map_or(from, |max| max.saturating_add(1));
+            manifest_signature = manifest_signature.or(page.revision.manifest_signature);
             blocks.extend(page.revision.blocks);
-            if count < BLOCKS_PAGE_SIZE {
+            if blocks.len() > max_blocks {
+                return Err(CoreError::RemoteRejected("file has too many blocks".into()));
+            }
+            // Kurze Seite = Ende; eine volle Seite ohne Fortschritt würde endlos wiederholen.
+            if count < BLOCKS_PAGE_SIZE || next <= from {
                 break;
             }
+            from = next;
         }
         blocks.sort_by_key(|b| b.index);
+        // Lückenlos 1..=n, und das signierte Manifest (Block-Hashes in Reihenfolge) muss passen:
+        // So kann der Server Blöcke weder weglassen, vertauschen noch austauschen.
+        let mut hashes = Vec::with_capacity(blocks.len());
+        let mut manifest = Vec::new();
+        for (i, block) in blocks.iter().enumerate() {
+            let hash = block
+                .hash
+                .as_deref()
+                .and_then(|h| STANDARD.decode(h).ok())
+                .filter(|_| usize::try_from(block.index).ok() == Some(i + 1))
+                .ok_or_else(|| CoreError::RemoteRejected("invalid block list".into()))?;
+            manifest.extend_from_slice(&hash);
+            hashes.push(hash);
+        }
+        let signature = manifest_signature
+            .ok_or_else(|| CoreError::RemoteRejected("revision is not signed".into()))?;
+        self.crypto
+            .verify_detached(&ctx.verifiers, &manifest, &signature, "manifest")?;
         let mut content = Vec::new();
-        for block in blocks {
+        for (block, hash) in blocks.into_iter().zip(hashes) {
             let token = crate::secret::Secret::new(block.token);
             let encrypted = self
                 .session
                 .api()
                 .download_block(&block.bare_url, &token)
                 .await?;
+            if Sha256::digest(&encrypted).as_slice() != hash.as_slice() {
+                return Err(CoreError::RemoteRejected("block hash mismatch".into()));
+            }
             content.extend(self.crypto.decrypt_block(&session_key, &encrypted)?);
+            if content.len() as u64 > MAX_FILE_SIZE {
+                return Err(CoreError::RemoteRejected("file is too large".into()));
+            }
         }
         Ok(content)
+    }
+
+    /// Node-Key einer Datei (Passphrase signaturgeprüft).
+    fn unlock_file(
+        &self,
+        ctx: &Context<P>,
+        parent: &Folder<P>,
+        link: &Link,
+    ) -> CoreResult<PrivateKey<P>> {
+        self.crypto.unlock_node(
+            &parent.key,
+            &ctx.verifiers,
+            &link.node_key,
+            &link.node_passphrase,
+            link.node_passphrase_signature.as_deref(),
+        )
     }
 
     /// Lädt `bytes` als Inhalt der Entwurfs-Revision hoch und committet sie.
@@ -891,10 +1019,10 @@ impl<P: Pgp> Drive<P> {
         let packet = link
             .content_key_packet()
             .ok_or_else(|| CoreError::RemoteRejected("file without content key".into()))?;
-        let node_key =
+        let node_key = self.unlock_file(ctx, parent, link)?;
+        let session_key =
             self.crypto
-                .unlock_node(&parent.key, &link.node_key, &link.node_passphrase)?;
-        let session_key = self.crypto.session_key(&node_key, packet)?;
+                .session_key(&node_key, packet, link.content_key_packet_signature())?;
 
         let mut removed_stale_draft = false;
         let revision_id = loop {
@@ -1002,8 +1130,18 @@ impl<P: Pgp> Drive<P> {
         };
         let mut folder = known;
         for link in chain.into_iter().rev() {
-            let name = self.crypto.decrypt_name(&folder.key, &link.name)?;
-            let child = self.unlock_folder(&folder.key, &link, join(&folder.path, &name))?;
+            let name = self
+                .crypto
+                .decrypt_name(&folder.key, &ctx.verifiers, &link.name)?;
+            if !valid_name(&name) {
+                return Ok(None);
+            }
+            let child = self.unlock_folder(
+                &folder.key,
+                &ctx.verifiers,
+                &link,
+                join(&folder.path, &name),
+            )?;
             self.cache().add_folder(Arc::clone(&child));
             folder = child;
         }
@@ -1091,10 +1229,15 @@ impl<P: Pgp> Drive<P> {
         if !self.cache().in_roots(&parent.path) {
             return Ok(());
         }
-        let Ok(name) = self.crypto.decrypt_name(&parent.key, &link.name) else {
+        let Ok(name) = self
+            .crypto
+            .decrypt_name(&parent.key, &ctx.verifiers, &link.name)
+        else {
             return Ok(());
         };
-        let path = RemotePath::new(&join(&parent.path, &name))?;
+        let Ok(path) = RemotePath::new(&join(&parent.path, &name)) else {
+            return Ok(());
+        };
         if link.is_draft() {
             // Event beim Anlegen des Entwurfs; ob danach ein eigenes Commit-Event kommt, ist nicht
             // dokumentiert – daher den aktuellen Stand nachladen.
@@ -1141,20 +1284,28 @@ impl<P: Pgp> RemoteStore for Drive<P> {
         let mut entries = Vec::new();
         let mut pending = Vec::new();
         if let Some(folder) = self.folder(&ctx, dir.as_str(), false).await? {
-            pending.push(folder);
+            pending.push((folder, 0));
         }
-        while let Some(folder) = pending.pop() {
+        while let Some((folder, depth)) = pending.pop() {
             let children = self.children(&ctx, &folder, true).await?;
             for (name, link) in children.iter() {
                 let path = join(&folder.path, name);
                 if link.is_folder() {
-                    if link.is_active() {
-                        let child = self.unlock_folder(&folder.key, link, path)?;
+                    if link.is_active() && depth < MAX_LIST_DEPTH {
+                        let child = self.unlock_folder(&folder.key, &ctx.verifiers, link, path)?;
                         self.cache().add_folder(Arc::clone(&child));
-                        pending.push(child);
+                        pending.push((child, depth + 1));
                     }
-                } else if let Some(entry) = link.entry(RemotePath::new(&path)?) {
+                } else if let Some(entry) = RemotePath::new(&path)
+                    .ok()
+                    .and_then(|path| link.entry(path))
+                {
                     entries.push(entry);
+                    if entries.len() > MAX_LIST_ENTRIES {
+                        return Err(CoreError::RemoteRejected(
+                            "folder has too many files".into(),
+                        ));
+                    }
                 }
             }
         }

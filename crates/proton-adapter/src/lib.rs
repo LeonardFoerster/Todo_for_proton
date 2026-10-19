@@ -12,5 +12,5 @@ mod error;
 mod secret;
 
 pub use api_client::{ApiConfig, DEFAULT_BASE_URL};
-pub use auth::ProtonAuthProvider;
+pub use auth::{write_login_redirect, ProtonAuthProvider};
 pub use drive::ProtonDriveRemoteStore;

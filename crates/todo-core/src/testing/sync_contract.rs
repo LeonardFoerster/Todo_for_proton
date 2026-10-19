@@ -291,6 +291,24 @@ pub fn apply_remote_is_idempotent<R: TaskRepository>(repo: R) {
     assert_eq!(f.get(task.id()).expect("task").title(), "y");
 }
 
+/// Eine Op mit absurder Zukunfts-HLC (auch aus Snapshots, die `Op::validate` nicht durchlaufen)
+/// wird verworfen und friert das Feld nicht ein.
+pub fn apply_remote_ignores_implausible_future_ops<R: TaskRepository>(repo: R) {
+    let f = setup(repo);
+    let mut remote = Remote::new();
+    let task = f.task(f.inbox.id(), "x", SortKey::first());
+    let create = remote.create_task(1, &task);
+    let mut frozen = remote.set(2, task.id(), FieldName::Title, title("eingefroren"));
+    frozen.hlc.wall_ms = u64::MAX;
+    let receipt =
+        block_on(f.repo.apply_remote(remote.batch(vec![create, frozen]))).expect("apply_remote");
+    assert_eq!(receipt.clock_skews, 1);
+    assert_eq!(f.get(task.id()).expect("task").title(), "x");
+    let later = remote.set(3, task.id(), FieldName::Title, title("später"));
+    f.apply(remote.batch(vec![later]));
+    assert_eq!(f.get(task.id()).expect("task").title(), "später");
+}
+
 /// Feldweise LWW gegen lokale Änderungen: neuere lokale Werte bleiben, andere Felder kommen an.
 pub fn apply_remote_merges_field_wise_with_local<R: TaskRepository>(repo: R) {
     let f = setup(repo);
