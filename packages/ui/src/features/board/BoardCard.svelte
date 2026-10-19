@@ -99,7 +99,7 @@
   }
   .card:focus-visible,
   :global([data-input="keyboard"]) .card:focus {
-    outline: 2px solid var(--color-focus-ring);
+    outline: 2px solid var(--color-focus-outline);
     outline-offset: 1px;
   }
   :global([data-input="pointer"]) .card:focus:not(:focus-visible) {

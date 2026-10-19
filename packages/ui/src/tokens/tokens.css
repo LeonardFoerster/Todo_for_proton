@@ -43,6 +43,8 @@
   --color-danger-subtle: #fdecef;
   --color-warning: #a35f00;
   --color-success: #18794e;
+  /* Fokus: Umriss deckend (≥ 3:1, WCAG 1.4.11), weicher Halo nur zusätzlich an Eingabefeldern */
+  --color-focus-outline: var(--color-accent);
   --color-focus-ring: color-mix(in srgb, var(--violet-500) 55%, transparent);
 
   /* Raster & Form */
@@ -140,7 +142,7 @@ body {
 }
 
 :focus-visible {
-  outline: 2px solid var(--color-focus-ring);
+  outline: 2px solid var(--color-focus-outline);
   outline-offset: 1px;
 }
 

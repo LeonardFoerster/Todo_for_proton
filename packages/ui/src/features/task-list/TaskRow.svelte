@@ -172,7 +172,7 @@
   }
   .row:focus-visible,
   :global([data-input="keyboard"]) .row:focus {
-    outline: 2px solid var(--color-focus-ring);
+    outline: 2px solid var(--color-focus-outline);
     outline-offset: -2px;
   }
   :global([data-input="pointer"]) .row:focus:not(:focus-visible) {

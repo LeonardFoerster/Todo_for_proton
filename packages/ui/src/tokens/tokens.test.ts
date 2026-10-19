@@ -62,6 +62,11 @@ const CONTROLS: [string, string][] = [
   ["color-control-border", "color-bg-hover"],
   ["color-accent", "color-bg"],
   ["color-accent-fill", "color-bg"],
+  ["color-focus-outline", "color-bg"],
+  ["color-focus-outline", "color-bg-subtle"],
+  ["color-focus-outline", "color-bg-raised"],
+  ["color-focus-outline", "color-bg-hover"],
+  ["color-focus-outline", "color-bg-selected"],
 ];
 
 describe.each([

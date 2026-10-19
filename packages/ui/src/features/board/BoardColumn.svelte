@@ -144,7 +144,7 @@
     cursor: grab;
   }
   header:focus-visible {
-    outline: 2px solid var(--color-focus-ring);
+    outline: 2px solid var(--color-focus-outline);
     outline-offset: -2px;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   }

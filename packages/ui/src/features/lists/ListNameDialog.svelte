@@ -67,7 +67,7 @@
     font: inherit;
   }
   input:focus {
-    outline: 2px solid var(--color-focus-ring);
+    outline: 2px solid var(--color-focus-outline);
     border-color: var(--color-accent);
   }
   .error {
