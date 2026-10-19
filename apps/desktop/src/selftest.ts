@@ -1671,7 +1671,41 @@ const p3new: Step[] = [
   ],
 ];
 
-const SUITES: Record<string, Step[]> = { p002, p3new, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
+// P4-01: Uhrzeit in der Detailansicht – Datum ändern behält sie, auch nach erneutem Laden aus dem Core.
+const p4due: Step[] = [
+  [
+    "Uhrzeit setzen, Datum ändern, Uhrzeit bleibt",
+    async (client) => {
+      const input = await openNewTask();
+      type(input, "Termin morgen um 14:00");
+      key(input, "Enter");
+      await newTaskClosed();
+      await openTask(/^Termin/);
+      const date = await until("Datumsfeld", () => document.querySelector<HTMLInputElement>("#detail-due"));
+      date.value = "2030-01-15";
+      date.dispatchEvent(new Event("change", { bubbles: true }));
+      const all = await client.listTasks({ view: { kind: "all" } }, { limit: 50 });
+      const id = all.items.find((t) => t.title === "Termin")?.id;
+      if (!id) throw new Error("nicht angelegt");
+      let due = (await client.getTask(id)).due;
+      await untilAsync("gespeichert", async () => {
+        due = (await client.getTask(id)).due;
+        return due?.kind === "dateTime" && new Date(due.at).getFullYear() === 2030;
+      });
+      const at = due?.kind === "dateTime" ? new Date(due.at) : null;
+      if (!at || at.getHours() !== 14 || at.getMinutes() !== 0 || at.getDate() !== 15) throw new Error(JSON.stringify(due));
+      // Detail schließen und neu öffnen: Felder kommen aus dem Core.
+      await click("button", "Schließen");
+      location.hash = "#/all";
+      await openTask(/^Termin/);
+      const time = await field("Uhrzeit");
+      await until("Uhrzeit im Feld", () => time.value === "14:00");
+      return `${at.toLocaleString("de-DE")}`;
+    },
+  ],
+];
+
+const SUITES: Record<string, Step[]> = { p002, p3new, p4due, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
   p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */

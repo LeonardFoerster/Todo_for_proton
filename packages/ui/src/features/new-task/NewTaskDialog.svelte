@@ -15,7 +15,7 @@
   import { toasts } from "../../components/toasts.svelte";
   import { CalendarDays, Check, Flag, Pencil, Plus, X } from "../../icons";
   import { useCoreClient } from "../../lib/context";
-  import { dueLabel, dueToInputDate, todayPlus } from "../../lib/format-date";
+  import { dueFromInputs, dueLabel, dueToInputDate, dueToInputTime, keepTime, todayPlus } from "../../lib/format-date";
   import type { ListsState } from "../../lib/lists.svelte";
   import { readFlag, writeFlag } from "../../lib/preferences";
   import ListPicker from "../lists/ListPicker.svelte";
@@ -123,27 +123,8 @@
 
   /** Schnellwahl: setzen und zurück in den Titel (der Button kann dabei verschwinden). */
   function pickDue(next: DueDto | null) {
-    setDue(next);
+    setDue(keepTime(next, due));
     input?.focus();
-  }
-
-  /** Datum und Uhrzeit aus den Eingabefeldern; ohne Datum keine Fälligkeit. */
-  function dueFromInputs(date: string, time: string): DueDto | null {
-    if (!date) return null;
-    if (!time) return { kind: "date", date };
-    const [y, m, d] = date.split("-").map(Number);
-    const [h, min] = time.split(":").map(Number);
-    return {
-      kind: "dateTime",
-      at: new Date(y, m - 1, d, h, min).toISOString(),
-      tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    };
-  }
-
-  function inputTime(d: DueDto | null): string {
-    if (d?.kind !== "dateTime") return "";
-    const at = new Date(d.at);
-    return `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
   }
 
   /** Neue Task liegt nicht in der angezeigten Liste: sagen, wo, mit Sprung dorthin. */
@@ -272,14 +253,14 @@
           class="field"
           aria-label="Fällig am"
           value={dueToInputDate(due)}
-          onchange={(e) => setDue(dueFromInputs(e.currentTarget.value, inputTime(due)))}
+          onchange={(e) => setDue(dueFromInputs(e.currentTarget.value, dueToInputTime(due)))}
         />
         <input
           type="time"
           class="field"
           aria-label="Uhrzeit"
           disabled={!due}
-          value={inputTime(due)}
+          value={dueToInputTime(due)}
           onchange={(e) => setDue(dueFromInputs(dueToInputDate(due), e.currentTarget.value))}
         />
         <button type="button" class="chip" onclick={() => pickDue(todayPlus(0))}>Heute</button>
