@@ -14,8 +14,9 @@ Status: **Prototyp (v0.1.0, 2026-10-18).** Desktop-App (Linux) mit lokalem Speic
 Proton Drive ist abgenommen (automatisierter Zwei-Geräte-Lauf; Live-Teil über Proton offen, siehe
 `development/prototype-acceptance.md`). Zwischenphasen P0–P2 (Mehrfachauswahl, Upload ≤ 5 s,
 Listen & Kanban-Board) und P3 (Fenster „Neue Task" mit Texterkennung) umgesetzt (Archiv:
-`development/archive/roadmap-interim.md`). Als Nächstes N0 (Prototyp abrunden), danach die Web-App
-(`development/roadmap-next.md`); langfristige Ideen (Notizen, Kalender, GitHub) stehen dort unter N3.
+`development/archive/roadmap-interim.md`). Als Nächstes P4 (Bedienung: Uhrzeit im Detail, Heute/Überfällig, Geplant
+nach Tagen, Fälligkeit per Kürzel, Suche & Befehlspalette; `development/roadmap.md`), dann N0 (Prototyp abrunden),
+danach die Web-App (`development/roadmap-next.md`); langfristige Ideen (Notizen, Kalender, GitHub) stehen dort unter N3.
 
 ## 2. Wo was liegt
 
