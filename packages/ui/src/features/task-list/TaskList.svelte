@@ -5,15 +5,18 @@
   import Menu, { type MenuItem } from "../../components/Menu.svelte";
   import { toasts } from "../../components/toasts.svelte";
   import VirtualList from "../../components/VirtualList.svelte";
-  import { ArrowDown, ArrowUp, CircleCheck, FolderInput, Hash, Inbox, PanelRight, Plus, Trash, Undo } from "../../icons";
+  import { ArrowDown, ArrowUp, CalendarDays, CircleCheck, FolderInput, Hash, Inbox, PanelRight, Plus, Trash, Undo } from "../../icons";
   import { useCoreClient } from "../../lib/context";
   import type { ListsState } from "../../lib/lists.svelte";
   import { localDay } from "../../lib/local-day";
   import type { Route } from "../../lib/router.svelte";
-  import { completeManyWithUndo, deleteManyWithUndo, moveManyWithUndo } from "../../lib/task-actions";
+  import { keepTime, todayPlus } from "../../lib/format-date";
+  import { groupEntries, isOverdue, type Entry } from "../../lib/groups";
+  import { completeManyWithUndo, deleteManyWithUndo, moveManyWithUndo, setDuesWithUndo } from "../../lib/task-actions";
   import { listName, routeIcon, SMART_VIEWS } from "../../lib/views";
   import { SelectionState } from "./selection.svelte";
   import { TaskListState, toSummary } from "./task-list-state.svelte";
+  import GroupHeading from "./GroupHeading.svelte";
   import TaskRow from "./TaskRow.svelte";
 
   interface Props {
@@ -25,9 +28,11 @@
     onready?: () => void;
     /** Leere Ansicht: „Neue Task“ anbieten (fehlt in „Erledigt“). */
     onnewtask?: () => void;
+    /** Kontextmenü „Fälligkeit…“ für diese Tasks an Position (P4-04). */
+    ondue?: (tasks: TaskSummaryDto[], x: number, y: number) => void;
   }
 
-  let { route, lists, selectedId = $bindable(null), onopen, onready, onnewtask }: Props = $props();
+  let { route, lists, selectedId = $bindable(null), onopen, onready, onnewtask, ondue }: Props = $props();
 
   const ROW = 36;
   const client = useCoreClient();
@@ -47,7 +52,45 @@
   /** Mehrfachauswahl dieser Ansicht (P0); endet mit der Ansicht. */
   export const selection = new SelectionState();
 
-  let list = $state<VirtualList<TaskSummaryDto>>();
+  let list = $state<VirtualList<Entry<TaskSummaryDto>>>();
+
+  // --- Abschnitte (P4: Heute = Überfällig/Heute, Geplant = nach Tagen) ------------------------
+
+  /** Angezeigte Einträge: Tasks, in Heute/Geplant mit Abschnittsüberschriften dazwischen. */
+  const entries = $derived<Entry<TaskSummaryDto>[]>(groupEntries(rows.items, view) ?? rows.items.map(flatEntry));
+  /** Flache Ansichten: ein Eintrag je Task-Objekt, über Änderungen hinweg dasselbe (keine Neuanlage je Zeile). */
+  const flat = new WeakMap<TaskSummaryDto, Entry<TaskSummaryDto>>();
+  function flatEntry(task: TaskSummaryDto): Entry<TaskSummaryDto> {
+    let entry = flat.get(task);
+    if (!entry) flat.set(task, (entry = { kind: "task", task, dueMode: "full" }));
+    return entry;
+  }
+  const grouped = view.view === "today" || view.view === "upcoming" || view.view === "completed";
+  /** Eintrags-Index je Task-ID, gebaut je `entries`-Array (nicht je Tastendruck). */
+  let entryIndex = new Map<string, number>();
+  let entryIndexOf: Entry<TaskSummaryDto>[] | null = null;
+
+  /** Scrollt zur Task mit Index `i` in `rows.items` (Überschriften verschieben die Position). */
+  function scrollToTask(i: number) {
+    if (!grouped) {
+      list?.scrollToIndex(i);
+      return;
+    }
+    if (entryIndexOf !== entries) {
+      entryIndex = new Map(entries.flatMap((e, at) => (e.kind === "task" ? [[e.task.id, at] as const] : [])));
+      entryIndexOf = entries;
+    }
+    const id = rows.items[i]?.id;
+    const at = id === undefined ? undefined : entryIndex.get(id);
+    if (at !== undefined) list?.scrollToIndex(at);
+  }
+
+  /** „Alle auf heute“ am Abschnitt „Überfällig“: ein Aufruf, Uhrzeiten bleiben, Rückgängig. */
+  async function overdueToToday() {
+    const now = new Date();
+    const overdue = rows.items.filter((t) => t.due && isOverdue(t.due, now));
+    await setDuesWithUndo(client, overdue, (t) => keepTime(todayPlus(0, now), t.due), "auf heute verschoben");
+  }
   /**
    * Laufendes Ziehen. Zieht man eine ausgewählte Zeile, wandert der ganze Block (`block` = Anzahl,
    * `x`/`y` = Zeiger für das Zähler-Badge).
@@ -197,7 +240,7 @@
     const next = selection.extend(delta, selectedId && rows.byId(selectedId) ? selectedId : null, rows.order());
     if (!next) return;
     selectedId = next;
-    list?.scrollToIndex(rows.indexOf(next));
+    scrollToTask(rows.indexOf(next));
     void focusSelected();
   }
 
@@ -232,7 +275,7 @@
     const to = delta < 0 ? i - 1 : i + 2;
     if (to < 0 || to > rows.items.length) return;
     void moveTo(selectedId, to);
-    list?.scrollToIndex(Math.max(0, i + delta));
+    scrollToTask(Math.max(0, i + delta));
   }
 
   function startDrag(e: PointerEvent, task: TaskSummaryDto) {
@@ -301,7 +344,7 @@
     if (!neighbours) return;
     if (hadFocus) void focusSelected();
     const cursor = rows.items.findIndex((t) => t.id === selectedId);
-    if (cursor >= 0) list?.scrollToIndex(cursor);
+    if (cursor >= 0) scrollToTask(cursor);
     const moved = await moveManyWithUndo(client, before, { listId: currentList(), ...neighbours }, "verschoben");
     if (!moved) await rows.reload();
   }
@@ -339,7 +382,7 @@
   /** Cursor-Zeile ins Bild holen und fokussieren (nach dem Entfernen vieler Zeilen). */
   function revealCursor() {
     const i = rows.items.findIndex((t) => t.id === selectedId);
-    if (i >= 0) list?.scrollToIndex(i);
+    if (i >= 0) scrollToTask(i);
     void focusSelected();
   }
 
@@ -434,6 +477,7 @@
     const unsortable = sortable ? undefined : "Nur im Eingang und in Listen sortierbar";
     items.push(
       { label: "Verschieben nach…", icon: FolderInput, shortcut: "M", action: () => openMoveMenu(at.x, at.y) },
+      { label: "Fälligkeit…", icon: CalendarDays, shortcut: "D", action: () => ondue?.(selectedRows(), at.x, at.y) },
       {
         label: "Nach oben",
         icon: ArrowUp,
@@ -467,6 +511,7 @@
         shortcut: "Leertaste",
         action: () => void toggle(task, !done),
       },
+      { label: "Fälligkeit…", icon: CalendarDays, shortcut: "D", action: () => ondue?.([task], at.x, at.y) },
       {
         label: "Nach oben",
         icon: ArrowUp,
@@ -499,8 +544,14 @@
     return rows.items;
   }
 
+  /** Ausgewählte Tasks in Anzeigereihenfolge (Fälligkeit für die Auswahl). */
+  export function selectedTasks(): TaskSummaryDto[] {
+    return selectedRows();
+  }
+
+  /** Scrollt zur Task mit diesem Index in `items()` (nicht zum Eintrag der Anzeige). */
   export function scrollToIndex(index: number) {
-    list?.scrollToIndex(index);
+    scrollToTask(index);
   }
 
   export function toggleTask(task: TaskSummaryDto) {
@@ -520,8 +571,8 @@
   {:else}
     <VirtualList
       bind:this={list}
-      items={rows.items}
-      key={(t) => t.id}
+      items={entries}
+      key={(e) => (e.kind === "task" ? e.task.id : `header:${e.id}`)}
       role="listbox"
       label="Tasks"
       rowHeight={ROW}
@@ -529,19 +580,29 @@
       onEndReached={rows.hasMore ? () => void rows.loadMore() : undefined}
       oncontextmenu={contextMenu}
     >
-      {#snippet row(task)}
-        <TaskRow
-          {task}
-          listName={showListNames ? names.get(task.listId) : undefined}
-          selected={task.id === selectedId}
-          selectable={selection.active}
-          checked={selection.active && selection.has(task.id)}
-          dragging={drag !== null && dragIds.has(task.id)}
-          ontoggle={toggle}
-          onopen={rowClick}
-          ondelete={(t) => void deleteTask(t)}
-          ondragstart={sortable ? startDrag : undefined}
-        />
+      {#snippet row(entry)}
+        {#if entry.kind === "header"}
+          <GroupHeading
+            header={entry}
+            actionLabel={entry.group === "overdue" ? "Alle auf heute" : undefined}
+            onaction={entry.group === "overdue" ? () => void overdueToToday() : undefined}
+          />
+        {:else}
+          {@const task = entry.task}
+          <TaskRow
+            {task}
+            listName={showListNames ? names.get(task.listId) : undefined}
+            selected={task.id === selectedId}
+            selectable={selection.active}
+            checked={selection.active && selection.has(task.id)}
+            dragging={drag !== null && dragIds.has(task.id)}
+            dueMode={entry.dueMode}
+            ontoggle={toggle}
+            onopen={rowClick}
+            ondelete={(t) => void deleteTask(t)}
+            ondragstart={sortable ? startDrag : undefined}
+          />
+        {/if}
       {/snippet}
       {#snippet overlay()}
         {#if dropLine !== null}<div class="drop-line" style:top="{dropLine - 1}px"></div>{/if}

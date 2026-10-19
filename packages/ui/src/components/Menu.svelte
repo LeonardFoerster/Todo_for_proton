@@ -133,7 +133,7 @@
   }
   /* Tastaturfokus deutlich: Fläche + Ring (die Hover-Fläche allein hat zu wenig Kontrast). */
   button:focus-visible {
-    outline: 2px solid var(--color-focus-ring);
+    outline: 2px solid var(--color-focus-outline);
     outline-offset: -2px;
     background: var(--color-bg-hover);
   }

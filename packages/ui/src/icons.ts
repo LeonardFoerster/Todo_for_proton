@@ -36,3 +36,8 @@ export { default as FolderInput } from "@lucide/svelte/icons/folder-input";
 export { default as Pencil } from "@lucide/svelte/icons/pencil";
 export { default as ChevronDown } from "@lucide/svelte/icons/chevron-down";
 export { default as SquareKanban } from "@lucide/svelte/icons/square-kanban";
+// Befehlspalette (P4-05, lazy – landen nur in deren Chunk).
+export { default as Circle } from "@lucide/svelte/icons/circle";
+export { default as Clock } from "@lucide/svelte/icons/clock";
+export { default as Search } from "@lucide/svelte/icons/search";
+export { default as Zap } from "@lucide/svelte/icons/zap";

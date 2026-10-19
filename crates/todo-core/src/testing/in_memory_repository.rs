@@ -87,9 +87,21 @@ impl InMemoryTaskRepository {
 
 /// Sortierposition einer Task innerhalb einer Ansicht; zugleich Inhalt des Cursors.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[allow(clippy::enum_variant_names)] // „sortiert nach …“; `SortKey` hieße wie der Typ
 enum Position {
     BySortKey(SortKey, TaskId),
     ByCompletion(Reverse<Timestamp>, TaskId),
+    /// „Heute"/„Geplant": Fälligkeit (ADR-026), dann wie gewohnt.
+    ByDue(Timestamp, SortKey, TaskId),
+}
+
+/// Cursor-Kennung der Sortierart einer Ansicht (ein Cursor gehört zu genau einer).
+fn cursor_kind(view: &SmartView) -> &'static str {
+    match view {
+        SmartView::Completed => "c",
+        SmartView::Today(_) | SmartView::Upcoming(_) => "d",
+        _ => "s",
+    }
 }
 
 impl Position {
@@ -97,6 +109,12 @@ impl Position {
         match view {
             SmartView::Completed => Self::ByCompletion(
                 Reverse(task.completed_at().unwrap_or(Timestamp::EPOCH)),
+                task.id(),
+            ),
+            SmartView::Today(day) | SmartView::Upcoming(day) => Self::ByDue(
+                task.due()
+                    .map_or(Timestamp::from_millis(i64::MAX), |d| d.sort_instant(day)),
+                task.sort_key().clone(),
                 task.id(),
             ),
             _ => Self::BySortKey(task.sort_key().clone(), task.id()),
@@ -107,31 +125,23 @@ impl Position {
         match self {
             Self::BySortKey(key, id) => format!("s:{key}:{id}"),
             Self::ByCompletion(Reverse(at), id) => format!("c:{}:{id}", at.as_millis()),
+            Self::ByDue(at, key, id) => format!("d:{}:{key}:{id}", at.as_millis()),
         }
     }
 
     fn decode(cursor: &str, view: &SmartView) -> CoreResult<Self> {
         let invalid = || CoreError::Validation(format!("invalid cursor: {cursor:?}"));
-        let mut parts = cursor.splitn(3, ':');
-        let (Some(kind), Some(value), Some(id)) = (parts.next(), parts.next(), parts.next()) else {
-            return Err(invalid());
-        };
-        // Ein Cursor gehört zu genau einer Sortierart.
-        if (kind == "c") != matches!(view, SmartView::Completed) {
+        let parts: Vec<&str> = cursor.split(':').collect();
+        if parts.first() != Some(&cursor_kind(view)) {
             return Err(invalid());
         }
-        let id = TaskId::parse(id).map_err(|_| invalid())?;
-        match kind {
-            "s" => Ok(Self::BySortKey(
-                SortKey::parse(value).map_err(|_| invalid())?,
-                id,
-            )),
-            "c" => Ok(Self::ByCompletion(
-                Reverse(Timestamp::from_millis(
-                    value.parse().map_err(|_| invalid())?,
-                )),
-                id,
-            )),
+        let millis = |v: &str| v.parse().map(Timestamp::from_millis).map_err(|_| invalid());
+        let key = |v: &str| SortKey::parse(v).map_err(|_| invalid());
+        let id = |v: &str| TaskId::parse(v).map_err(|_| invalid());
+        match parts.as_slice() {
+            ["s", k, i] => Ok(Self::BySortKey(key(k)?, id(i)?)),
+            ["c", at, i] => Ok(Self::ByCompletion(Reverse(millis(at)?), id(i)?)),
+            ["d", at, k, i] => Ok(Self::ByDue(millis(at)?, key(k)?, id(i)?)),
             _ => Err(invalid()),
         }
     }

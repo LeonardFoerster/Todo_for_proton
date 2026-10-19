@@ -13,6 +13,7 @@ use crate::error::storage;
 pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_init.sql"),
     include_str!("../migrations/0002_sync.sql"),
+    include_str!("../migrations/0003_search.sql"),
 ];
 
 /// Bringt das Schema auf den neuesten Stand. Mehrfacher Aufruf ist harmlos.
@@ -88,6 +89,11 @@ mod tests {
                 "sync_meta",
                 "task_lists",
                 "tasks",
+                "tasks_fts",
+                "tasks_fts_config",
+                "tasks_fts_data",
+                "tasks_fts_docsize",
+                "tasks_fts_idx",
                 "tombstones"
             ]
         );
@@ -179,6 +185,31 @@ mod tests {
         assert!(
             insert(0, None, Some(1), None).is_err(),
             "due_at ohne Zeitzone"
+        );
+    }
+
+    #[test]
+    fn search_index_covers_tasks_from_before_the_migration() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run(&mut conn, &MIGRATIONS[..2]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO task_lists VALUES ('l', 'Inbox', 'a0', 0, 0, 1);
+             INSERT INTO tasks (id, list_id, title, notes, status, priority, tags, sort_key,
+                                created_at, updated_at)
+             VALUES ('a', 'l', 'Übungsblatt', 'alt', 0, 0, '', 'a0', 0, 0);",
+        )
+        .unwrap();
+        migrate(&mut conn).unwrap();
+        let hits: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM tasks_fts WHERE tasks_fts MATCH '\"übung\"'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            hits, 1,
+            "bestehende Tasks indiziert, Umlaut ohne Groß/Klein"
         );
     }
 }

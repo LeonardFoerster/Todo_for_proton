@@ -3,7 +3,8 @@
   import Checkbox from "../../components/Checkbox.svelte";
   import SelectBox from "../../components/SelectBox.svelte";
   import { Flag, GripVertical, Hash, Trash } from "../../icons";
-  import { dueLabel } from "../../lib/format-date";
+  import { dueLabel, dueToInputTime } from "../../lib/format-date";
+  import type { DueMode } from "../../lib/groups";
 
   interface Props {
     task: TaskSummaryDto;
@@ -22,6 +23,8 @@
     /** Ziehen am Griff beginnt (nur in sortierbaren Ansichten gesetzt). */
     ondragstart?: (e: PointerEvent, task: TaskSummaryDto) => void;
     dragging?: boolean;
+    /** `time`: Der Tag steht in der Abschnittsüberschrift – nur eine Uhrzeit zeigen (P4). */
+    dueMode?: DueMode;
   }
 
   let {
@@ -35,10 +38,13 @@
     ondelete,
     ondragstart,
     dragging = false,
+    dueMode = "full",
   }: Props = $props();
 
   const done = $derived(task.status === "done");
   const due = $derived(task.due ? dueLabel(task.due) : null);
+  /** Angezeigter Text: ganzes Datum, oder nur die Uhrzeit (ganztägig dann nichts). */
+  const dueText = $derived(due && (dueMode === "full" ? due.text : dueToInputTime(task.due)));
   const priorityLabel = { none: "", low: "Niedrige Priorität", medium: "Mittlere Priorität", high: "Hohe Priorität" };
 </script>
 
@@ -83,7 +89,7 @@
   <span class="meta">
     {#if task.hasNotes}<span class="notes" title="Hat Notizen" aria-label="Hat Notizen"></span>{/if}
     {#if listName}<span class="list"><Hash size={12} strokeWidth={2} aria-hidden="true" />{listName}</span>{/if}
-    {#if due}<span class="due {due.tone}" title={due.long}>{due.text}</span>{/if}
+    {#if due && dueText}<span class="due {due.tone}" title={due.long}>{dueText}</span>{/if}
     {#if task.priority !== "none" && !done}
       <span class="prio {task.priority}" title={priorityLabel[task.priority]} aria-label={priorityLabel[task.priority]}>
         <Flag size={14} strokeWidth={2} aria-hidden="true" />
@@ -172,7 +178,7 @@
   }
   .row:focus-visible,
   :global([data-input="keyboard"]) .row:focus {
-    outline: 2px solid var(--color-focus-ring);
+    outline: 2px solid var(--color-focus-outline);
     outline-offset: -2px;
   }
   :global([data-input="pointer"]) .row:focus:not(:focus-visible) {

@@ -1,6 +1,6 @@
 import type { TaskListDto } from "@tasks/core-client";
 import { describe, expect, it } from "vitest";
-import { parseNewTask } from "./parse";
+import { parseDue, parseNewTask } from "./parse";
 
 /** Sonntag, 18.10.2026, 10:00 Uhr. */
 const now = new Date(2026, 9, 18, 10);
@@ -97,5 +97,22 @@ describe("parseNewTask", () => {
       listId: null,
     });
     expect(parse("Übungsblatt 3 bis Fr 14:00 !1 @uni-ana", lists).listId).toBe("a");
+  });
+});
+
+describe("parseDue (Datum wählen…)", () => {
+  const due = (input: string) => parseDue(input, { now, tz: "Europe/Berlin" });
+
+  it("accepts a bare day, date or time – where parseNewTask keeps it as title", () => {
+    expect(parse("24.12.").due).toBeNull();
+    expect(due("24.12.")).toEqual(date("2026-12-24"));
+    expect(due("fr")).toEqual(date("2026-10-23"));
+    expect(due("morgen 14:00")).toEqual(at(2026, 10, 19, 14));
+    expect(due("am Fr um 9 Uhr")).toEqual(at(2026, 10, 23, 9));
+  });
+
+  it("returns null without a day or time", () => {
+    expect(due("")).toBeNull();
+    expect(due("quatsch")).toBeNull();
   });
 });

@@ -48,6 +48,9 @@ const TEXT: [string, string][] = [
   ["color-on-accent", "color-accent-fill"],
   ["color-on-accent", "color-accent-fill-hover"],
   ["color-danger", "color-bg"],
+  ["color-danger", "color-bg-subtle"],
+  ["color-danger", "color-bg-selected"],
+  ["color-danger", "color-bg-hover"],
   ["color-on-accent", "color-danger-fill"],
   ["color-on-accent", "color-danger-fill-hover"],
   ["color-warning", "color-bg"],
@@ -62,6 +65,11 @@ const CONTROLS: [string, string][] = [
   ["color-control-border", "color-bg-hover"],
   ["color-accent", "color-bg"],
   ["color-accent-fill", "color-bg"],
+  ["color-focus-outline", "color-bg"],
+  ["color-focus-outline", "color-bg-subtle"],
+  ["color-focus-outline", "color-bg-raised"],
+  ["color-focus-outline", "color-bg-hover"],
+  ["color-focus-outline", "color-bg-selected"],
 ];
 
 describe.each([

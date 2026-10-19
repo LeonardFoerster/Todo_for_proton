@@ -18,8 +18,8 @@ pub use super::sync_contract::*;
 use crate::{
     domain::{Due, LocalDay, NaiveDate, SortKey, Task, TaskId, TaskList, TaskListId, Timestamp},
     ports::{
-        ChangeSet, EntityRef, Page, PageRequest, SmartView, SteppingClock, TaskQuery,
-        TaskRepository, TaskSummary, PAGE_LIMIT_MAX,
+        ChangeSet, EntityRef, Page, PageRequest, SearchQuery, SmartView, SteppingClock, TaskQuery,
+        TaskRepository, TaskSummary, PAGE_LIMIT_MAX, SEARCH_TEXT_MAX_CHARS,
     },
     CoreError,
 };
@@ -48,6 +48,10 @@ macro_rules! repository_contract_tests {
             rejects_invalid_limit_and_cursor,
             filter_inbox_and_list,
             filter_today_and_upcoming,
+            due_views_sorted_by_due,
+            search_matches_words_in_title_or_notes,
+            search_ranks_open_and_title_hits_first,
+            search_rejects_invalid_input,
             filter_completed_newest_first,
             filter_status_and_tag,
             summary_matches_task,
@@ -102,6 +106,10 @@ pub fn run_all<R: TaskRepository>(make: impl Fn() -> R) {
     rejects_invalid_limit_and_cursor(make());
     filter_inbox_and_list(make());
     filter_today_and_upcoming(make());
+    due_views_sorted_by_due(make());
+    search_matches_words_in_title_or_notes(make());
+    search_ranks_open_and_title_hits_first(make());
+    search_rejects_invalid_input(make());
     filter_completed_newest_first(make());
     filter_status_and_tag(make());
     summary_matches_task(make());
@@ -548,8 +556,185 @@ pub fn filter_today_and_upcoming<R: TaskRepository>(repo: R) {
     );
     assert_eq!(
         f.ids(TaskQuery::view(SmartView::Upcoming(today)), 2),
-        [t[2].id(), t[4].id()]
+        [t[4].id(), t[2].id()],
+        "nach Fälligkeit: 2 000 ms vor dem 18. (≈ 86 401 000 ms)"
     );
+}
+
+/// Heute/Geplant sortieren nach Fälligkeit (Ganztägiges als Tagesbeginn, vor Uhrzeiten desselben
+/// Tages), bei Gleichstand nach `sort_key`, dann `id` – auch über Seitengrenzen (ADR-026).
+pub fn due_views_sorted_by_due<R: TaskRepository>(repo: R) {
+    const DAY: i64 = 86_400_000;
+    let f = setup(repo);
+    let start = Timestamp::from_millis(100 * DAY);
+    let today = LocalDay::new(date(17), start, start.plus_millis(DAY)).expect("day");
+    let at = |ms: i64| Due::DateTime {
+        at: start.plus_millis(ms),
+        tz: "UTC".into(),
+    };
+    // Anlegereihenfolge = sort_key-Reihenfolge, absichtlich quer zur Fälligkeit.
+    let mut t = f.add_tasks(f.inbox.id(), 9);
+    let dues = [
+        at(DAY + 3_600_000), // 18., 01:00
+        Due::Date(date(20)),
+        Due::Date(date(18)), // ganztägig vor 01:00
+        at(-DAY),            // überfällig, 16. 00:00
+        Due::Date(date(17)),
+        Due::Date(date(15)), // ältestes
+        at(5_000),           // heute 00:00:05
+        Due::Date(date(18)), // gleicher Tag wie t[2]: danach (sort_key)
+        Due::Date(date(17)),
+    ];
+    for (task, due) in t.iter_mut().zip(dues) {
+        task.set_due(Some(due), &f.clock).expect("due");
+    }
+    f.save(&t);
+    for limit in [1, 2, 3, 10] {
+        assert_eq!(
+            f.ids(TaskQuery::view(SmartView::Today(today)), limit),
+            [t[5].id(), t[3].id(), t[4].id(), t[8].id(), t[6].id()],
+            "Heute, limit {limit}"
+        );
+        assert_eq!(
+            f.ids(TaskQuery::view(SmartView::Upcoming(today)), limit),
+            [t[2].id(), t[7].id(), t[0].id(), t[1].id()],
+            "Geplant, limit {limit}"
+        );
+    }
+}
+
+impl<R: TaskRepository> Fixture<R> {
+    fn search(&self, text: &str, limit: u32) -> Vec<String> {
+        let query = SearchQuery {
+            text: text.into(),
+            limit,
+        };
+        block_on(self.repo.search_tasks(&query))
+            .expect("search")
+            .into_iter()
+            .map(|t| t.title)
+            .collect()
+    }
+
+    /// Tasks mit Titel und Notiz, aufsteigende Sort-Keys, gespeichert.
+    fn add_titled(&self, items: &[(&str, &str)]) -> Vec<Task> {
+        let mut key = SortKey::first();
+        let tasks: Vec<Task> = items
+            .iter()
+            .map(|(title, notes)| {
+                let mut task = self.task(self.inbox.id(), title, key.clone());
+                task.set_notes(notes, &self.clock);
+                key = after(&key);
+                task
+            })
+            .collect();
+        self.save(&tasks);
+        tasks
+    }
+}
+
+/// Suche (ADR-027): jedes Wort als Teilwort in Titel **oder** Notiz, ohne Groß/Klein – auch bei
+/// Umlauten; gelöschte Tasks nie.
+pub fn search_matches_words_in_title_or_notes<R: TaskRepository>(repo: R) {
+    let f = setup(repo);
+    let t = f.add_titled(&[
+        ("Bericht schreiben", ""),
+        ("Übungsblatt 3", "Fragen zur Aufgabe 2"),
+        ("Einkaufen", "Milch und Brot"),
+        ("Zahnarzt", "Über die Brücke"),
+        ("Alt", "Bericht von gestern"),
+    ]);
+    assert_eq!(
+        f.search("richt", 10),
+        ["Bericht schreiben", "Alt"],
+        "Teilwort, Titel vor Notiz"
+    );
+    assert_eq!(
+        f.search("BERICHT", 10),
+        ["Bericht schreiben", "Alt"],
+        "ohne Groß/Klein"
+    );
+    assert_eq!(
+        f.search("übung", 10),
+        ["Übungsblatt 3"],
+        "Umlaut, ohne Groß/Klein"
+    );
+    assert_eq!(f.search("über", 10), ["Zahnarzt"], "Umlaut in der Notiz");
+    assert_eq!(
+        f.search("milch brot", 10),
+        ["Einkaufen"],
+        "alle Wörter, auch über Titel/Notiz verteilt"
+    );
+    assert_eq!(f.search("blatt aufgabe", 10), ["Übungsblatt 3"]);
+    assert!(f.search("milch zahnarzt", 10).is_empty(), "UND, nicht ODER");
+    assert_eq!(
+        f.search("3", 10),
+        ["Übungsblatt 3"],
+        "kurze Wörter (< 3 Zeichen)"
+    );
+    assert_eq!(f.search("KA", 10), ["Einkaufen"]);
+    assert!(
+        f.search("   ", 10).is_empty(),
+        "leerer Text = keine Treffer"
+    );
+
+    block_on(
+        f.repo
+            .commit(ChangeSet::new().delete(EntityRef::Task(t[0].id()))),
+    )
+    .expect("delete");
+    assert_eq!(f.search("richt", 10), ["Alt"], "gelöschte nie");
+    let mut renamed = t[2].clone();
+    renamed.rename("Wocheneinkauf", &f.clock).expect("title");
+    renamed.set_notes("", &f.clock);
+    f.save(&[renamed]);
+    assert!(f.search("milch", 10).is_empty(), "Index folgt Änderungen");
+    assert_eq!(f.search("woche", 10), ["Wocheneinkauf"]);
+}
+
+/// Offene vor erledigten, Titel- vor Notiztreffern, dann Sort-Key; `limit` schneidet ab.
+pub fn search_ranks_open_and_title_hits_first<R: TaskRepository>(repo: R) {
+    let f = setup(repo);
+    let mut t = f.add_titled(&[
+        ("Notiz a", "Projekt"),
+        ("Projekt erledigt", ""),
+        ("Projekt b", ""),
+        ("Projekt c", ""),
+    ]);
+    t[1].complete(&f.clock);
+    f.save(&t);
+    assert_eq!(
+        f.search("projekt", 10),
+        ["Projekt b", "Projekt c", "Notiz a", "Projekt erledigt"]
+    );
+    assert_eq!(f.search("projekt", 2), ["Projekt b", "Projekt c"]);
+}
+
+pub fn search_rejects_invalid_input<R: TaskRepository>(repo: R) {
+    let f = setup(repo);
+    for limit in [0, PAGE_LIMIT_MAX + 1] {
+        let query = SearchQuery {
+            text: "x".into(),
+            limit,
+        };
+        assert!(matches!(
+            block_on(f.repo.search_tasks(&query)),
+            Err(CoreError::Validation(_))
+        ));
+    }
+    let long = SearchQuery {
+        text: "x".repeat(SEARCH_TEXT_MAX_CHARS + 1),
+        limit: 10,
+    };
+    assert!(matches!(
+        block_on(f.repo.search_tasks(&long)),
+        Err(CoreError::Validation(_))
+    ));
+    // Sonderzeichen der Abfragesprache sind normaler Text.
+    f.add_titled(&[("a \"b\" OR c* (d)", "")]);
+    assert_eq!(f.search("\"b\"", 10), ["a \"b\" OR c* (d)"]);
+    assert_eq!(f.search("c* (d)", 10), ["a \"b\" OR c* (d)"]);
+    assert_eq!(f.search("100%", 10), Vec::<String>::new());
 }
 
 /// Completed: nur erledigte Tasks, zuletzt erledigte zuerst – auch über Seitengrenzen.

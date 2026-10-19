@@ -2,7 +2,7 @@
 import { CoreClientError, type CoreClient, type TaskDto, type TaskSummaryDto } from "@tasks/core-client";
 import { routeQuery } from "../../lib/views";
 import type { RowOrder } from "./selection.svelte";
-import { compareInView, inView, shownInView, type ViewContext } from "./view-match";
+import { compareInView, inView, shownInView, sortedByDue, type ViewContext } from "./view-match";
 
 const PAGE_SIZE = 200;
 /** Wie im Core (`PAGE_LIMIT_MAX`). */
@@ -39,7 +39,8 @@ export class TaskListState {
   items = $state.raw<TaskSummaryDto[]>([]);
   loaded = $state(false);
 
-  private cursor: string | null = null;
+  /** Reaktiv: `hasMore` steuert, ob die Liste beim Scrollen nachlädt (FIX-12). */
+  private cursor = $state<string | null>(null);
   private loadingMore = false;
   /**
    * Gerade abgehakt: bleiben für die Haken-Animation kurz stehen und verlassen dann die offene
@@ -65,7 +66,7 @@ export class TaskListState {
 
   async load(): Promise<void> {
     const page = await this.client.listTasks(routeQuery(this.ctx().route), { cursor: null, limit: PAGE_SIZE });
-    this.items = page.items;
+    this.items = this.ordered(page.items);
     this.cursor = page.nextCursor;
     this.loaded = true;
   }
@@ -76,11 +77,21 @@ export class TaskListState {
     try {
       const page = await this.client.listTasks(routeQuery(this.ctx().route), { cursor: this.cursor, limit: PAGE_SIZE });
       const known = new Set(this.items.map((t) => t.id));
-      this.items = [...this.items, ...page.items.filter((t) => !known.has(t.id))];
+      this.items = this.ordered([...this.items, ...page.items.filter((t) => !known.has(t.id))]);
       this.cursor = page.nextCursor;
     } finally {
       this.loadingMore = false;
     }
+  }
+
+  /**
+   * Heute/Geplant: exakt nach lokaler Fälligkeit nachsortieren. Der Core nähert den Tagesbeginn
+   * ohne Zonendaten an (ADR-026); an Tagen der Zeitumstellung kann seine Reihenfolge daher um
+   * eine Stunde abweichen. In anderen Ansichten bleibt die Core-Reihenfolge unangetastet.
+   */
+  private ordered(items: TaskSummaryDto[]): TaskSummaryDto[] {
+    const route = this.ctx().route;
+    return sortedByDue(route) ? items.sort((a, b) => compareInView(a, b, route)) : items;
   }
 
   /**
@@ -95,7 +106,7 @@ export class TaskListState {
         const query = routeQuery(this.ctx().route);
         const page = await this.client.listTasks(query, { cursor: this.cursor, limit: PAGE_LIMIT_MAX });
         const known = new Set(this.items.map((t) => t.id));
-        this.items = [...this.items, ...page.items.filter((t) => !known.has(t.id))];
+        this.items = this.ordered([...this.items, ...page.items.filter((t) => !known.has(t.id))]);
         this.cursor = page.nextCursor;
       }
     } finally {
@@ -171,7 +182,7 @@ export class TaskListState {
     const linger = this.items.filter((t) => this.leaving.has(t.id) && !fresh.has(t.id) && inView(t, ctx));
     let items = fetched.filter((t) => !this.hidden.has(t.id));
     if (linger.length > 0) items = [...items, ...linger].sort((a, b) => compareInView(a, b, ctx.route));
-    this.items = items;
+    this.items = this.ordered(items);
     this.cursor = cursor;
     this.loaded = true;
   }

@@ -14,7 +14,7 @@ use crate::{
         TaskStatus, Timestamp,
     },
     sync::{EntityState, Op, RemoteBatch, RemoteReceipt},
-    CoreResult,
+    CoreError, CoreResult,
 };
 
 /// Größte erlaubte Seitengröße für [`PageRequest::limit`].
@@ -172,8 +172,10 @@ pub enum SmartView {
 
 /// Abfrage für [`TaskRepository::list_tasks`]: eine Ansicht plus optionale UND-Filter.
 ///
-/// Sortierung: [`SmartView::Completed`] nach `completed_at` absteigend, alle anderen nach
-/// `sort_key` aufsteigend; bei Gleichstand jeweils nach `id`.
+/// Sortierung: [`SmartView::Completed`] nach `completed_at` absteigend; [`SmartView::Today`] und
+/// [`SmartView::Upcoming`] nach Fälligkeit ([`Due::sort_instant`](crate::domain::Due::sort_instant)
+/// zum Tag der Ansicht, ADR-026), dann `sort_key`; alle anderen nach `sort_key` aufsteigend; bei
+/// Gleichstand jeweils nach `id`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TaskQuery {
     pub view: SmartView,
@@ -254,6 +256,65 @@ impl PageRequest {
 pub struct Page<T> {
     pub items: Vec<T>,
     pub next_cursor: Option<String>,
+}
+
+/// Höchstlänge eines Suchtexts (Zeichen); längerer Text ist ein Eingabefehler.
+pub const SEARCH_TEXT_MAX_CHARS: usize = 200;
+
+/// Suche über Titel und Notizen (P4-05, ADR-027): **jedes** Wort aus `text` muss als Teilwort in
+/// Titel oder Notiz vorkommen, ohne Unterscheidung von Groß/Klein. Ergebnis: offene vor erledigten,
+/// Titeltreffer vor reinen Notiztreffern, dann `sort_key`, `id`; höchstens `limit`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchQuery {
+    pub text: String,
+    /// 1 bis [`PAGE_LIMIT_MAX`].
+    pub limit: u32,
+}
+
+impl SearchQuery {
+    /// Prüft das Limit und die Länge; liefert die Suchwörter (klein, ohne leere).
+    ///
+    /// # Errors
+    /// `CoreError::Validation` bei `limit` außerhalb `1..=PAGE_LIMIT_MAX` oder zu langem Text.
+    pub fn terms(&self) -> CoreResult<Vec<String>> {
+        if !(1..=PAGE_LIMIT_MAX).contains(&self.limit) {
+            return Err(CoreError::Validation(format!(
+                "search limit must be 1..={PAGE_LIMIT_MAX}, got {}",
+                self.limit
+            )));
+        }
+        if self.text.chars().count() > SEARCH_TEXT_MAX_CHARS {
+            return Err(CoreError::Validation(format!(
+                "search text longer than {SEARCH_TEXT_MAX_CHARS} characters"
+            )));
+        }
+        Ok(self
+            .text
+            .split_whitespace()
+            .map(str::to_lowercase)
+            .collect())
+    }
+
+    /// Rangschlüssel einer passenden Task (kleiner = weiter oben), `None` = kein Treffer. Für
+    /// Speicher ohne eigenen Index (Standard von [`TaskRepository::search_tasks`]).
+    #[must_use]
+    pub fn rank(terms: &[String], task: &Task) -> Option<(bool, bool, SortKey, TaskId)> {
+        let title = task.title().to_lowercase();
+        let notes = task.notes().to_lowercase();
+        let all = terms
+            .iter()
+            .all(|t| title.contains(t.as_str()) || notes.contains(t.as_str()));
+        if terms.is_empty() || !all {
+            return None;
+        }
+        let notes_only = !terms.iter().any(|t| title.contains(t.as_str()));
+        Some((
+            task.is_done(),
+            notes_only,
+            task.sort_key().clone(),
+            task.id(),
+        ))
+    }
 }
 
 /// Schlanke Projektion einer Task für Listenansichten (ohne Notiztext).
@@ -340,6 +401,40 @@ pub trait TaskRepository: MaybeSend + MaybeSync {
                 None => return Ok(last),
             }
         }
+    }
+
+    /// Suche über Titel und Notizen ([`SearchQuery`]). Standard: alle Tasks seitenweise laden und
+    /// vergleichen (O(n)) – Speicher mit Volltextindex überschreiben das (SQLite: FTS5).
+    ///
+    /// # Errors
+    /// `CoreError::Validation` (Limit, Länge).
+    async fn search_tasks(&self, query: &SearchQuery) -> CoreResult<Vec<TaskSummary>> {
+        let terms = query.terms()?;
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
+        let all = TaskQuery::view(SmartView::All);
+        let mut page = PageRequest::first(PAGE_LIMIT_MAX);
+        let mut hits = Vec::new();
+        loop {
+            let result = self.list_tasks(&all, page).await?;
+            let ids: Vec<TaskId> = result.items.iter().map(|t| t.id).collect();
+            for task in self.get_tasks(&ids).await? {
+                if let Some(rank) = SearchQuery::rank(&terms, &task) {
+                    hits.push((rank, TaskSummary::from(&task)));
+                }
+            }
+            match result.next_cursor {
+                Some(cursor) => page = PageRequest::after(cursor, PAGE_LIMIT_MAX),
+                None => break,
+            }
+        }
+        hits.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(hits
+            .into_iter()
+            .take(query.limit as usize)
+            .map(|(_, t)| t)
+            .collect())
     }
 
     /// Wendet alle Änderungen atomar an (alles oder nichts), in der angegebenen Reihenfolge.

@@ -17,6 +17,7 @@ export type { SessionDto } from "./generated/SessionDto";
 export type { SyncStateDto } from "./generated/SyncStateDto";
 export type { SyncStatusDto } from "./generated/SyncStatusDto";
 export type { TaskDto } from "./generated/TaskDto";
+export type { TaskDueDto } from "./generated/TaskDueDto";
 export type { TaskListDto } from "./generated/TaskListDto";
 export type { TaskPatchDto } from "./generated/TaskPatchDto";
 export type { TaskQueryDto } from "./generated/TaskQueryDto";

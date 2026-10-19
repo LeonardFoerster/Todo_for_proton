@@ -1,4 +1,5 @@
-import type { CoreClient, MoveListTargetDto, TaskListDto, TaskQueryDto } from "@tasks/core-client";
+import type { CoreClient, MoveListTargetDto, TaskListDto, TaskQueryDto, TaskSummaryDto } from "@tasks/core-client";
+import { isOverdue } from "./groups";
 import { routeQuery } from "./views";
 
 /** So viele offene Tasks zählt die Sidebar höchstens (darüber „999+“). */
@@ -11,7 +12,8 @@ const PAGE = 500;
  */
 export class ListsState {
   lists = $state.raw<TaskListDto[]>([]);
-  counts = $state<{ inbox: number; today: number }>({ inbox: 0, today: 0 });
+  /** Zähler der Seitenleiste; `overdue` = davon in „Heute“ überfällig (P4-02). */
+  counts = $state<{ inbox: number; today: number; overdue: number }>({ inbox: 0, today: 0, overdue: 0 });
   loaded = $state(false);
 
   private recount: ReturnType<typeof setTimeout> | null = null;
@@ -94,7 +96,7 @@ export class ListsState {
       this.count({ view, status: "open" }),
       this.count({ view }),
     ]);
-    return { open, done: Math.max(0, all - open) };
+    return { open: open.n, done: Math.max(0, all.n - open.n) };
   }
 
   private scheduleCounts() {
@@ -103,22 +105,30 @@ export class ListsState {
   }
 
   async refreshCounts() {
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- Momentaufnahme fürs Zählen, nicht reaktiv
+    const now = new Date();
     const [inbox, today] = await Promise.all([
       this.count(routeQuery({ view: "inbox" })),
-      this.count(routeQuery({ view: "today" })),
+      this.count(routeQuery({ view: "today" }), (t) => t.due != null && isOverdue(t.due, now)),
     ]);
-    this.counts = { inbox, today };
+    this.counts = { inbox: inbox.n, today: today.n, overdue: today.matched };
   }
 
-  private async count(query: TaskQueryDto): Promise<number> {
+  /** Zählt die Ansicht (bis über `COUNT_CAP`); `matched` = davon `pred` erfüllt – aus denselben Seiten. */
+  private async count(
+    query: TaskQueryDto,
+    pred?: (t: TaskSummaryDto) => boolean,
+  ): Promise<{ n: number; matched: number }> {
     let cursor: string | null = null;
     let n = 0;
+    let matched = 0;
     do {
       const page = await this.client.listTasks(query, { cursor, limit: PAGE });
       n += page.items.length;
+      if (pred) for (const t of page.items) if (pred(t)) matched++;
       cursor = page.nextCursor;
     } while (cursor && n <= COUNT_CAP);
-    return n;
+    return { n, matched };
   }
 }
 

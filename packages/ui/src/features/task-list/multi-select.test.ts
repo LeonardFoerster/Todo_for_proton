@@ -150,13 +150,14 @@ describe("multi-select mode", () => {
 });
 
 describe("selection key combos", () => {
-  it("distinguishes Shift+arrows from arrows but not Ctrl+Shift+A from Ctrl+A", () => {
+  it("distinguishes Shift+arrows and Shift+letters (P4-04) from the plain keys", () => {
     const ev = (key: string, mods: Partial<KeyboardEvent> = {}) =>
       comboOf({ key, ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...mods });
     expect(ev("ArrowDown", { shiftKey: true })).toBe("shift+arrowdown");
     expect(ev("ArrowDown")).toBe("arrowdown");
     expect(ev("a", { ctrlKey: true })).toBe("ctrl+a");
-    expect(ev("A", { ctrlKey: true, shiftKey: true }), "deshalb kein eigenes Kürzel „Keine auswählen“").toBe("ctrl+a");
+    // Seit P4-04 (`shift+t`) eigenes Kürzel – unbelegt, löst also nicht „Alle auswählen“ aus.
+    expect(ev("A", { ctrlKey: true, shiftKey: true })).toBe("ctrl+shift+a");
     expect(ev(" ")).toBe("space");
     expect(ev("x")).toBe("x");
   });

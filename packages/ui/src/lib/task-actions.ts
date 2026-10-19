@@ -1,4 +1,4 @@
-import type { CoreClient, TaskDto, TaskSummaryDto } from "@tasks/core-client";
+import type { CoreClient, DueDto, TaskDto, TaskSummaryDto } from "@tasks/core-client";
 import { toasts } from "../components/toasts.svelte";
 
 /** Wie im Core (`BULK_LIMIT_MAX`): größere Auswahlen gehen in mehreren Aufrufen. */
@@ -91,6 +91,58 @@ export async function completeManyWithUndo(
       void inChunks(
         changed.map((t) => t.id),
         (chunk) => client.completeTasks(chunk, !done),
+      ).catch((e: unknown) => failed("Rückgängig fehlgeschlagen", e)),
+  });
+  return changed;
+}
+
+/**
+ * Erledigte Tasks, die vor `cutoff` abgehakt wurden (für „Erledigte aufräumen“, P4-06). Lädt die
+ * Ansicht „Erledigt“ seitenweise – nur bei dieser Aktion, nie beim Tippen.
+ */
+export async function completedBefore(client: CoreClient, cutoff: Date): Promise<TaskSummaryDto[]> {
+  const limit = 500;
+  const before = cutoff.toISOString();
+  const out: TaskSummaryDto[] = [];
+  let cursor: string | null = null;
+  do {
+    const page = await client.listTasks({ view: { kind: "completed" } }, { cursor, limit });
+    for (const t of page.items) if (t.completedAt && t.completedAt < before) out.push(t);
+    cursor = page.nextCursor;
+  } while (cursor);
+  return out;
+}
+
+/**
+ * Setzt je Task eine neue Fälligkeit (`next` aus dem bisherigen Stand, z. B. Uhrzeit behalten) –
+ * ein Aufruf je 2 000 – und bietet „Rückgängig“: schreibt die alten Werte zurück. `label` ergänzt
+ * den Toast („auf heute verschoben“). Liefert die geänderten Tasks bzw. `null` bei Fehler.
+ */
+export async function setDuesWithUndo(
+  client: CoreClient,
+  before: readonly Pick<TaskSummaryDto, "id" | "title" | "due">[],
+  next: (task: Pick<TaskSummaryDto, "due">) => DueDto | null,
+  label: string,
+): Promise<TaskDto[] | null> {
+  let changed: TaskDto[];
+  try {
+    changed = await inChunks(
+      before.map((t) => ({ id: t.id, due: next(t) })),
+      (chunk) => client.setDues(chunk),
+    );
+  } catch (e) {
+    failed("Nicht gespeichert", e);
+    return null;
+  }
+  if (changed.length === 0) return changed;
+  const old = new Map(before.map((t) => [t.id, t.due]));
+  toasts.show({
+    message: `${subject(changed)} ${label}`,
+    actionLabel: "Rückgängig",
+    onAction: () =>
+      void inChunks(
+        changed.map((t) => ({ id: t.id, due: old.get(t.id) ?? null })),
+        (chunk) => client.setDues(chunk),
       ).catch((e: unknown) => failed("Rückgängig fehlgeschlagen", e)),
   });
   return changed;

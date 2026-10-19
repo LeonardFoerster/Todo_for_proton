@@ -1671,7 +1671,217 @@ const p3new: Step[] = [
   ],
 ];
 
-const SUITES: Record<string, Step[]> = { p002, p3new, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
+// P4-01: Uhrzeit in der Detailansicht – Datum ändern behält sie, auch nach erneutem Laden aus dem Core.
+const p4due: Step[] = [
+  [
+    "Uhrzeit setzen, Datum ändern, Uhrzeit bleibt",
+    async (client) => {
+      location.hash = "#/inbox";
+      await until("Eingang", () => heading() === "Eingang");
+      const input = await openNewTask();
+      type(input, "Termin morgen um 14:00");
+      key(input, "Enter");
+      await newTaskClosed();
+      await openTask(/^Termin/);
+      const date = await until("Datumsfeld", () => document.querySelector<HTMLInputElement>("#detail-due"));
+      date.value = "2030-01-15";
+      date.dispatchEvent(new Event("change", { bubbles: true }));
+      const all = await client.listTasks({ view: { kind: "all" } }, { limit: 50 });
+      const id = all.items.find((t) => t.title === "Termin")?.id;
+      if (!id) throw new Error("nicht angelegt");
+      let due = (await client.getTask(id)).due;
+      await untilAsync("gespeichert", async () => {
+        due = (await client.getTask(id)).due;
+        return due?.kind === "dateTime" && new Date(due.at).getFullYear() === 2030;
+      });
+      const at = due?.kind === "dateTime" ? new Date(due.at) : null;
+      if (!at || at.getHours() !== 14 || at.getMinutes() !== 0 || at.getDate() !== 15) throw new Error(JSON.stringify(due));
+      // Detail schließen und neu öffnen: Felder kommen aus dem Core.
+      await click("button", "Schließen");
+      location.hash = "#/all";
+      await openTask(/^Termin/);
+      const time = await field("Uhrzeit");
+      await until("Uhrzeit im Feld", () => time.value === "14:00");
+      return `${at.toLocaleString("de-DE")}`;
+    },
+  ],
+];
+
+// P4-02: „Heute“ mit Abschnitt „Überfällig“; „Alle auf heute“ ist ein `set_dues` über die echte IPC.
+const p4today: Step[] = [
+  [
+    "Drei überfällige → „Alle auf heute“ → Abschnitt weg",
+    async (client) => {
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const ago = (days: number) => {
+        const d = new Date();
+        d.setDate(d.getDate() - days);
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      };
+      for (const [title, days] of [["Ü1", 1], ["Ü2", 3], ["Ü3", 9]] as const) {
+        await client.createTask({ title, due: { kind: "date", date: ago(days) } });
+      }
+      location.hash = "#/today";
+      await until("Abschnitt Überfällig", () => [...document.querySelectorAll(".heading .label")].some((e) => e.textContent === "Überfällig"));
+      const order = () =>
+        [...document.querySelectorAll('[role="option"] .title')]
+          .map((e) => e.textContent)
+          .filter((t) => t?.startsWith("Ü"))
+          .join(",");
+      await until("drei Überfällige", () => order().split(",").length === 3).catch(() => undefined);
+      if (order() !== "Ü3,Ü2,Ü1") throw new Error(`Reihenfolge ${order()}`);
+      await click("button", "Alle auf heute");
+      await until("Abschnitt weg", () => !document.querySelector(".heading"), 5000);
+      const all = await client.listTasks({ view: { kind: "today", day: { date: ago(0), start: new Date(new Date().setHours(0, 0, 0, 0)).toISOString(), end: new Date(new Date().setHours(24, 0, 0, 0)).toISOString() } } }, { limit: 50 });
+      const moved = all.items.filter((t) => t.title.startsWith("Ü"));
+      if (moved.length !== 3 || moved.some((t) => t.due?.kind !== "date" || t.due.date !== ago(0))) throw new Error(JSON.stringify(moved.map((t) => t.due)));
+      return "3 Tasks auf heute";
+    },
+  ],
+];
+
+// P4-03: „Geplant“ nach Tagen gruppiert – 1 000 Tasks über ~14 Monate, Scrollen und Tastatur im Budget.
+const p4upcoming: Step[] = [
+  [
+    "1 000 geplante Tasks anlegen (IPC)",
+    async (client) => {
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const ahead = (days: number) => {
+        const d = new Date();
+        d.setDate(d.getDate() + days);
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      };
+      for (let i = 0; i < 1000; i += 100) {
+        await Promise.all(
+          Array.from({ length: 100 }, (_, j) => {
+            const n = i + j;
+            return client.createTask({ title: `Geplant ${String(n + 1).padStart(4, "0")}`, due: { kind: "date", date: ahead(1 + ((n * 37) % 420)) } });
+          }),
+        );
+      }
+      location.hash = "#/upcoming";
+      await until("Überschrift Morgen", () => document.querySelector(".heading .label")?.textContent === "Morgen", 8000);
+    },
+  ],
+  [
+    "Scrollen durch alle Abschnitte",
+    async () => {
+      const viewport = document.querySelector<HTMLElement>('[role="listbox"]')!;
+      const deltas: number[] = [];
+      const labels = new Set<string>();
+      let order: string[] = [];
+      let prev = await frame();
+      for (let guard = 0; guard < 5000; guard++) {
+        for (const h of viewport.querySelectorAll(".heading .label")) {
+          const label = h.textContent ?? "";
+          if (order.at(-1) !== label) order.push(label);
+          labels.add(label);
+        }
+        if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 1) {
+          // Ende erreicht – noch eine Seite nachladen lassen?
+          await sleep(1500);
+          if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 1) break;
+        }
+        viewport.scrollTop += 96;
+        const now = await frame();
+        deltas.push(now - prev);
+        prev = now;
+      }
+      order = order.filter((l, i) => order.indexOf(l) === i);
+      if (order.length !== labels.size) throw new Error(`Abschnitt doppelt: ${[...labels].join(", ")}`);
+      const rows = document.querySelectorAll('[role="option"]').length;
+      if (rows > 100) throw new Error(`${rows} DOM-Zeilen`);
+      viewport.scrollTop = 0;
+      const s = stats(deltas.slice(1));
+      if (s.p95 > 25) throw new Error(`p95 ${s.p95.toFixed(1)} ms`);
+      const entries = Math.round(viewport.scrollHeight / 36);
+      if (entries < 1000) throw new Error(`nur ${entries} Einträge geladen (${labels.size} Abschnitte)`);
+      return `${entries} Einträge, ${labels.size} Abschnitte, ${deltas.length} Frames, p50 ${s.p50.toFixed(1)} / p95 ${s.p95.toFixed(1)} / max ${s.max.toFixed(1)} ms, ${s.dropped} Drops`;
+    },
+  ],
+  [
+    "↓ über Abschnitte bis Repaint",
+    async () => {
+      await frame();
+      (document.querySelector<HTMLElement>('[role="option"]'))!.click();
+      await click("button", "Schließen").catch(() => undefined);
+      (document.querySelector<HTMLElement>('[role="option"]'))!.focus();
+      return repaint(30, () => key(focused(), "ArrowDown"));
+    },
+  ],
+];
+
+// P4-04: Fälligkeit per Kürzel – `T` auf der fokussierten Zeile ist ein `set_dues` über die echte IPC.
+const p4keys: Step[] = [
+  [
+    "T auf einer Eingang-Task → erscheint in „Heute“",
+    async (client) => {
+      location.hash = "#/inbox";
+      await until("Eingang", () => heading() === "Eingang");
+      await client.createTask({ title: "Kürzel-Test" });
+      const row = await until("Zeile", () => byRole("option", /^Kürzel-Test/));
+      row.click();
+      await click("button", "Schließen").catch(() => undefined);
+      row.focus();
+      key(row, "t");
+      location.hash = "#/today";
+      await until("in Heute", () => heading() === "Heute" && byRole("option", /^Kürzel-Test/), 5000);
+      key(focused(), "d");
+      await until("Menü Fälligkeit", () => document.querySelector('[role="menu"][aria-label="Fälligkeit"]'));
+      key(focused(), "Escape");
+    },
+  ],
+];
+
+// P4-05: Befehlspalette – `search_tasks` über die echte IPC (FTS5), Öffnen nach dem ersten Laden < 50 ms.
+const paletteInput = () => document.querySelector<HTMLInputElement>('dialog[open] input[role="combobox"]');
+async function openPaletteTimed(): Promise<number> {
+  const t0 = performance.now();
+  key(focused(), "k", { ctrlKey: true });
+  const input = await until("Palette", paletteInput);
+  await until("Fokus", () => document.activeElement === input);
+  return (await frame()) - t0;
+}
+const p4search: Step[] = [
+  [
+    "Strg+K, Teilwort einer Notiz → richtige Task im Detail",
+    async (client) => {
+      location.hash = "#/inbox";
+      await until("Eingang", () => heading() === "Eingang");
+      const list = await client.createTaskList("Palette");
+      await client.createTask({ title: "Ablenkung", listId: list.id, notes: "nichts" });
+      const target = await client.createTask({ title: "Gesuchte Task", listId: list.id, notes: "Steuererklärung abgeben" });
+      const first = await openPaletteTimed();
+      type(paletteInput()!, "ERKLÄR");
+      await until("Treffer", () => document.querySelector('dialog[open] [role="option"] .in-notes'), 3000);
+      const optionTitle = document.querySelector('dialog[open] [role="option"] .label')?.textContent?.trim();
+      if (optionTitle !== "Gesuchte Task") throw new Error(`erster Treffer ${optionTitle}`);
+      key(paletteInput()!, "Enter");
+      await until("Detail", () => (document.querySelector<HTMLTextAreaElement>('[aria-label="Task-Details"] textarea[aria-label="Titel"]')?.value ?? "") === "Gesuchte Task");
+      const detail = await client.getTask(target.id);
+      if (detail.title !== "Gesuchte Task") throw new Error("falsche Task");
+      return `erstes Öffnen (lädt die Palette) ${first.toFixed(0)} ms`;
+    },
+  ],
+  [
+    "Palette öffnet nach dem ersten Laden < 50 ms",
+    async () => {
+      await click("button", "Schließen").catch(() => undefined);
+      const times: number[] = [];
+      for (let i = 0; i < 10; i++) {
+        (document.querySelector<HTMLElement>("h1") ?? document.body).focus();
+        times.push(await openPaletteTimed());
+        key(paletteInput()!, "Escape");
+        await until("zu", () => !paletteInput());
+      }
+      const s = stats(times);
+      if (s.p95 > 50) throw new Error(`p95 ${s.p95.toFixed(1)} ms`);
+      return `p50 ${s.p50.toFixed(1)} / p95 ${s.p95.toFixed(1)} ms`;
+    },
+  ],
+];
+
+const SUITES: Record<string, Step[]> = { p002, p3new, p4due, p4today, p4upcoming, p4keys, p4search, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
   p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */

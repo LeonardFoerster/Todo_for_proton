@@ -7,7 +7,8 @@
   import { toasts } from "../../components/toasts.svelte";
   import { CalendarDays, Flag, Hash, Trash, X } from "../../icons";
   import { useCoreClient } from "../../lib/context";
-  import { dueLabel, dueToInputDate, todayPlus } from "../../lib/format-date";
+  import { dueFromInputs, dueLabel, dueToInputDate, dueToInputTime, keepTime, todayPlus } from "../../lib/format-date";
+  import { isoDate } from "../../lib/local-day";
   import type { ListsState } from "../../lib/lists.svelte";
   import { listName } from "../../lib/views";
 
@@ -109,6 +110,18 @@
     void save({ due: next });
   }
 
+  /** Neuer Tag (Feld oder Schnellwahl); eine gesetzte Uhrzeit bleibt. */
+  function setDay(next: DueDto | null) {
+    setDue(keepTime(next, task?.due ?? null));
+  }
+
+  /** Uhrzeit setzen oder leeren (→ ganztägig); ohne Datum gilt heute. */
+  function setTime(time: string) {
+    const date = dueToInputDate(task?.due ?? null) || isoDate(new Date());
+    if (!time && !task?.due) return;
+    setDue(dueFromInputs(date, time, task?.due?.kind === "dateTime" ? task.due.tz : undefined));
+  }
+
   async function moveTo(listId: string) {
     if (!task || listId === task.listId) return;
     try {
@@ -198,15 +211,22 @@
               value={dueToInputDate(task.due)}
               onchange={(e) => {
                 const v = (e.currentTarget as HTMLInputElement).value;
-                setDue(v ? { kind: "date", date: v } : null);
+                setDay(v ? { kind: "date", date: v } : null);
               }}
+            />
+            <input
+              type="time"
+              class="field time"
+              aria-label="Uhrzeit"
+              value={dueToInputTime(task.due)}
+              onchange={(e) => setTime((e.currentTarget as HTMLInputElement).value)}
             />
             {#if due}<span class="due-text {due.tone}">{due.text}</span>{/if}
           </div>
           <div class="chips">
-            <button type="button" class="chip" onclick={() => setDue(todayPlus(0))}>Heute</button>
-            <button type="button" class="chip" onclick={() => setDue(todayPlus(1))}>Morgen</button>
-            <button type="button" class="chip" onclick={() => setDue(todayPlus(7))}>In einer Woche</button>
+            <button type="button" class="chip" onclick={() => setDay(todayPlus(0))}>Heute</button>
+            <button type="button" class="chip" onclick={() => setDay(todayPlus(1))}>Morgen</button>
+            <button type="button" class="chip" onclick={() => setDay(todayPlus(7))}>In einer Woche</button>
             {#if task.due}<button type="button" class="chip ghost" onclick={() => setDue(null)}>Entfernen</button>{/if}
           </div>
         </dd>

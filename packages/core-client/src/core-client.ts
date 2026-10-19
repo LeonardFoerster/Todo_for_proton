@@ -10,6 +10,7 @@ import type {
   SessionDto,
   SyncStatusDto,
   TaskDto,
+  TaskDueDto,
   TaskListDto,
   TaskPatchDto,
   TaskQueryDto,
@@ -58,6 +59,8 @@ export interface CoreClient {
   moveTask(id: string, target: MoveTargetDto): Promise<TaskDto>;
   deleteTask(id: string): Promise<void>;
   listTasks(query: TaskQueryDto, page: PageRequestDto): Promise<PageDto<TaskSummaryDto>>;
+  /** Suche über Titel und Notizen (ADR-027): jedes Wort als Teilwort; offene zuerst, Titeltreffer vor Notiztreffern. */
+  searchTasks(text: string, limit: number): Promise<TaskSummaryDto[]>;
 
   // Sammelaktionen (ADR-021): ein Aufruf, ein Commit, ein `onChange`. Unbekannte IDs werden
   // übersprungen; Ergebnis = tatsächlich geänderte Tasks. Höchstens 2 000 je Aufruf.
@@ -69,6 +72,8 @@ export interface CoreClient {
   moveTasks(ids: string[], target: MoveTargetDto): Promise<TaskDto[]>;
   /** Kopien gelöschter Tasks mit **neuen** IDs, alle Felder, alte Position (Rückgängig). */
   restoreTasks(tasks: TaskDto[]): Promise<TaskDto[]>;
+  /** Je Task eine eigene Fälligkeit (`null` = entfernen); Tasks mit diesem Wert fehlen im Ergebnis. */
+  setDues(dues: TaskDueDto[]): Promise<TaskDto[]>;
 
   auth: AuthClient;
   sync: SyncClient;

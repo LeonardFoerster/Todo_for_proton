@@ -13,6 +13,7 @@ import type {
   SessionDto,
   SyncStatusDto,
   TaskDto,
+  TaskDueDto,
   TaskListDto,
   TaskPatchDto,
   TaskQueryDto,
@@ -240,6 +241,21 @@ export class FakeCoreClient implements CoreClient {
       return this.emitRows(changed);
     });
 
+  setDues = (dues: TaskDueDto[]) =>
+    this.run(() => {
+      // Erst alles prüfen: eine ungültige Fälligkeit schreibt nichts (wie der Core).
+      const wanted = new Map<string, DueDto | null>();
+      for (const d of dues) if (!wanted.has(d.id)) wanted.set(d.id, d.due === null ? null : validDue(d.due));
+      const changed = this.existing([...wanted.keys()]).filter(
+        (row) => JSON.stringify(row.task.due) !== JSON.stringify(wanted.get(row.task.id)),
+      );
+      for (const row of changed) {
+        row.task = { ...row.task, due: wanted.get(row.task.id) ?? null };
+        this.touch(row);
+      }
+      return this.emitRows(changed);
+    });
+
   deleteTasks = (ids: string[]) =>
     this.run(() => {
       const rows = this.existing(ids);
@@ -324,11 +340,35 @@ export class FakeCoreClient implements CoreClient {
                     : t.status === "done";
         return inView && (query.status == null || t.status === query.status);
       });
-      rows = view.kind === "completed" ? rows.sort(byCompleted) : rows.sort(byOrder(this.lists));
+      rows =
+        view.kind === "completed"
+          ? rows.sort(byCompleted)
+          : view.kind === "today" || view.kind === "upcoming"
+            ? rows.sort(byDue(view.day, byOrder(this.lists)))
+            : rows.sort(byOrder(this.lists));
       const start = page.cursor ? Number(page.cursor) : 0;
       const items = rows.slice(start, start + page.limit).map((r) => summary(this.dto(r)));
       const end = start + items.length;
       return { items, nextCursor: end < rows.length ? String(end) : null };
+    });
+
+  searchTasks = (text: string, limit: number) =>
+    this.run((): TaskSummaryDto[] => {
+      if (limit < 1 || limit > PAGE_LIMIT_MAX) throw new CoreClientError("validation", `search limit must be 1..=${PAGE_LIMIT_MAX}`);
+      const terms = text.toLowerCase().split(/\s+/).filter(Boolean);
+      if (terms.length === 0) return [];
+      // Wie im Core (`SearchQuery::rank`): alle Wörter in Titel oder Notiz; offen, Titeltreffer, Reihenfolge.
+      const order = byOrder(this.lists);
+      return [...this.rows.values()]
+        .flatMap((row) => {
+          const title = row.task.title.toLowerCase();
+          const notes = row.task.notes.toLowerCase();
+          if (!terms.every((t) => title.includes(t) || notes.includes(t))) return [];
+          return [{ row, done: row.task.status === "done", notesOnly: !terms.some((t) => title.includes(t)) }];
+        })
+        .sort((a, b) => Number(a.done) - Number(b.done) || Number(a.notesOnly) - Number(b.notesOnly) || order(a.row, b.row))
+        .slice(0, limit)
+        .map(({ row }) => summary(this.dto(row)));
     });
 
   // --- Anmeldung & Sync ----------------------------------------------------------------------
@@ -541,6 +581,17 @@ function byOrder(lists: Map<string, TaskListDto>) {
     cmp(lists.get(a.task.listId)?.sortKey ?? "", lists.get(b.task.listId)?.sortKey ?? "") ||
     a.order - b.order ||
     cmp(a.task.id, b.task.id);
+}
+
+/** Heute/Geplant wie im Core (ADR-026): Sortierzeitpunkt der Fälligkeit, dann `then`. */
+function byDue(day: LocalDayDto, then: (a: Row, b: Row) => number) {
+  const instant = (due: DueDto | null): number => {
+    if (!due) return Number.MAX_SAFE_INTEGER;
+    if (due.kind === "dateTime") return Date.parse(due.at);
+    const days = (Date.parse(`${due.date}T00:00:00Z`) - Date.parse(`${day.date}T00:00:00Z`)) / 86_400_000;
+    return Date.parse(day.start) + days * 86_400_000;
+  };
+  return (a: Row, b: Row) => instant(a.task.due) - instant(b.task.due) || then(a, b);
 }
 
 function byCompleted(a: Row, b: Row): number {

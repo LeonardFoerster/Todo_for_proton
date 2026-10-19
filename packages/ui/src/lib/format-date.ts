@@ -49,6 +49,32 @@ export function dueToInputDate(due: DueDto | null): string {
   return due.kind === "date" ? due.date : isoDate(parts(due).day);
 }
 
+/** Uhrzeit für Eingabefelder (`<input type="time">`, „HH:MM“); ganztägig = leer. */
+export function dueToInputTime(due: DueDto | null): string {
+  if (due?.kind !== "dateTime") return "";
+  const at = new Date(due.at);
+  return `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+}
+
+/** Datum und Uhrzeit aus Eingabefeldern (lokale Zeit); ohne Datum keine Fälligkeit, ohne Uhrzeit ganztägig. */
+export function dueFromInputs(date: string, time: string, tz: string = systemTimeZone()): DueDto | null {
+  if (!date) return null;
+  if (!time) return { kind: "date", date };
+  const [y, m, d] = date.split("-").map(Number);
+  const [h, min] = time.split(":").map(Number);
+  return { kind: "dateTime", at: new Date(y, m - 1, d, h, min).toISOString(), tz };
+}
+
+/** `next` auf den Tag legen, die Uhrzeit von `current` aber behalten (Schnellwahl „Heute“, „Morgen“ …). */
+export function keepTime(next: DueDto | null, current: DueDto | null): DueDto | null {
+  if (next?.kind !== "date" || current?.kind !== "dateTime") return next;
+  return dueFromInputs(next.date, dueToInputTime(current), current.tz);
+}
+
+function systemTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
 export function todayPlus(days: number, now: Date = new Date()): DueDto {
   return { kind: "date", date: isoDate(addDays(now, days)) };
 }

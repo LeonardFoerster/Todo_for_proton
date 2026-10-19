@@ -7,15 +7,15 @@
 //! - Tasks: `create_task`, `update_task` (Titel, Notizen, Priorität, Fälligkeit), `complete_task`
 //!   (abhaken/öffnen), `move_task` (Liste/Reihenfolge), `delete_task`
 //! - Sammelaktionen (ein Aufruf = eine Meldung): `complete_tasks`, `delete_tasks`, `move_tasks`,
-//!   `restore_tasks`
+//!   `restore_tasks`, `set_dues`
 //!
-//! Lesende Commands (`list_*`, `get_task`, `ensure_inbox`, `auth_*`, `sync_*`, `app_ready`) melden
-//! nichts. Nachweis: `tests/commands.rs` (`only_writing_commands_trigger_a_sync`).
+//! Lesende Commands (`list_*`, `get_task`, `search_tasks`, `ensure_inbox`, `auth_*`, `sync_*`,
+//! `app_ready`) melden nichts. Nachweis: `tests/commands.rs` (`only_writing_commands_trigger_a_sync`).
 
 use tauri::State;
 use todo_core::api::dto::{
-    CreateTaskDto, MoveListTargetDto, MoveTargetDto, PageDto, PageRequestDto, TaskDto, TaskListDto,
-    TaskPatchDto, TaskQueryDto, TaskSummaryDto,
+    CreateTaskDto, MoveListTargetDto, MoveTargetDto, PageDto, PageRequestDto, TaskDto, TaskDueDto,
+    TaskListDto, TaskPatchDto, TaskQueryDto, TaskSummaryDto,
 };
 use todo_sync::SchedulerEvent;
 
@@ -157,6 +157,13 @@ pub async fn move_tasks(
 }
 
 #[tauri::command]
+pub async fn set_dues(state: State<'_, AppState>, dues: Vec<TaskDueDto>) -> Result<Vec<TaskDto>> {
+    let tasks = state.api.set_dues(dues).await?;
+    state.sync.local_change();
+    Ok(tasks)
+}
+
+#[tauri::command]
 pub async fn restore_tasks(
     state: State<'_, AppState>,
     tasks: Vec<TaskDto>,
@@ -173,6 +180,15 @@ pub async fn list_tasks(
     page: PageRequestDto,
 ) -> Result<PageDto<TaskSummaryDto>> {
     Ok(state.api.list_tasks(query, page).await?)
+}
+
+#[tauri::command]
+pub async fn search_tasks(
+    state: State<'_, AppState>,
+    text: String,
+    limit: u32,
+) -> Result<Vec<TaskSummaryDto>> {
+    Ok(state.api.search_tasks(text, limit).await?)
 }
 
 // --- Anmeldung ---------------------------------------------------------------------------------

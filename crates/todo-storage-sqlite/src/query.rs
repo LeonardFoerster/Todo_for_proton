@@ -14,11 +14,30 @@ use crate::mapping::{encode_date, encode_status, SUMMARY_COLUMNS};
 
 /// Sortierposition einer Task innerhalb einer Ansicht; zugleich Inhalt des (opaken) Cursors.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)] // „sortiert nach …“; `SortKey` hieße wie der Typ
 pub(crate) enum Position {
     BySortKey(SortKey, TaskId),
     /// Erledigt-Ansicht: `completed_at` absteigend, dann `id` aufsteigend.
     ByCompletion(Timestamp, TaskId),
+    /// Heute/Geplant: Sortierzeitpunkt der Fälligkeit (ADR-026), dann `sort_key`, `id`.
+    ByDue(Timestamp, SortKey, TaskId),
 }
+
+/// Cursor-Kennung der Sortierart einer Ansicht (ein Cursor gehört zu genau einer).
+fn cursor_kind(view: &SmartView) -> &'static str {
+    match view {
+        SmartView::Completed => "c",
+        SmartView::Today(_) | SmartView::Upcoming(_) => "d",
+        _ => "s",
+    }
+}
+
+/// Sortierzeitpunkt in SQL, wie [`Due::sort_instant`](todo_core::domain::Due::sort_instant):
+/// `due_at` bzw. Tagesbeginn ≈ `start + (due_date - date) · 24 h`. Parameter: Datum, Beginn.
+const DUE_INSTANT: &str = "COALESCE(due_at, (due_date - ?) * 86400000 + ?)";
+/// Keyset-Bedingung „nach (Zeitpunkt, `sort_key`, `id`)" für [`Position::ByDue`].
+const DUE_AFTER: &str =
+    "(COALESCE(due_at, (due_date - ?) * 86400000 + ?), sort_key, id) > (?, ?, ?)";
 
 impl Position {
     /// Position der letzten gelieferten Zeile – Grundlage für `next_cursor`.
@@ -27,6 +46,14 @@ impl Position {
             SmartView::Completed => {
                 Self::ByCompletion(summary.completed_at.unwrap_or(Timestamp::EPOCH), summary.id)
             }
+            SmartView::Today(day) | SmartView::Upcoming(day) => Self::ByDue(
+                summary
+                    .due
+                    .as_ref()
+                    .map_or(Timestamp::from_millis(i64::MAX), |d| d.sort_instant(day)),
+                summary.sort_key.clone(),
+                summary.id,
+            ),
             _ => Self::BySortKey(summary.sort_key.clone(), summary.id),
         }
     }
@@ -35,31 +62,26 @@ impl Position {
         match self {
             Self::BySortKey(key, id) => format!("s:{key}:{id}"),
             Self::ByCompletion(at, id) => format!("c:{}:{id}", at.as_millis()),
+            Self::ByDue(at, key, id) => format!("d:{}:{key}:{id}", at.as_millis()),
         }
     }
 
     /// # Errors
     /// `CoreError::Validation` bei unbekanntem Format oder einem Cursor einer anderen
-    /// Sortierart (Erledigt vs. Rest).
+    /// Sortierart (z. B. Erledigt vs. Rest).
     pub(crate) fn decode(cursor: &str, view: &SmartView) -> CoreResult<Self> {
         let invalid = || CoreError::Validation(format!("invalid cursor: {cursor:?}"));
-        let mut parts = cursor.splitn(3, ':');
-        let (Some(kind), Some(value), Some(id)) = (parts.next(), parts.next(), parts.next()) else {
-            return Err(invalid());
-        };
-        if (kind == "c") != matches!(view, SmartView::Completed) {
+        let parts: Vec<&str> = cursor.split(':').collect();
+        if parts.first() != Some(&cursor_kind(view)) {
             return Err(invalid());
         }
-        let id = TaskId::parse(id).map_err(|_| invalid())?;
-        match kind {
-            "s" => Ok(Self::BySortKey(
-                SortKey::parse(value).map_err(|_| invalid())?,
-                id,
-            )),
-            "c" => Ok(Self::ByCompletion(
-                Timestamp::from_millis(value.parse().map_err(|_| invalid())?),
-                id,
-            )),
+        let millis = |v: &str| v.parse().map(Timestamp::from_millis).map_err(|_| invalid());
+        let key = |v: &str| SortKey::parse(v).map_err(|_| invalid());
+        let id = |v: &str| TaskId::parse(v).map_err(|_| invalid());
+        match parts.as_slice() {
+            ["s", k, i] => Ok(Self::BySortKey(key(k)?, id(i)?)),
+            ["c", at, i] => Ok(Self::ByCompletion(millis(at)?, id(i)?)),
+            ["d", at, k, i] => Ok(Self::ByDue(millis(at)?, key(k)?, id(i)?)),
             _ => Err(invalid()),
         }
     }
@@ -121,12 +143,29 @@ pub(crate) fn list_tasks_sql(
             params.push(Value::Integer(at.as_millis()));
             params.push(Value::Text(id.to_string()));
         }
+        Some(Position::ByDue(at, key, id)) => {
+            let (SmartView::Today(day) | SmartView::Upcoming(day)) = query.view else {
+                unreachable!("ByDue nur für Heute/Geplant (decode prüft die Art)")
+            };
+            conditions.push(DUE_AFTER);
+            params.push(Value::Integer(encode_date(day.date())));
+            params.push(Value::Integer(day.span().start.as_millis()));
+            params.push(Value::Integer(at.as_millis()));
+            params.push(Value::Text(key.as_str().to_owned()));
+            params.push(Value::Text(id.to_string()));
+        }
         None => {}
     }
 
     let order = match query.view {
-        SmartView::Completed => "completed_at DESC, id",
-        _ => "sort_key, id",
+        SmartView::Completed => "completed_at DESC, id".to_owned(),
+        SmartView::Today(day) | SmartView::Upcoming(day) => {
+            // Parameter des ORDER BY stehen im SQL nach denen des WHERE, vor LIMIT.
+            params.push(Value::Integer(encode_date(day.date())));
+            params.push(Value::Integer(day.span().start.as_millis()));
+            format!("{DUE_INSTANT}, sort_key, id")
+        }
+        _ => "sort_key, id".to_owned(),
     };
     let filter = if conditions.is_empty() {
         String::new()
@@ -135,6 +174,64 @@ pub(crate) fn list_tasks_sql(
     };
     params.push(Value::Integer(i64::from(fetch)));
     let sql = format!("SELECT {SUMMARY_COLUMNS} FROM tasks{filter} ORDER BY {order} LIMIT ?");
+    (sql, params)
+}
+
+/// Ab so vielen Zeichen nutzt ein Suchwort den Trigram-Index; kürzere gehen über `LIKE`.
+const TRIGRAM: usize = 3;
+
+/// Ein Suchwort als FTS5-Zeichenkette (Anführungszeichen verdoppelt) – Operatoren wie `OR`, `*`
+/// oder Klammern sind darin normaler Text.
+fn fts_string(term: &str) -> String {
+    format!("\"{}\"", term.replace('"', "\"\""))
+}
+
+/// `%wort%` mit maskierten `LIKE`-Platzhaltern (Escape-Zeichen `\`).
+fn like_pattern(term: &str) -> String {
+    let escaped = term
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("%{escaped}%")
+}
+
+/// SQL samt Parametern für die Suche (ADR-027): Wörter ab 3 Zeichen über den Trigram-Index
+/// `tasks_fts` (Teilwort, Groß/Klein egal, auch Umlaute), kürzere über `LIKE` (Groß/Klein nur bei
+/// ASCII egal). Alle Wörter müssen passen; Rang: offen vor erledigt, Titeltreffer zuerst.
+pub(crate) fn search_tasks_sql(terms: &[String], limit: u32) -> (String, Vec<Value>) {
+    let (long, short): (Vec<&String>, Vec<&String>) =
+        terms.iter().partition(|t| t.chars().count() >= TRIGRAM);
+    let mut conditions: Vec<String> = Vec::new();
+    let mut params: Vec<Value> = Vec::new();
+    if !long.is_empty() {
+        conditions.push("rowid IN (SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH ?)".into());
+        let all: Vec<String> = long.iter().map(|t| fts_string(t)).collect();
+        params.push(Value::Text(all.join(" ")));
+    }
+    for term in &short {
+        conditions.push(r"(title LIKE ? ESCAPE '\' OR notes LIKE ? ESCAPE '\')".into());
+        params.push(Value::Text(like_pattern(term)));
+        params.push(Value::Text(like_pattern(term)));
+    }
+
+    // Titeltreffer: irgendein Wort im Titel.
+    let mut in_title: Vec<String> = Vec::new();
+    if !long.is_empty() {
+        in_title.push("rowid IN (SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH ?)".into());
+        let any: Vec<String> = long.iter().map(|t| fts_string(t)).collect();
+        params.push(Value::Text(format!("title : ({})", any.join(" OR "))));
+    }
+    for term in &short {
+        in_title.push(r"title LIKE ? ESCAPE '\'".into());
+        params.push(Value::Text(like_pattern(term)));
+    }
+    params.push(Value::Integer(i64::from(limit)));
+    let sql = format!(
+        "SELECT {SUMMARY_COLUMNS} FROM tasks WHERE {} \
+         ORDER BY status, NOT ({}), sort_key, id LIMIT ?",
+        conditions.join(" AND "),
+        in_title.join(" OR "),
+    );
     (sql, params)
 }
 
@@ -154,7 +251,20 @@ mod tests {
         );
         assert!(Position::decode(&s.encode(), &SmartView::Completed).is_err());
         assert!(Position::decode(&c.encode(), &SmartView::Inbox).is_err());
-        for bad in ["", "s:a0", "s:a00:x", "z:a0:x", "c:x:y"] {
+        let day = todo_core::domain::LocalDay::new(
+            todo_core::domain::NaiveDate::from_ymd_opt(2026, 10, 17).unwrap(),
+            Timestamp::from_millis(0),
+            Timestamp::from_millis(1),
+        )
+        .unwrap();
+        let d = Position::ByDue(Timestamp::from_millis(-7), SortKey::first(), id);
+        assert_eq!(
+            Position::decode(&d.encode(), &SmartView::Upcoming(day)).unwrap(),
+            d
+        );
+        assert!(Position::decode(&d.encode(), &SmartView::All).is_err());
+        assert!(Position::decode(&s.encode(), &SmartView::Today(day)).is_err());
+        for bad in ["", "s:a0", "s:a00:x", "z:a0:x", "c:x:y", "d:1:a0"] {
             assert!(Position::decode(bad, &SmartView::All).is_err(), "{bad:?}");
         }
     }

@@ -138,6 +138,7 @@
             icon={view.icon}
             label={view.label}
             count={countFor(view.kind)}
+            overdue={view.kind === "today" ? formatCount(lists.counts.overdue) : undefined}
             active={route.view === view.kind}
             {collapsed}
             {onnavigate}

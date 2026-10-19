@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { CoreClient } from "@tasks/core-client";
+  import type { CoreClient, DueDto } from "@tasks/core-client";
   import { onMount, tick, untrack } from "svelte";
   import IconButton from "./components/IconButton.svelte";
   import Toaster from "./components/Toaster.svelte";
@@ -14,6 +14,7 @@
   import {
     ArrowDown,
     ArrowUp,
+    CalendarDays,
     CircleCheck,
     Ellipsis,
     FolderInput,
@@ -26,22 +27,29 @@
     SquareKanban,
     Trash,
     Undo,
+    X,
   } from "./icons";
+  import DuePrompt from "./features/due/DuePrompt.svelte";
+  import { applyDue, dueChoices, type DueTarget } from "./features/due/due-actions";
   import Board from "./features/board/Board.svelte";
   import Menu, { type MenuItem } from "./components/Menu.svelte";
   import DeleteListDialog from "./features/lists/DeleteListDialog.svelte";
   import ListNameDialog from "./features/lists/ListNameDialog.svelte";
   import type { TaskListDto } from "@tasks/core-client";
   import type SettingsDialogType from "./features/account/SettingsDialog.svelte";
+  import type CommandPaletteType from "./features/palette/CommandPalette.svelte";
+  import type { PaletteCommand, RecentTask } from "./features/palette/CommandPalette.svelte";
   import { setCoreClient } from "./lib/context";
   import { ListsState } from "./lib/lists.svelte";
   import { readChoice, readFlag, writeChoice, writeFlag } from "./lib/preferences";
   import { routeHash, Router, type SmartViewKind } from "./lib/router.svelte";
-  import { ShortcutRegistry } from "./lib/shortcuts";
+  import { formatKeys, ShortcutRegistry } from "./lib/shortcuts";
   import { SyncState } from "./lib/sync.svelte";
   import { todayPlus } from "./lib/format-date";
   import { routeListId, routeTitle } from "./lib/views";
-  import { deleteManyWithUndo } from "./lib/task-actions";
+  import { completedBefore, deleteManyWithUndo } from "./lib/task-actions";
+  import CleanupCompletedDialog from "./features/task-list/CleanupCompletedDialog.svelte";
+  import { addDays } from "./lib/local-day";
   import { followSystemTheme } from "./theme/theme";
   import "./tokens/tokens.css";
 
@@ -76,11 +84,26 @@
   let renamingId = $state<string | null>(null);
   let renameDialog = $state<TaskListDto | null>(null);
   let deleteTarget = $state<TaskListDto | null>(null);
+  /** Menü „Fälligkeit“ bzw. Eingabe „Datum wählen…“ für diese Tasks (P4-04). */
+  let dueMenu = $state<{ targets: DueTarget[]; x: number; y: number } | null>(null);
+  let duePrompt = $state<DueTarget[] | null>(null);
   let showSettings = $state(false);
   /** Einstellungen/Login werden erst bei Bedarf geladen (eigener Chunk). */
   let SettingsDialog = $state<typeof SettingsDialogType | null>(null);
   /** Fenster „Neue Task“ (ersetzt die Eingabezeile über der Liste). */
   let showNewTask = $state(false);
+  /** Vorbelegung der Titelzeile von „Neue Task“ (aus der Palette ohne Treffer). */
+  let newTaskText = $state("");
+  /** Befehlspalette (P4-05): erst beim ersten Öffnen geladen. */
+  let CommandPalette = $state<typeof CommandPaletteType | null>(null);
+  let showPalette = $state(false);
+  let paletteCommands = $state.raw<PaletteCommand[]>([]);
+  let showNewList = $state(false);
+  /** „Erledigte aufräumen“ (P4-06): Menü der Ansicht und Bestätigung. */
+  let completedMenu = $state<{ x: number; y: number } | null>(null);
+  let cleanup = $state<{ ids: string[]; cutoff: Date } | null>(null);
+  /** Zuletzt geöffnete Tasks dieser Sitzung (neueste zuerst, nur im Speicher). */
+  let recentTasks = $state.raw<RecentTask[]>([]);
   let newTaskDialog = $state<NewTaskDialog>();
   let taskList = $state<TaskList>();
   let board = $state<Board>();
@@ -155,9 +178,69 @@
   }
 
   function newTask() {
+    newTaskText = "";
     drawerOpen = false;
     showNewTask = true;
   }
+
+  // --- Erledigte aufräumen (P4-06) ------------------------------------------------------------
+
+  const CLEANUP_DAYS = 30;
+
+  async function startCleanup() {
+    const now = new Date();
+    const cutoff = addDays(new Date(now.getFullYear(), now.getMonth(), now.getDate()), -CLEANUP_DAYS);
+    try {
+      const old = await completedBefore(client, cutoff);
+      if (old.length === 0) toasts.show({ message: `Keine erledigten Tasks älter als ${CLEANUP_DAYS} Tage.` });
+      else cleanup = { ids: old.map((t) => t.id), cutoff };
+    } catch (e) {
+      toasts.show({ message: `Nicht geladen: ${(e as Error).message}`, tone: "danger" });
+    }
+  }
+
+  function confirmCleanup() {
+    const ids = cleanup?.ids ?? [];
+    cleanup = null;
+    if (ids.length > 0) void deleteManyWithUndo(client, ids);
+  }
+
+  // --- Befehlspalette (P4-05) -----------------------------------------------------------------
+
+  /** Befehle = Registry-Einträge mit `palette`, die gerade gelten (ausgeführt ohne Tastaturereignis). */
+  function commandsNow(): PaletteCommand[] {
+    return shortcuts
+      .list()
+      .filter((s) => s.palette && (!s.when || s.when()))
+      .map((s) => ({
+        id: s.palette!,
+        label: s.palette!,
+        shortcut: s.keys.length > 0 ? (s.label ?? formatKeys(s.keys[0])) : undefined,
+        run: () => s.run(new KeyboardEvent("keydown")),
+      }));
+  }
+
+  async function openPalette() {
+    drawerOpen = false;
+    CommandPalette ??= (await import("./features/palette/CommandPalette.svelte")).default;
+    paletteCommands = commandsNow();
+    showPalette = true;
+  }
+
+  function openFromPalette(id: string) {
+    selectedId = id;
+    openId = id;
+  }
+
+  // Geöffnete Task merken (Palette ohne Text zeigt sie); Titel aus dem Core.
+  $effect(() => {
+    const id = openId;
+    if (!id) return;
+    void client.getTask(id).then(
+      (t) => (recentTasks = [{ id: t.id, title: t.title }, ...recentTasks.filter((r) => r.id !== t.id)].slice(0, 5)),
+      () => undefined,
+    );
+  });
 
   async function openSettings() {
     drawerOpen = false;
@@ -209,6 +292,41 @@
     const button = document.querySelector<HTMLElement>("[data-move-button]");
     const rect = button?.getBoundingClientRect();
     taskList?.openMoveMenu(rect?.left ?? 0, (rect?.bottom ?? 0) + 4);
+  }
+
+  // --- Fälligkeit (P4-04) ---------------------------------------------------------------------
+
+  /** Worauf T/Umschalt+T/D wirken: Board-Cursor, sonst die Auswahl, sonst die fokussierte Zeile. */
+  function dueTargets(): DueTarget[] {
+    if (showBoard) {
+      const card = board?.cursorTask();
+      return card ? [card] : [];
+    }
+    if (hasSelection()) return taskList?.selectedTasks() ?? [];
+    const task = selecting() ? undefined : selected();
+    return task ? [task] : [];
+  }
+
+  function setDue(targets: DueTarget[], due: DueDto | null) {
+    if (targets.length > 0) void applyDue(client, targets, due);
+  }
+
+  /** Menü „Fälligkeit“ unter dem Button der Auswahlleiste bzw. an der fokussierten Zeile/Karte. */
+  function openDueMenu(targets = dueTargets(), at?: { x: number; y: number }) {
+    if (targets.length === 0) return;
+    const anchor = hasSelection() ? document.querySelector("[data-due-button]") : document.activeElement;
+    const rect = anchor?.getBoundingClientRect();
+    dueMenu = { targets, x: at?.x ?? rect?.left ?? 0, y: at?.y ?? (rect?.bottom ?? 0) + 4 };
+  }
+
+  function dueMenuItems(targets: DueTarget[]): MenuItem[] {
+    const shortcut = { today: "T", tomorrow: "Umschalt+T" } as Record<string, string | undefined>;
+    const items: MenuItem[] = dueChoices()
+      .filter((c) => c.id !== "none")
+      .map((c) => ({ id: c.id, label: c.label, icon: CalendarDays, shortcut: shortcut[c.id], action: () => setDue(targets, c.due) }));
+    items.push({ label: "Datum wählen…", icon: CalendarDays, action: () => (duePrompt = targets) });
+    if (targets.some((t) => t.due)) items.push({ label: "Fälligkeit entfernen", icon: X, action: () => setDue(targets, null) });
+    return items;
   }
 
   /** Auswahl verschieben; ohne Auswahl die erste bzw. letzte Zeile. */
@@ -306,7 +424,8 @@
 
   function escape(e: KeyboardEvent) {
     const target = e.target as HTMLElement | null;
-    if (showShortcuts) showShortcuts = false;
+    if (showPalette) showPalette = false;
+    else if (showShortcuts) showShortcuts = false;
     else if (showSettings) showSettings = false;
     else if (target && target.matches("input, textarea, select")) target.blur();
     else if (openId) closeDetail();
@@ -315,7 +434,9 @@
     else selectedId = null;
   }
 
-  shortcuts.setModal(() => showShortcuts || showSettings || showNewTask || !!deleteTarget || !!renameDialog);
+  shortcuts.setModal(
+    () => showShortcuts || showSettings || showNewTask || !!deleteTarget || !!renameDialog || !!duePrompt || showPalette || showNewList || !!cleanup,
+  );
   shortcuts.register(
     {
       keys: ["shift+f10", "contextmenu"],
@@ -347,7 +468,19 @@
         if (i < lists.userLists.length - 1) void moveList(list.id, i + 2);
       },
     },
-    { keys: ["n"], description: "Neue Task", group: "Allgemein", run: newTask },
+    { keys: ["n"], description: "Neue Task", group: "Allgemein", palette: "Neue Task", run: newTask },
+    { keys: ["ctrl+k"], description: "Suchen und Befehle", group: "Allgemein", inInputs: true, run: () => void openPalette() },
+    // „/“ nur außerhalb von Feldern – beim Tippen bleibt es ein Zeichen.
+    { keys: ["/"], description: "Suchen (außerhalb von Feldern)", group: "Allgemein", run: () => void openPalette() },
+    { keys: [], description: "Neue Liste…", group: "Listen", palette: "Neue Liste…", run: () => (showNewList = true) },
+    { keys: [], description: "Einstellungen", group: "Allgemein", palette: "Einstellungen öffnen", run: () => void openSettings() },
+    {
+      keys: [],
+      description: "Seitenleiste ein-/ausklappen",
+      group: "Allgemein",
+      palette: "Seitenleiste ein-/ausklappen",
+      run: toggleCollapse,
+    },
     ...(
       [
         ["alt+d", "Fälligkeit", () => newTaskDialog?.toggleDue()],
@@ -369,6 +502,7 @@
       keys: ["?"],
       description: "Tastaturkürzel anzeigen",
       group: "Allgemein",
+      palette: "Tastaturkürzel anzeigen",
       inModal: true,
       run: () => (showShortcuts = !showShortcuts),
     },
@@ -448,6 +582,28 @@
       run: () => void taskList?.deleteSelected(),
     },
     { keys: ["m"], description: "Ausgewählte verschieben nach…", group: "Auswahl", when: hasSelection, run: openMoveMenu },
+    // Fälligkeit (P4-04): fokussierte Zeile/Karte oder die Auswahl; eine Uhrzeit bleibt.
+    {
+      keys: ["t"],
+      description: "Fällig heute",
+      group: "Fälligkeit",
+      when: () => dueTargets().length > 0,
+      run: () => setDue(dueTargets(), todayPlus(0)),
+    },
+    {
+      keys: ["shift+t"],
+      description: "Fällig morgen",
+      group: "Fälligkeit",
+      when: () => dueTargets().length > 0,
+      run: () => setDue(dueTargets(), todayPlus(1)),
+    },
+    {
+      keys: ["d"],
+      description: "Fälligkeit wählen…",
+      group: "Fälligkeit",
+      when: () => dueTargets().length > 0,
+      run: () => openDueMenu(),
+    },
     {
       keys: ["alt+arrowup"],
       description: "Auswahlblock nach oben",
@@ -523,12 +679,15 @@
       keys: ["v"],
       description: "Darstellung Liste/Kanban umschalten",
       group: "Ansichten",
+      palette: "Darstellung Liste/Kanban umschalten",
       when: () => boardCapable,
       run: () => setLayout(layout === "list" ? "board" : "list"),
     },
-    { keys: ["g i"], description: "Eingang", group: "Ansichten", run: () => goTo("inbox") },
-    { keys: ["g t"], description: "Heute", group: "Ansichten", run: () => goTo("today") },
-    { keys: ["g u"], description: "Geplant", group: "Ansichten", run: () => goTo("upcoming") },
+    { keys: ["g i"], description: "Eingang", group: "Ansichten", palette: "Gehe zu Eingang", run: () => goTo("inbox") },
+    { keys: ["g t"], description: "Heute", group: "Ansichten", palette: "Gehe zu Heute", run: () => goTo("today") },
+    { keys: ["g u"], description: "Geplant", group: "Ansichten", palette: "Gehe zu Geplant", run: () => goTo("upcoming") },
+    { keys: [], description: "Alle Tasks", group: "Ansichten", palette: "Gehe zu Alle Tasks", run: () => goTo("all") },
+    { keys: [], description: "Erledigt", group: "Ansichten", palette: "Gehe zu Erledigt", run: () => goTo("completed") },
   );
 </script>
 
@@ -595,6 +754,14 @@
               onclick={openMoveMenu}
             />
             <IconButton
+              label="Fälligkeit…"
+              shortcut="D"
+              icon={CalendarDays}
+              disabled={selection.count === 0}
+              data-due-button
+              onclick={() => openDueMenu()}
+            />
+            <IconButton
               label="Löschen"
               shortcut="Entf"
               icon={Trash}
@@ -637,6 +804,16 @@
               onclick={(e) => openListMenuAt(currentList!, e.currentTarget)}
             />
           {/if}
+          {#if route.view === "completed"}
+            <IconButton
+              label="Aktionen für Erledigt"
+              icon={Ellipsis}
+              onclick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                completedMenu = { x: r.left, y: r.bottom + 4 };
+              }}
+            />
+          {/if}
           <IconButton label="Tastaturkürzel" shortcut="?" icon={Keyboard} onclick={() => (showShortcuts = true)} />
           <IconButton label="Einstellungen" icon={Settings} onclick={() => void openSettings()} />
         </span>
@@ -657,7 +834,16 @@
                 oncolumnmenu={(list, x, y) => (listMenu = { list, x, y })}
               />
             {:else}
-              <TaskList bind:this={taskList} {route} {lists} bind:selectedId onopen={(id) => (openId = id)} onready={listReady} onnewtask={newTask} />
+              <TaskList
+                bind:this={taskList}
+                {route}
+                {lists}
+                bind:selectedId
+                onopen={(id) => (openId = id)}
+                onready={listReady}
+                onnewtask={newTask}
+                ondue={(tasks, x, y) => openDueMenu(tasks, { x, y })}
+              />
             {/if}
           </div>
         {/key}
@@ -687,7 +873,57 @@
           : undefined}
     onopenlist={(id) => router.navigate(id === lists.inbox?.id ? { view: "inbox" } : { view: "list", listId: id })}
     defaultDue={route.view === "today" ? todayPlus(0) : null}
+    initialText={newTaskText}
     onclose={() => (showNewTask = false)}
+  />
+{/if}
+{#if showPalette && CommandPalette}
+  <CommandPalette
+    {lists}
+    commands={paletteCommands}
+    recent={recentTasks}
+    onopentask={openFromPalette}
+    onopenlist={(list) => {
+      router.navigate(list.isInbox ? { view: "inbox" } : { view: "list", listId: list.id });
+      selectedId = openId = null;
+    }}
+    onnewtask={(text) => {
+      newTaskText = text;
+      showNewTask = true;
+    }}
+    onclose={() => (showPalette = false)}
+  />
+{/if}
+{#if completedMenu}
+  <Menu
+    label="Aktionen für Erledigt"
+    items={[
+      {
+        label: `Erledigte älter als ${CLEANUP_DAYS} Tage löschen…`,
+        icon: Trash,
+        danger: true,
+        action: () => void startCleanup(),
+      },
+    ]}
+    x={completedMenu.x}
+    y={completedMenu.y}
+    onclose={() => (completedMenu = null)}
+  />
+{/if}
+{#if cleanup}
+  <CleanupCompletedDialog
+    count={cleanup.ids.length}
+    cutoff={cleanup.cutoff}
+    onconfirm={confirmCleanup}
+    onclose={() => (cleanup = null)}
+  />
+{/if}
+{#if showNewList}
+  <ListNameDialog
+    title="Neue Liste"
+    submitLabel="Anlegen"
+    onsubmit={(name) => createList(name)}
+    onclose={() => (showNewList = false)}
   />
 {/if}
 {#if listMenu}
@@ -697,6 +933,23 @@
     x={listMenu.x}
     y={listMenu.y}
     onclose={() => (listMenu = null)}
+  />
+{/if}
+{#if dueMenu}
+  <Menu
+    label="Fälligkeit"
+    items={dueMenuItems(dueMenu.targets)}
+    x={dueMenu.x}
+    y={dueMenu.y}
+    onclose={() => (dueMenu = null)}
+  />
+{/if}
+{#if duePrompt}
+  {@const targets = duePrompt}
+  <DuePrompt
+    subject={targets.length === 1 ? `„${targets[0].title}“` : `${targets.length} Tasks`}
+    onsubmit={(due) => setDue(targets, due)}
+    onclose={() => (duePrompt = null)}
   />
 {/if}
 {#if deleteTarget}
