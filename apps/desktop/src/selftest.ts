@@ -1735,7 +1735,78 @@ const p4today: Step[] = [
   ],
 ];
 
-const SUITES: Record<string, Step[]> = { p002, p3new, p4due, p4today, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
+// P4-03: „Geplant“ nach Tagen gruppiert – 1 000 Tasks über ~14 Monate, Scrollen und Tastatur im Budget.
+const p4upcoming: Step[] = [
+  [
+    "1 000 geplante Tasks anlegen (IPC)",
+    async (client) => {
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const ahead = (days: number) => {
+        const d = new Date();
+        d.setDate(d.getDate() + days);
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      };
+      for (let i = 0; i < 1000; i += 100) {
+        await Promise.all(
+          Array.from({ length: 100 }, (_, j) => {
+            const n = i + j;
+            return client.createTask({ title: `Geplant ${String(n + 1).padStart(4, "0")}`, due: { kind: "date", date: ahead(1 + ((n * 37) % 420)) } });
+          }),
+        );
+      }
+      location.hash = "#/upcoming";
+      await until("Überschrift Morgen", () => document.querySelector(".heading .label")?.textContent === "Morgen", 8000);
+    },
+  ],
+  [
+    "Scrollen durch alle Abschnitte",
+    async () => {
+      const viewport = document.querySelector<HTMLElement>('[role="listbox"]')!;
+      const deltas: number[] = [];
+      const labels = new Set<string>();
+      let order: string[] = [];
+      let prev = await frame();
+      for (let guard = 0; guard < 5000; guard++) {
+        for (const h of viewport.querySelectorAll(".heading .label")) {
+          const label = h.textContent ?? "";
+          if (order.at(-1) !== label) order.push(label);
+          labels.add(label);
+        }
+        if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 1) {
+          // Ende erreicht – noch eine Seite nachladen lassen?
+          await sleep(1500);
+          if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 1) break;
+        }
+        viewport.scrollTop += 96;
+        const now = await frame();
+        deltas.push(now - prev);
+        prev = now;
+      }
+      order = order.filter((l, i) => order.indexOf(l) === i);
+      if (order.length !== labels.size) throw new Error(`Abschnitt doppelt: ${[...labels].join(", ")}`);
+      const rows = document.querySelectorAll('[role="option"]').length;
+      if (rows > 100) throw new Error(`${rows} DOM-Zeilen`);
+      viewport.scrollTop = 0;
+      const s = stats(deltas.slice(1));
+      if (s.p95 > 25) throw new Error(`p95 ${s.p95.toFixed(1)} ms`);
+      const entries = Math.round(viewport.scrollHeight / 36);
+      if (entries < 1000) throw new Error(`nur ${entries} Einträge geladen (${labels.size} Abschnitte)`);
+      return `${entries} Einträge, ${labels.size} Abschnitte, ${deltas.length} Frames, p50 ${s.p50.toFixed(1)} / p95 ${s.p95.toFixed(1)} / max ${s.max.toFixed(1)} ms, ${s.dropped} Drops`;
+    },
+  ],
+  [
+    "↓ über Abschnitte bis Repaint",
+    async () => {
+      await frame();
+      (document.querySelector<HTMLElement>('[role="option"]'))!.click();
+      await click("button", "Schließen").catch(() => undefined);
+      (document.querySelector<HTMLElement>('[role="option"]'))!.focus();
+      return repaint(30, () => key(focused(), "ArrowDown"));
+    },
+  ],
+];
+
+const SUITES: Record<string, Step[]> = { p002, p3new, p4due, p4today, p4upcoming, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
   p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */

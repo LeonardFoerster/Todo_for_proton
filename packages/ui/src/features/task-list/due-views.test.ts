@@ -93,3 +93,29 @@ describe("Heute: Überfällig + Heute", () => {
     await waitFor(() => expect(shown()).toEqual(["Heute fällig"]));
   });
 });
+
+describe("Geplant: nach Tagen", () => {
+  it("groups by day, shows only the time under a day and skips headings with the keyboard", async () => {
+    const at = (offset: number, h: number): DueDto => {
+      const d = addDays(new Date(), offset);
+      d.setHours(h, 0, 0, 0);
+      return { kind: "dateTime", at: d.toISOString(), tz: "Europe/Berlin" };
+    };
+    const { user } = await setup(
+      [
+        ["Übermorgen", day(2)],
+        ["Morgen 9", at(1, 9)],
+        ["Morgen", day(1)],
+      ],
+      "#/upcoming",
+    );
+    await waitFor(() => expect(shown()[0]).toBe("# Morgen 2"));
+    const third = shown()[3];
+    expect(shown()).toEqual(["# Morgen 2", "Morgen", "Morgen 9", third, "Übermorgen"]);
+    expect(third).toMatch(/^# \w{2}, \d+\. \S+ 1$/);
+    expect(screen.getByRole("option", { name: /^Morgen 9/ }).querySelector(".due")?.textContent).toBe("09:00");
+    expect(screen.getByRole("option", { name: /^Morgen,/ }).querySelector(".due")).toBeNull();
+    await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}");
+    expect(selected()?.getAttribute("aria-label")).toMatch(/^Übermorgen/);
+  });
+});

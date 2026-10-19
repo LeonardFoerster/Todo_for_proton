@@ -55,9 +55,14 @@
   // --- Abschnitte (P4: Heute = Überfällig/Heute, Geplant = nach Tagen) ------------------------
 
   /** Angezeigte Einträge: Tasks, in Heute/Geplant mit Abschnittsüberschriften dazwischen. */
-  const entries = $derived<Entry<TaskSummaryDto>[]>(
-    groupEntries(rows.items, view) ?? rows.items.map((task) => ({ kind: "task", task, dueMode: "full" })),
-  );
+  const entries = $derived<Entry<TaskSummaryDto>[]>(groupEntries(rows.items, view) ?? rows.items.map(flatEntry));
+  /** Flache Ansichten: ein Eintrag je Task-Objekt, über Änderungen hinweg dasselbe (keine Neuanlage je Zeile). */
+  const flat = new WeakMap<TaskSummaryDto, Entry<TaskSummaryDto>>();
+  function flatEntry(task: TaskSummaryDto): Entry<TaskSummaryDto> {
+    let entry = flat.get(task);
+    if (!entry) flat.set(task, (entry = { kind: "task", task, dueMode: "full" }));
+    return entry;
+  }
   const grouped = view.view === "today" || view.view === "upcoming";
   /** Eintrags-Index je Task-ID, gebaut je `entries`-Array (nicht je Tastendruck). */
   let entryIndex = new Map<string, number>();

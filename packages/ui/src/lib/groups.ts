@@ -55,19 +55,26 @@ export function weekdayDate(day: Date): string {
   return WEEKDAY_DATE.format(day).replace(/^(\w+)\.,/, "$1,");
 }
 
-/** Abschnitt in „Geplant“: Morgen, die nächsten Tage einzeln, Rest des Monats, dann Monate. */
-function upcomingGroup(due: DueDto, now: Date): { id: string; group: GroupKind; label: string } {
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+/**
+ * Abschnitt in „Geplant“: Morgen, die nächsten Tage einzeln, Rest des Monats, dann Monate. Liefert
+ * nur Schlüssel und Art – der Text (`Intl`) entsteht erst je Überschrift, nicht je Task.
+ */
+function upcomingGroup(due: DueDto, today: Date): { id: string; group: GroupKind; day: Date } {
   const day = dueDay(due);
   const diff = Math.round((day.getTime() - today.getTime()) / 86_400_000);
-  if (diff <= 1) return { id: isoDate(addDays(today, 1)), group: "day", label: "Morgen" };
-  if (diff < 7) return { id: isoDate(day), group: "day", label: weekdayDate(day) };
+  if (diff <= 1) return { id: "tomorrow", group: "day", day: addDays(today, 1) };
+  if (diff < 7) return { id: isoDate(day), group: "day", day };
   if (day.getFullYear() === today.getFullYear() && day.getMonth() === today.getMonth()) {
-    return { id: "later-this-month", group: "later", label: "Später in diesem Monat" };
+    return { id: "later-this-month", group: "later", day };
   }
-  const id = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}`;
-  const label = (day.getFullYear() === today.getFullYear() ? MONTH : MONTH_YEAR).format(day);
-  return { id, group: "later", label };
+  return { id: `${day.getFullYear()}-${day.getMonth() + 1}`, group: "later", day };
+}
+
+function upcomingLabel(g: { id: string; day: Date }, today: Date): string {
+  if (g.id === "tomorrow") return "Morgen";
+  if (g.id === "later-this-month") return "Später in diesem Monat";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(g.id)) return weekdayDate(g.day);
+  return (g.day.getFullYear() === today.getFullYear() ? MONTH : MONTH_YEAR).format(g.day);
 }
 
 /** Zeilen samt Überschriften; `null` = Ansicht wird nicht gruppiert (flache Liste). */
@@ -98,13 +105,14 @@ function groupToday<T extends Dated>(items: readonly T[], now: Date): Entry<T>[]
 }
 
 function groupUpcoming<T extends Dated>(items: readonly T[], now: Date): Entry<T>[] {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const out: Entry<T>[] = [];
-  let header: GroupHeader | null = null;
+  let header = null as GroupHeader | null;
   for (const task of items) {
     if (!task.due) continue;
-    const g = upcomingGroup(task.due, now);
+    const g = upcomingGroup(task.due, today);
     if (header?.id !== g.id) {
-      header = { kind: "header", ...g, count: 0 };
+      header = { kind: "header", id: g.id, group: g.group, label: upcomingLabel(g, today), count: 0 };
       out.push(header);
     }
     header.count++;
