@@ -1833,7 +1833,55 @@ const p4keys: Step[] = [
   ],
 ];
 
-const SUITES: Record<string, Step[]> = { p002, p3new, p4due, p4today, p4upcoming, p4keys, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
+// P4-05: Befehlspalette – `search_tasks` über die echte IPC (FTS5), Öffnen nach dem ersten Laden < 50 ms.
+const paletteInput = () => document.querySelector<HTMLInputElement>('dialog[open] input[role="combobox"]');
+async function openPaletteTimed(): Promise<number> {
+  const t0 = performance.now();
+  key(focused(), "k", { ctrlKey: true });
+  const input = await until("Palette", paletteInput);
+  await until("Fokus", () => document.activeElement === input);
+  return (await frame()) - t0;
+}
+const p4search: Step[] = [
+  [
+    "Strg+K, Teilwort einer Notiz → richtige Task im Detail",
+    async (client) => {
+      location.hash = "#/inbox";
+      await until("Eingang", () => heading() === "Eingang");
+      const list = await client.createTaskList("Palette");
+      await client.createTask({ title: "Ablenkung", listId: list.id, notes: "nichts" });
+      const target = await client.createTask({ title: "Gesuchte Task", listId: list.id, notes: "Steuererklärung abgeben" });
+      const first = await openPaletteTimed();
+      type(paletteInput()!, "ERKLÄR");
+      await until("Treffer", () => document.querySelector('dialog[open] [role="option"] .in-notes'), 3000);
+      const optionTitle = document.querySelector('dialog[open] [role="option"] .label')?.textContent?.trim();
+      if (optionTitle !== "Gesuchte Task") throw new Error(`erster Treffer ${optionTitle}`);
+      key(paletteInput()!, "Enter");
+      await until("Detail", () => (document.querySelector<HTMLTextAreaElement>('[aria-label="Task-Details"] textarea[aria-label="Titel"]')?.value ?? "") === "Gesuchte Task");
+      const detail = await client.getTask(target.id);
+      if (detail.title !== "Gesuchte Task") throw new Error("falsche Task");
+      return `erstes Öffnen (lädt die Palette) ${first.toFixed(0)} ms`;
+    },
+  ],
+  [
+    "Palette öffnet nach dem ersten Laden < 50 ms",
+    async () => {
+      await click("button", "Schließen").catch(() => undefined);
+      const times: number[] = [];
+      for (let i = 0; i < 10; i++) {
+        (document.querySelector<HTMLElement>("h1") ?? document.body).focus();
+        times.push(await openPaletteTimed());
+        key(paletteInput()!, "Escape");
+        await until("zu", () => !paletteInput());
+      }
+      const s = stats(times);
+      if (s.p95 > 50) throw new Error(`p95 ${s.p95.toFixed(1)} ms`);
+      return `p50 ${s.p50.toFixed(1)} / p95 ${s.p95.toFixed(1)} ms`;
+    },
+  ],
+];
+
+const SUITES: Record<string, Step[]> = { p002, p3new, p4due, p4today, p4upcoming, p4keys, p4search, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
   p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */

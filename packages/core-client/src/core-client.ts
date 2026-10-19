@@ -59,6 +59,8 @@ export interface CoreClient {
   moveTask(id: string, target: MoveTargetDto): Promise<TaskDto>;
   deleteTask(id: string): Promise<void>;
   listTasks(query: TaskQueryDto, page: PageRequestDto): Promise<PageDto<TaskSummaryDto>>;
+  /** Suche über Titel und Notizen (ADR-027): jedes Wort als Teilwort; offene zuerst, Titeltreffer vor Notiztreffern. */
+  searchTasks(text: string, limit: number): Promise<TaskSummaryDto[]>;
 
   // Sammelaktionen (ADR-021): ein Aufruf, ein Commit, ein `onChange`. Unbekannte IDs werden
   // übersprungen; Ergebnis = tatsächlich geänderte Tasks. Höchstens 2 000 je Aufruf.

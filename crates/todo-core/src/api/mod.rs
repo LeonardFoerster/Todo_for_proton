@@ -27,7 +27,7 @@ use crate::{
     domain::{DeviceId, SortKey, Task, TaskId, TaskList, TaskListId, TaskParts},
     ports::{
         ChangeSet, Clock, CommitReceipt, EntityRef, MaybeSend, MaybeSync, Page, PageRequest,
-        TaskQuery, TaskRepository, TaskSummary,
+        SearchQuery, TaskQuery, TaskRepository, TaskSummary,
     },
     sync::{EntityState, Op, RemoteBatch, RemoteReceipt},
     CoreError, CoreResult,
@@ -355,6 +355,23 @@ impl CoreApi {
             limit: page.limit,
         };
         Ok(self.deps.repo.list_tasks(&query, page).await?.into())
+    }
+
+    /// Suche über Titel und Notizen (ADR-027): jedes Wort als Teilwort, ohne Groß/Klein; offene
+    /// vor erledigten, Titeltreffer zuerst; höchstens `limit` (1..=500).
+    ///
+    /// # Errors
+    /// `Validation` (Limit, Länge des Texts).
+    pub async fn search_tasks(&self, text: String, limit: u32) -> CoreResult<Vec<TaskSummaryDto>> {
+        let query = SearchQuery { text, limit };
+        Ok(self
+            .deps
+            .repo
+            .search_tasks(&query)
+            .await?
+            .iter()
+            .map(TaskSummaryDto::from)
+            .collect())
     }
 }
 
@@ -810,6 +827,7 @@ mod tests {
         assert_send(api.complete_tasks(Vec::new(), true));
         assert_send(api.delete_tasks(Vec::new()));
         assert_send(api.set_dues(Vec::new()));
+        assert_send(api.search_tasks(String::new(), 10));
         assert_send(api.move_tasks(Vec::new(), MoveTargetDto::default()));
         assert_send(api.restore_tasks(Vec::new()));
         assert_send(api.move_task_list(String::new(), MoveListTargetDto::default()));

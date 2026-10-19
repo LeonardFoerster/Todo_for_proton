@@ -177,6 +177,64 @@ pub(crate) fn list_tasks_sql(
     (sql, params)
 }
 
+/// Ab so vielen Zeichen nutzt ein Suchwort den Trigram-Index; kürzere gehen über `LIKE`.
+const TRIGRAM: usize = 3;
+
+/// Ein Suchwort als FTS5-Zeichenkette (Anführungszeichen verdoppelt) – Operatoren wie `OR`, `*`
+/// oder Klammern sind darin normaler Text.
+fn fts_string(term: &str) -> String {
+    format!("\"{}\"", term.replace('"', "\"\""))
+}
+
+/// `%wort%` mit maskierten `LIKE`-Platzhaltern (Escape-Zeichen `\`).
+fn like_pattern(term: &str) -> String {
+    let escaped = term
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("%{escaped}%")
+}
+
+/// SQL samt Parametern für die Suche (ADR-027): Wörter ab 3 Zeichen über den Trigram-Index
+/// `tasks_fts` (Teilwort, Groß/Klein egal, auch Umlaute), kürzere über `LIKE` (Groß/Klein nur bei
+/// ASCII egal). Alle Wörter müssen passen; Rang: offen vor erledigt, Titeltreffer zuerst.
+pub(crate) fn search_tasks_sql(terms: &[String], limit: u32) -> (String, Vec<Value>) {
+    let (long, short): (Vec<&String>, Vec<&String>) =
+        terms.iter().partition(|t| t.chars().count() >= TRIGRAM);
+    let mut conditions: Vec<String> = Vec::new();
+    let mut params: Vec<Value> = Vec::new();
+    if !long.is_empty() {
+        conditions.push("rowid IN (SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH ?)".into());
+        let all: Vec<String> = long.iter().map(|t| fts_string(t)).collect();
+        params.push(Value::Text(all.join(" ")));
+    }
+    for term in &short {
+        conditions.push(r"(title LIKE ? ESCAPE '\' OR notes LIKE ? ESCAPE '\')".into());
+        params.push(Value::Text(like_pattern(term)));
+        params.push(Value::Text(like_pattern(term)));
+    }
+
+    // Titeltreffer: irgendein Wort im Titel.
+    let mut in_title: Vec<String> = Vec::new();
+    if !long.is_empty() {
+        in_title.push("rowid IN (SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH ?)".into());
+        let any: Vec<String> = long.iter().map(|t| fts_string(t)).collect();
+        params.push(Value::Text(format!("title : ({})", any.join(" OR "))));
+    }
+    for term in &short {
+        in_title.push(r"title LIKE ? ESCAPE '\'".into());
+        params.push(Value::Text(like_pattern(term)));
+    }
+    params.push(Value::Integer(i64::from(limit)));
+    let sql = format!(
+        "SELECT {SUMMARY_COLUMNS} FROM tasks WHERE {} \
+         ORDER BY status, NOT ({}), sort_key, id LIMIT ?",
+        conditions.join(" AND "),
+        in_title.join(" OR "),
+    );
+    (sql, params)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

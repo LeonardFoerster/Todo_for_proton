@@ -37,11 +37,13 @@
   import ListNameDialog from "./features/lists/ListNameDialog.svelte";
   import type { TaskListDto } from "@tasks/core-client";
   import type SettingsDialogType from "./features/account/SettingsDialog.svelte";
+  import type CommandPaletteType from "./features/palette/CommandPalette.svelte";
+  import type { PaletteCommand, RecentTask } from "./features/palette/CommandPalette.svelte";
   import { setCoreClient } from "./lib/context";
   import { ListsState } from "./lib/lists.svelte";
   import { readChoice, readFlag, writeChoice, writeFlag } from "./lib/preferences";
   import { routeHash, Router, type SmartViewKind } from "./lib/router.svelte";
-  import { ShortcutRegistry } from "./lib/shortcuts";
+  import { formatKeys, ShortcutRegistry } from "./lib/shortcuts";
   import { SyncState } from "./lib/sync.svelte";
   import { todayPlus } from "./lib/format-date";
   import { routeListId, routeTitle } from "./lib/views";
@@ -88,6 +90,15 @@
   let SettingsDialog = $state<typeof SettingsDialogType | null>(null);
   /** Fenster „Neue Task“ (ersetzt die Eingabezeile über der Liste). */
   let showNewTask = $state(false);
+  /** Vorbelegung der Titelzeile von „Neue Task“ (aus der Palette ohne Treffer). */
+  let newTaskText = $state("");
+  /** Befehlspalette (P4-05): erst beim ersten Öffnen geladen. */
+  let CommandPalette = $state<typeof CommandPaletteType | null>(null);
+  let showPalette = $state(false);
+  let paletteCommands = $state.raw<PaletteCommand[]>([]);
+  let showNewList = $state(false);
+  /** Zuletzt geöffnete Tasks dieser Sitzung (neueste zuerst, nur im Speicher). */
+  let recentTasks = $state.raw<RecentTask[]>([]);
   let newTaskDialog = $state<NewTaskDialog>();
   let taskList = $state<TaskList>();
   let board = $state<Board>();
@@ -162,9 +173,47 @@
   }
 
   function newTask() {
+    newTaskText = "";
     drawerOpen = false;
     showNewTask = true;
   }
+
+  // --- Befehlspalette (P4-05) -----------------------------------------------------------------
+
+  /** Befehle = Registry-Einträge mit `palette`, die gerade gelten (ausgeführt ohne Tastaturereignis). */
+  function commandsNow(): PaletteCommand[] {
+    return shortcuts
+      .list()
+      .filter((s) => s.palette && (!s.when || s.when()))
+      .map((s) => ({
+        id: s.palette!,
+        label: s.palette!,
+        shortcut: s.keys.length > 0 ? (s.label ?? formatKeys(s.keys[0])) : undefined,
+        run: () => s.run(new KeyboardEvent("keydown")),
+      }));
+  }
+
+  async function openPalette() {
+    drawerOpen = false;
+    CommandPalette ??= (await import("./features/palette/CommandPalette.svelte")).default;
+    paletteCommands = commandsNow();
+    showPalette = true;
+  }
+
+  function openFromPalette(id: string) {
+    selectedId = id;
+    openId = id;
+  }
+
+  // Geöffnete Task merken (Palette ohne Text zeigt sie); Titel aus dem Core.
+  $effect(() => {
+    const id = openId;
+    if (!id) return;
+    void client.getTask(id).then(
+      (t) => (recentTasks = [{ id: t.id, title: t.title }, ...recentTasks.filter((r) => r.id !== t.id)].slice(0, 5)),
+      () => undefined,
+    );
+  });
 
   async function openSettings() {
     drawerOpen = false;
@@ -348,7 +397,8 @@
 
   function escape(e: KeyboardEvent) {
     const target = e.target as HTMLElement | null;
-    if (showShortcuts) showShortcuts = false;
+    if (showPalette) showPalette = false;
+    else if (showShortcuts) showShortcuts = false;
     else if (showSettings) showSettings = false;
     else if (target && target.matches("input, textarea, select")) target.blur();
     else if (openId) closeDetail();
@@ -357,7 +407,9 @@
     else selectedId = null;
   }
 
-  shortcuts.setModal(() => showShortcuts || showSettings || showNewTask || !!deleteTarget || !!renameDialog || !!duePrompt);
+  shortcuts.setModal(
+    () => showShortcuts || showSettings || showNewTask || !!deleteTarget || !!renameDialog || !!duePrompt || showPalette || showNewList,
+  );
   shortcuts.register(
     {
       keys: ["shift+f10", "contextmenu"],
@@ -389,7 +441,19 @@
         if (i < lists.userLists.length - 1) void moveList(list.id, i + 2);
       },
     },
-    { keys: ["n"], description: "Neue Task", group: "Allgemein", run: newTask },
+    { keys: ["n"], description: "Neue Task", group: "Allgemein", palette: "Neue Task", run: newTask },
+    { keys: ["ctrl+k"], description: "Suchen und Befehle", group: "Allgemein", inInputs: true, run: () => void openPalette() },
+    // „/“ nur außerhalb von Feldern – beim Tippen bleibt es ein Zeichen.
+    { keys: ["/"], description: "Suchen (außerhalb von Feldern)", group: "Allgemein", run: () => void openPalette() },
+    { keys: [], description: "Neue Liste…", group: "Listen", palette: "Neue Liste…", run: () => (showNewList = true) },
+    { keys: [], description: "Einstellungen", group: "Allgemein", palette: "Einstellungen öffnen", run: () => void openSettings() },
+    {
+      keys: [],
+      description: "Seitenleiste ein-/ausklappen",
+      group: "Allgemein",
+      palette: "Seitenleiste ein-/ausklappen",
+      run: toggleCollapse,
+    },
     ...(
       [
         ["alt+d", "Fälligkeit", () => newTaskDialog?.toggleDue()],
@@ -411,6 +475,7 @@
       keys: ["?"],
       description: "Tastaturkürzel anzeigen",
       group: "Allgemein",
+      palette: "Tastaturkürzel anzeigen",
       inModal: true,
       run: () => (showShortcuts = !showShortcuts),
     },
@@ -587,12 +652,15 @@
       keys: ["v"],
       description: "Darstellung Liste/Kanban umschalten",
       group: "Ansichten",
+      palette: "Darstellung Liste/Kanban umschalten",
       when: () => boardCapable,
       run: () => setLayout(layout === "list" ? "board" : "list"),
     },
-    { keys: ["g i"], description: "Eingang", group: "Ansichten", run: () => goTo("inbox") },
-    { keys: ["g t"], description: "Heute", group: "Ansichten", run: () => goTo("today") },
-    { keys: ["g u"], description: "Geplant", group: "Ansichten", run: () => goTo("upcoming") },
+    { keys: ["g i"], description: "Eingang", group: "Ansichten", palette: "Gehe zu Eingang", run: () => goTo("inbox") },
+    { keys: ["g t"], description: "Heute", group: "Ansichten", palette: "Gehe zu Heute", run: () => goTo("today") },
+    { keys: ["g u"], description: "Geplant", group: "Ansichten", palette: "Gehe zu Geplant", run: () => goTo("upcoming") },
+    { keys: [], description: "Alle Tasks", group: "Ansichten", palette: "Gehe zu Alle Tasks", run: () => goTo("all") },
+    { keys: [], description: "Erledigt", group: "Ansichten", palette: "Gehe zu Erledigt", run: () => goTo("completed") },
   );
 </script>
 
@@ -768,7 +836,33 @@
           : undefined}
     onopenlist={(id) => router.navigate(id === lists.inbox?.id ? { view: "inbox" } : { view: "list", listId: id })}
     defaultDue={route.view === "today" ? todayPlus(0) : null}
+    initialText={newTaskText}
     onclose={() => (showNewTask = false)}
+  />
+{/if}
+{#if showPalette && CommandPalette}
+  <CommandPalette
+    {lists}
+    commands={paletteCommands}
+    recent={recentTasks}
+    onopentask={openFromPalette}
+    onopenlist={(list) => {
+      router.navigate(list.isInbox ? { view: "inbox" } : { view: "list", listId: list.id });
+      selectedId = openId = null;
+    }}
+    onnewtask={(text) => {
+      newTaskText = text;
+      showNewTask = true;
+    }}
+    onclose={() => (showPalette = false)}
+  />
+{/if}
+{#if showNewList}
+  <ListNameDialog
+    title="Neue Liste"
+    submitLabel="Anlegen"
+    onsubmit={(name) => createList(name)}
+    onclose={() => (showNewList = false)}
   />
 {/if}
 {#if listMenu}

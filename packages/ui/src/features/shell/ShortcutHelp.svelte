@@ -9,10 +9,11 @@
 
   let { shortcuts, onclose }: Props = $props();
 
-  /** Gruppen in Reihenfolge des ersten Auftretens. */
+  /** Gruppen in Reihenfolge des ersten Auftretens; reine Palettenbefehle (ohne Taste) fehlen. */
+  const withKeys = $derived(shortcuts.filter((s) => s.keys.length > 0));
   const groups = $derived(
-    [...new Set(shortcuts.map((s) => s.group ?? "Allgemein"))].map(
-      (g) => [g, shortcuts.filter((s) => (s.group ?? "Allgemein") === g)] as const,
+    [...new Set(withKeys.map((s) => s.group ?? "Allgemein"))].map(
+      (g) => [g, withKeys.filter((s) => (s.group ?? "Allgemein") === g)] as const,
     ),
   );
 </script>

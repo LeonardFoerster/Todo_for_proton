@@ -352,6 +352,25 @@ export class FakeCoreClient implements CoreClient {
       return { items, nextCursor: end < rows.length ? String(end) : null };
     });
 
+  searchTasks = (text: string, limit: number) =>
+    this.run((): TaskSummaryDto[] => {
+      if (limit < 1 || limit > PAGE_LIMIT_MAX) throw new CoreClientError("validation", `search limit must be 1..=${PAGE_LIMIT_MAX}`);
+      const terms = text.toLowerCase().split(/\s+/).filter(Boolean);
+      if (terms.length === 0) return [];
+      // Wie im Core (`SearchQuery::rank`): alle Wörter in Titel oder Notiz; offen, Titeltreffer, Reihenfolge.
+      const order = byOrder(this.lists);
+      return [...this.rows.values()]
+        .flatMap((row) => {
+          const title = row.task.title.toLowerCase();
+          const notes = row.task.notes.toLowerCase();
+          if (!terms.every((t) => title.includes(t) || notes.includes(t))) return [];
+          return [{ row, done: row.task.status === "done", notesOnly: !terms.some((t) => title.includes(t)) }];
+        })
+        .sort((a, b) => Number(a.done) - Number(b.done) || Number(a.notesOnly) - Number(b.notesOnly) || order(a.row, b.row))
+        .slice(0, limit)
+        .map(({ row }) => summary(this.dto(row)));
+    });
+
   // --- Anmeldung & Sync ----------------------------------------------------------------------
 
   auth: CoreClient["auth"] = {

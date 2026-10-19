@@ -9,8 +9,8 @@
 //! - Sammelaktionen (ein Aufruf = eine Meldung): `complete_tasks`, `delete_tasks`, `move_tasks`,
 //!   `restore_tasks`, `set_dues`
 //!
-//! Lesende Commands (`list_*`, `get_task`, `ensure_inbox`, `auth_*`, `sync_*`, `app_ready`) melden
-//! nichts. Nachweis: `tests/commands.rs` (`only_writing_commands_trigger_a_sync`).
+//! Lesende Commands (`list_*`, `get_task`, `search_tasks`, `ensure_inbox`, `auth_*`, `sync_*`,
+//! `app_ready`) melden nichts. Nachweis: `tests/commands.rs` (`only_writing_commands_trigger_a_sync`).
 
 use tauri::State;
 use todo_core::api::dto::{
@@ -180,6 +180,15 @@ pub async fn list_tasks(
     page: PageRequestDto,
 ) -> Result<PageDto<TaskSummaryDto>> {
     Ok(state.api.list_tasks(query, page).await?)
+}
+
+#[tauri::command]
+pub async fn search_tasks(
+    state: State<'_, AppState>,
+    text: String,
+    limit: u32,
+) -> Result<Vec<TaskSummaryDto>> {
+    Ok(state.api.search_tasks(text, limit).await?)
 }
 
 // --- Anmeldung ---------------------------------------------------------------------------------

@@ -33,10 +33,12 @@
     onopenlist?: (listId: string) => void;
     /** Vorgabe ohne Angabe im Text (z. B. „heute“ in der Heute-Ansicht). */
     defaultDue?: DueDto | null;
+    /** Vorbelegter Text der Titelzeile (z. B. aus der Befehlspalette ohne Treffer). */
+    initialText?: string;
     onclose: () => void;
   }
 
-  let { lists, listId, shownListId, onopenlist, defaultDue = null, onclose }: Props = $props();
+  let { lists, listId, shownListId, onopenlist, defaultDue = null, initialText = "", onclose }: Props = $props();
 
   const KEEP_OPEN_KEY = "tasks.new-task-keep-open";
   const PRIORITIES: { value: PriorityDto; label: string }[] = [
@@ -53,7 +55,8 @@
   let prioButton = $state<HTMLButtonElement>();
   let busy = false;
 
-  let value = $state("");
+  // svelte-ignore state_referenced_locally
+  let value = $state(initialText);
   let notes = $state("");
   let notesOpen = $state(false);
   let dueOpen = $state(false);

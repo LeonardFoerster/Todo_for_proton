@@ -19,6 +19,7 @@ const COMMANDS: &[&str] = &[
     "restore_tasks",
     "set_dues",
     "list_tasks",
+    "search_tasks",
     "auth_info",
     "auth_current",
     "auth_begin_login",

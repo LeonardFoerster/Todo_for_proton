@@ -293,6 +293,7 @@ fn only_writing_commands_trigger_a_sync() {
         json!({ "query": { "view": { "kind": "list", "listId": inbox["id"] } }, "page": { "limit": 10 } }),
         0,
     );
+    expect("search_tasks", json!({ "text": "a", "limit": 10 }), 0);
     expect("sync_status", json!({}), 0);
     expect("auth_info", json!({}), 0);
     expect("app_ready", json!({}), 0);

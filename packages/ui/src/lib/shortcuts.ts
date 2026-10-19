@@ -18,6 +18,11 @@ export interface Shortcut {
   when?: () => boolean;
   /** Auch aktiv, während ein modaler Zustand sperrt (z. B. Esc, ?). */
   inModal?: boolean;
+  /**
+   * Auch als Befehl in der Befehlspalette (P4-05), mit diesem Namen („Gehe zu Heute“). Einträge
+   * ohne `keys` erscheinen nur dort, nicht in der Kürzel-Übersicht.
+   */
+  palette?: string;
   run: (e: KeyboardEvent) => void;
 }
 

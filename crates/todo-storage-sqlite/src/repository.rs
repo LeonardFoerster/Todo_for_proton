@@ -6,8 +6,8 @@ use rusqlite::{params_from_iter, Connection, TransactionBehavior};
 use todo_core::{
     domain::{DeviceId, SortKey, Task, TaskId, TaskList, TaskListId},
     ports::{
-        Change, ChangeSet, CommitReceipt, EntityRef, Page, PageRequest, SmartView, TaskQuery,
-        TaskRepository, TaskSummary, PAGE_LIMIT_MAX,
+        Change, ChangeSet, CommitReceipt, EntityRef, Page, PageRequest, SearchQuery, SmartView,
+        TaskQuery, TaskRepository, TaskSummary, PAGE_LIMIT_MAX,
     },
     sync::{self, EntityState, Op, RemoteBatch, RemoteReceipt, ReplicaStore},
     CoreError, CoreResult,
@@ -20,7 +20,7 @@ use crate::{
         read_list, read_sort_key, read_summary, read_task, write_list, write_task, LIST_COLUMNS,
         TASK_COLUMNS,
     },
-    query::{list_tasks_sql, Position},
+    query::{list_tasks_sql, search_tasks_sql, Position},
     sync_store::{self, SqliteReplica},
 };
 
@@ -158,6 +158,25 @@ impl TaskRepository for SqliteTaskRepository {
                     Position::of(&items[limit - 1], &query.view).encode()
                 });
                 Ok(Page { items, next_cursor })
+            })
+            .await
+    }
+
+    async fn search_tasks(&self, query: &SearchQuery) -> CoreResult<Vec<TaskSummary>> {
+        let terms = query.terms()?;
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
+        let (sql, params) = search_tasks_sql(&terms, query.limit);
+        self.db
+            .call(move |conn| {
+                let mut stmt = conn.prepare_cached(&sql).map_err(storage)?;
+                let mut rows = stmt.query(params_from_iter(params)).map_err(storage)?;
+                let mut items = Vec::new();
+                while let Some(row) = rows.next().map_err(storage)? {
+                    items.push(read_summary(row)?);
+                }
+                Ok(items)
             })
             .await
     }
@@ -373,6 +392,9 @@ mod tests {
             page: PageRequest,
         ) -> CoreResult<Page<TaskSummary>> {
             self.repo.list_tasks(query, page).await
+        }
+        async fn search_tasks(&self, query: &SearchQuery) -> CoreResult<Vec<TaskSummary>> {
+            self.repo.search_tasks(query).await
         }
         async fn last_sort_key(&self, list_id: TaskListId) -> CoreResult<Option<SortKey>> {
             self.repo.last_sort_key(list_id).await

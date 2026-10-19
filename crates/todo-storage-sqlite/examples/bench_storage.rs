@@ -5,7 +5,7 @@
 //! ```
 //!
 //! Ziele (`architecture.md` §6): erste Seite (50) der Inbox < 5 ms, einzelner Commit < 2 ms,
-//! Sammelaktionen mit 1 000 IDs < 50 ms (P0-01).
+//! Sammelaktionen mit 1 000 IDs < 50 ms (P0-01), Suche (50 Treffer) < 16 ms (P4-05).
 
 use std::{
     sync::Arc,
@@ -19,7 +19,7 @@ use todo_core::{
         CoreApi,
     },
     domain::{SortKey, Task, TaskList, Timestamp},
-    ports::{ChangeSet, Clock, PageRequest, SmartView, TaskQuery, TaskRepository},
+    ports::{ChangeSet, Clock, PageRequest, SearchQuery, SmartView, TaskQuery, TaskRepository},
 };
 use todo_storage_sqlite::SqliteTaskRepository;
 
@@ -146,6 +146,24 @@ fn main() {
         }),
         None,
     );
+
+    // --- Suche (P4-05, ADR-027) ------------------------------------------------------------------
+    let search = |text: &str| {
+        let query = SearchQuery {
+            text: text.into(),
+            limit: 50,
+        };
+        block_on(repo.search_tasks(&query)).expect("search")
+    };
+    for (name, text) in [
+        ("Suche: Wort in allen 10 000 („task“)", "task"),
+        ("Suche: seltenes Teilwort („9-99“)", "9-99"),
+        ("Suche: zwei Wörter („task 7-12“)", "task 7-12"),
+        ("Suche: kurzes Wort, LIKE („9-“)", "9-"),
+        ("Suche: kein Treffer („xyz“)", "xyz"),
+    ] {
+        report(name, measure(RUNS, || drop(search(text))), Some(ms(16)));
+    }
 
     // --- Schreiben -----------------------------------------------------------------------------
     let mut moving = tasks[TASKS / 2].clone();

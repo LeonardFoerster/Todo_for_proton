@@ -282,4 +282,17 @@ describe("FakeCoreClient", () => {
     });
     expect((await core.getTask(a.id)).due?.kind, "nichts geschrieben").toBe("dateTime");
   });
+
+  it("searches title and notes like the core (all words, open and title hits first)", async () => {
+    const { core } = await setup();
+    await core.createTask({ title: "Notiz", notes: "Projekt Alpha" });
+    const done = await core.createTask({ title: "Projekt alt" });
+    await core.createTask({ title: "Übungsblatt Projekt" });
+    await core.completeTask(done.id, true);
+    expect((await core.searchTasks("projekt", 10)).map((t) => t.title)).toEqual(["Übungsblatt Projekt", "Notiz", "Projekt alt"]);
+    expect((await core.searchTasks("PROJEKT alpha", 10)).map((t) => t.title)).toEqual(["Notiz"]);
+    expect((await core.searchTasks("übung", 10)).map((t) => t.title)).toEqual(["Übungsblatt Projekt"]);
+    expect(await core.searchTasks("  ", 10)).toEqual([]);
+    await expect(core.searchTasks("x", 0)).rejects.toMatchObject({ kind: "validation" });
+  });
 });

@@ -37,8 +37,8 @@ pub use remote_store::{
     Revision,
 };
 pub use repository::{
-    Change, ChangeSet, CommitReceipt, EntityRef, Page, PageRequest, SmartView, TaskQuery,
-    TaskRepository, TaskSummary, PAGE_LIMIT_MAX,
+    Change, ChangeSet, CommitReceipt, EntityRef, Page, PageRequest, SearchQuery, SmartView,
+    TaskQuery, TaskRepository, TaskSummary, PAGE_LIMIT_MAX, SEARCH_TEXT_MAX_CHARS,
 };
 
 /// `Send` auf nativen Zielen, leer auf wasm32.

@@ -26,6 +26,7 @@
     "allow-restore-tasks",
     "allow-set-dues",
     "allow-list-tasks",
+    "allow-search-tasks",
     "allow-auth-info",
     "allow-auth-current",
     "allow-auth-begin-login",
