@@ -3,7 +3,8 @@ import type { Route } from "./router.svelte";
 import { addDays, isoDate, parseIsoDate } from "./local-day";
 
 /**
- * Abschnitte in Sammelansichten (P4): „Heute“ teilt in Überfällig/Heute, „Geplant“ nach Tagen.
+ * Abschnitte in Sammelansichten (P4): „Heute“ teilt in Überfällig/Heute, „Geplant“ nach Tagen,
+ * „Erledigt“ nach dem Tag des Abhakens.
  * Die Eingabe ist bereits sortiert (Core + `compareInView`); hier wird nur aufgeteilt – O(n) je
  * Änderung der Zeilen, nie je Tastendruck.
  */
@@ -32,11 +33,14 @@ export type Entry<T> = GroupHeader | TaskEntry<T>;
 
 interface Dated {
   due: DueDto | null;
+  /** Nur „Erledigt“ (ISO-8601). */
+  completedAt?: string | null;
 }
 
 const WEEKDAY_DATE = new Intl.DateTimeFormat("de-DE", { weekday: "short", day: "numeric", month: "short" });
 const MONTH = new Intl.DateTimeFormat("de-DE", { month: "long" });
 const MONTH_YEAR = new Intl.DateTimeFormat("de-DE", { month: "long", year: "numeric" });
+const WEEKDAY_LONG = new Intl.DateTimeFormat("de-DE", { weekday: "long" });
 
 /** Ist die Fälligkeit verstrichen? Wie `dueLabel`: Datum ab dem Folgetag, Uhrzeit sobald vorbei. */
 export function isOverdue(due: DueDto, now: Date = new Date()): boolean {
@@ -81,6 +85,7 @@ function upcomingLabel(g: { id: string; day: Date }, today: Date): string {
 export function groupEntries<T extends Dated>(items: readonly T[], route: Route, now: Date = new Date()): Entry<T>[] | null {
   if (route.view === "today") return groupToday(items, now);
   if (route.view === "upcoming") return groupUpcoming(items, now);
+  if (route.view === "completed") return groupCompleted(items, now);
   return null;
 }
 
@@ -117,6 +122,51 @@ function groupUpcoming<T extends Dated>(items: readonly T[], now: Date): Entry<T
     }
     header.count++;
     out.push({ kind: "task", task, dueMode: g.group === "day" ? "time" : "full" });
+  }
+  return out;
+}
+
+/** Montag der Woche von `day` (lokal, Mitternacht). */
+function mondayOf(day: Date): Date {
+  return addDays(day, -((day.getDay() + 6) % 7));
+}
+
+/**
+ * Abschnitt in „Erledigt“: Heute, Gestern, übrige Tage dieser Woche („Montag“), Letzte Woche, dann
+ * Monate (fremdes Jahr mit Jahreszahl). Nur Schlüssel und Art; Text je Überschrift.
+ */
+function completedGroup(at: Date, today: Date): { id: string; day: Date } {
+  const day = new Date(at.getFullYear(), at.getMonth(), at.getDate());
+  const diff = Math.round((today.getTime() - day.getTime()) / 86_400_000);
+  if (diff <= 0) return { id: "today", day };
+  if (diff === 1) return { id: "yesterday", day };
+  const monday = mondayOf(today);
+  if (day >= monday) return { id: `weekday-${isoDate(day)}`, day };
+  if (day >= addDays(monday, -7)) return { id: "last-week", day };
+  return { id: `${day.getFullYear()}-${day.getMonth() + 1}`, day };
+}
+
+function completedLabel(g: { id: string; day: Date }, today: Date): string {
+  if (g.id === "today") return "Heute";
+  if (g.id === "yesterday") return "Gestern";
+  if (g.id === "last-week") return "Letzte Woche";
+  if (g.id.startsWith("weekday-")) return WEEKDAY_LONG.format(g.day);
+  return (g.day.getFullYear() === today.getFullYear() ? MONTH : MONTH_YEAR).format(g.day);
+}
+
+/** Eingabe ist nach `completedAt` absteigend sortiert (Core), Abschnitte liegen also am Stück. */
+function groupCompleted<T extends Dated>(items: readonly T[], now: Date): Entry<T>[] {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const out: Entry<T>[] = [];
+  let header = null as GroupHeader | null;
+  for (const task of items) {
+    const g = completedGroup(task.completedAt ? new Date(task.completedAt) : now, today);
+    if (header?.id !== g.id) {
+      header = { kind: "header", id: g.id, group: "later", label: completedLabel(g, today), count: 0 };
+      out.push(header);
+    }
+    header.count++;
+    out.push({ kind: "task", task, dueMode: "full" });
   }
   return out;
 }

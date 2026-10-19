@@ -65,7 +65,7 @@
     if (!entry) flat.set(task, (entry = { kind: "task", task, dueMode: "full" }));
     return entry;
   }
-  const grouped = view.view === "today" || view.view === "upcoming";
+  const grouped = view.view === "today" || view.view === "upcoming" || view.view === "completed";
   /** Eintrags-Index je Task-ID, gebaut je `entries`-Array (nicht je Tastendruck). */
   let entryIndex = new Map<string, number>();
   let entryIndexOf: Entry<TaskSummaryDto>[] | null = null;

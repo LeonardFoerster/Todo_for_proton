@@ -97,6 +97,23 @@ export async function completeManyWithUndo(
 }
 
 /**
+ * Erledigte Tasks, die vor `cutoff` abgehakt wurden (für „Erledigte aufräumen“, P4-06). Lädt die
+ * Ansicht „Erledigt“ seitenweise – nur bei dieser Aktion, nie beim Tippen.
+ */
+export async function completedBefore(client: CoreClient, cutoff: Date): Promise<TaskSummaryDto[]> {
+  const limit = 500;
+  const before = cutoff.toISOString();
+  const out: TaskSummaryDto[] = [];
+  let cursor: string | null = null;
+  do {
+    const page = await client.listTasks({ view: { kind: "completed" } }, { cursor, limit });
+    for (const t of page.items) if (t.completedAt && t.completedAt < before) out.push(t);
+    cursor = page.nextCursor;
+  } while (cursor);
+  return out;
+}
+
+/**
  * Setzt je Task eine neue Fälligkeit (`next` aus dem bisherigen Stand, z. B. Uhrzeit behalten) –
  * ein Aufruf je 2 000 – und bietet „Rückgängig“: schreibt die alten Werte zurück. `label` ergänzt
  * den Toast („auf heute verschoben“). Liefert die geänderten Tasks bzw. `null` bei Fehler.

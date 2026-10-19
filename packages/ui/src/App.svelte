@@ -47,7 +47,9 @@
   import { SyncState } from "./lib/sync.svelte";
   import { todayPlus } from "./lib/format-date";
   import { routeListId, routeTitle } from "./lib/views";
-  import { deleteManyWithUndo } from "./lib/task-actions";
+  import { completedBefore, deleteManyWithUndo } from "./lib/task-actions";
+  import CleanupCompletedDialog from "./features/task-list/CleanupCompletedDialog.svelte";
+  import { addDays } from "./lib/local-day";
   import { followSystemTheme } from "./theme/theme";
   import "./tokens/tokens.css";
 
@@ -97,6 +99,9 @@
   let showPalette = $state(false);
   let paletteCommands = $state.raw<PaletteCommand[]>([]);
   let showNewList = $state(false);
+  /** „Erledigte aufräumen“ (P4-06): Menü der Ansicht und Bestätigung. */
+  let completedMenu = $state<{ x: number; y: number } | null>(null);
+  let cleanup = $state<{ ids: string[]; cutoff: Date } | null>(null);
   /** Zuletzt geöffnete Tasks dieser Sitzung (neueste zuerst, nur im Speicher). */
   let recentTasks = $state.raw<RecentTask[]>([]);
   let newTaskDialog = $state<NewTaskDialog>();
@@ -176,6 +181,28 @@
     newTaskText = "";
     drawerOpen = false;
     showNewTask = true;
+  }
+
+  // --- Erledigte aufräumen (P4-06) ------------------------------------------------------------
+
+  const CLEANUP_DAYS = 30;
+
+  async function startCleanup() {
+    const now = new Date();
+    const cutoff = addDays(new Date(now.getFullYear(), now.getMonth(), now.getDate()), -CLEANUP_DAYS);
+    try {
+      const old = await completedBefore(client, cutoff);
+      if (old.length === 0) toasts.show({ message: `Keine erledigten Tasks älter als ${CLEANUP_DAYS} Tage.` });
+      else cleanup = { ids: old.map((t) => t.id), cutoff };
+    } catch (e) {
+      toasts.show({ message: `Nicht geladen: ${(e as Error).message}`, tone: "danger" });
+    }
+  }
+
+  function confirmCleanup() {
+    const ids = cleanup?.ids ?? [];
+    cleanup = null;
+    if (ids.length > 0) void deleteManyWithUndo(client, ids);
   }
 
   // --- Befehlspalette (P4-05) -----------------------------------------------------------------
@@ -408,7 +435,7 @@
   }
 
   shortcuts.setModal(
-    () => showShortcuts || showSettings || showNewTask || !!deleteTarget || !!renameDialog || !!duePrompt || showPalette || showNewList,
+    () => showShortcuts || showSettings || showNewTask || !!deleteTarget || !!renameDialog || !!duePrompt || showPalette || showNewList || !!cleanup,
   );
   shortcuts.register(
     {
@@ -777,6 +804,16 @@
               onclick={(e) => openListMenuAt(currentList!, e.currentTarget)}
             />
           {/if}
+          {#if route.view === "completed"}
+            <IconButton
+              label="Aktionen für Erledigt"
+              icon={Ellipsis}
+              onclick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                completedMenu = { x: r.left, y: r.bottom + 4 };
+              }}
+            />
+          {/if}
           <IconButton label="Tastaturkürzel" shortcut="?" icon={Keyboard} onclick={() => (showShortcuts = true)} />
           <IconButton label="Einstellungen" icon={Settings} onclick={() => void openSettings()} />
         </span>
@@ -855,6 +892,30 @@
       showNewTask = true;
     }}
     onclose={() => (showPalette = false)}
+  />
+{/if}
+{#if completedMenu}
+  <Menu
+    label="Aktionen für Erledigt"
+    items={[
+      {
+        label: `Erledigte älter als ${CLEANUP_DAYS} Tage löschen…`,
+        icon: Trash,
+        danger: true,
+        action: () => void startCleanup(),
+      },
+    ]}
+    x={completedMenu.x}
+    y={completedMenu.y}
+    onclose={() => (completedMenu = null)}
+  />
+{/if}
+{#if cleanup}
+  <CleanupCompletedDialog
+    count={cleanup.ids.length}
+    cutoff={cleanup.cutoff}
+    onconfirm={confirmCleanup}
+    onclose={() => (cleanup = null)}
   />
 {/if}
 {#if showNewList}

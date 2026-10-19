@@ -106,3 +106,52 @@ describe("groupEntries – Geplant", () => {
     ]);
   });
 });
+
+describe("groupEntries – Erledigt", () => {
+  // Montag, 19.10.2026: diese Woche ab Mo 19.10., letzte Woche Mo 12.–So 18.10.
+  const done = (title: string, at: Date) => ({ title, due: null, completedAt: at.toISOString() });
+  const day = (m: number, d: number, h = 10, y = 2026) => new Date(y, m - 1, d, h);
+
+  it("groups today, yesterday, last week and months, newest first", () => {
+    const items = [
+      done("heute", day(10, 19, 9)),
+      done("gestern", day(10, 18)),
+      done("sa", day(10, 17)),
+      done("mo davor", day(10, 12)),
+      done("anfang okt", day(10, 2)),
+      done("sept", day(9, 30)),
+      done("2025", day(12, 24, 10, 2025)),
+    ];
+    expect(show(groupEntries(items, { view: "completed" }, now))).toEqual([
+      "# Heute (1)",
+      "heute/full",
+      "# Gestern (1)",
+      "gestern/full",
+      "# Letzte Woche (2)",
+      "sa/full",
+      "mo davor/full",
+      "# Oktober (1)",
+      "anfang okt/full",
+      "# September (1)",
+      "sept/full",
+      "# Dezember 2025 (1)",
+      "2025/full",
+    ]);
+  });
+
+  it("names the other days of this week", () => {
+    const thursday = new Date(2026, 9, 22, 12);
+    const items = [done("do", day(10, 22, 8)), done("mi", day(10, 21)), done("di", day(10, 20)), done("mo", day(10, 19))];
+    expect(show(groupEntries(items, { view: "completed" }, thursday))).toEqual([
+      "# Heute (1)",
+      "do/full",
+      "# Gestern (1)",
+      "mi/full",
+      "# Dienstag (1)",
+      "di/full",
+      "# Montag (1)",
+      "mo/full",
+    ]);
+  });
+});
+
