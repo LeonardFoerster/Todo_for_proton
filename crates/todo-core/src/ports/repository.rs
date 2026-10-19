@@ -172,8 +172,10 @@ pub enum SmartView {
 
 /// Abfrage für [`TaskRepository::list_tasks`]: eine Ansicht plus optionale UND-Filter.
 ///
-/// Sortierung: [`SmartView::Completed`] nach `completed_at` absteigend, alle anderen nach
-/// `sort_key` aufsteigend; bei Gleichstand jeweils nach `id`.
+/// Sortierung: [`SmartView::Completed`] nach `completed_at` absteigend; [`SmartView::Today`] und
+/// [`SmartView::Upcoming`] nach Fälligkeit ([`Due::sort_instant`](crate::domain::Due::sort_instant)
+/// zum Tag der Ansicht, ADR-026), dann `sort_key`; alle anderen nach `sort_key` aufsteigend; bei
+/// Gleichstand jeweils nach `id`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TaskQuery {
     pub view: SmartView,

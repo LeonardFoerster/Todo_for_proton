@@ -12,7 +12,7 @@ use std::{
 
 use self::dto::{
     list_id, task_id, CreateTaskDto, MoveListTargetDto, MoveTargetDto, PageDto, PageRequestDto,
-    TaskDto, TaskListDto, TaskPatchDto, TaskQueryDto, TaskSummaryDto,
+    TaskDto, TaskDueDto, TaskListDto, TaskPatchDto, TaskQueryDto, TaskSummaryDto,
 };
 use crate::{
     app::{
@@ -21,7 +21,8 @@ use crate::{
         DeleteTaskInput, DeleteTaskList, DeleteTaskListInput, DeleteTasks, DeleteTasksInput, Deps,
         EnsureInbox, MoveTask, MoveTaskInput, MoveTaskList, MoveTaskListInput, MoveTasks,
         MoveTasksInput, RenameTaskList, RenameTaskListInput, ReopenTask, ReopenTaskInput,
-        RestoreTasks, RestoreTasksInput, TaskPatch, UpdateTask, UpdateTaskInput,
+        RestoreTasks, RestoreTasksInput, SetDues, SetDuesInput, TaskPatch, UpdateTask,
+        UpdateTaskInput,
     },
     domain::{DeviceId, SortKey, Task, TaskId, TaskList, TaskListId, TaskParts},
     ports::{
@@ -301,6 +302,24 @@ impl CoreApi {
         };
         Ok(dtos(
             &MoveTasks::new(self.deps.clone()).execute(input).await?,
+        ))
+    }
+
+    /// Setzt je Task eine eigene Fälligkeit (z. B. „Alle auf heute" mit Uhrzeit je Task, oder
+    /// Rückgängig mit den alten Werten); liefert die tatsächlich geänderten.
+    ///
+    /// # Errors
+    /// `Validation` (ID, Fälligkeit, Obergrenze) – dann ist nichts geschrieben.
+    pub async fn set_dues(&self, dues: Vec<TaskDueDto>) -> CoreResult<Vec<TaskDto>> {
+        check_bulk_len(dues.len())?;
+        let dues = dues
+            .into_iter()
+            .map(|d| Ok((task_id(&d.id)?, d.due.map(TryInto::try_into).transpose()?)))
+            .collect::<CoreResult<_>>()?;
+        Ok(dtos(
+            &SetDues::new(self.deps.clone())
+                .execute(SetDuesInput { dues })
+                .await?,
         ))
     }
 
@@ -650,6 +669,21 @@ mod bulk_tests {
         assert_eq!(events, changed(&s.ids[..2]));
         assert_eq!(fields(&ops), vec![Some(FieldName::SortKey); 2]);
 
+        let dues: Vec<TaskDueDto> = s
+            .ids
+            .iter()
+            .map(|id| TaskDueDto {
+                id: id.clone(),
+                due: Some(dto::DueDto::Date {
+                    date: "2026-10-20".into(),
+                }),
+            })
+            .collect();
+        assert_eq!(block_on(s.api.set_dues(dues)).unwrap().len(), 3);
+        let (events, ops) = s.take();
+        assert_eq!(events, changed(&s.ids));
+        assert_eq!(fields(&ops), vec![Some(FieldName::Due); 3]);
+
         let deleted = block_on(s.api.delete_tasks(s.ids.clone())).unwrap();
         assert_eq!(deleted.len(), 3);
         let (events, ops) = s.take();
@@ -775,6 +809,7 @@ mod tests {
         assert_send(api.ensure_inbox());
         assert_send(api.complete_tasks(Vec::new(), true));
         assert_send(api.delete_tasks(Vec::new()));
+        assert_send(api.set_dues(Vec::new()));
         assert_send(api.move_tasks(Vec::new(), MoveTargetDto::default()));
         assert_send(api.restore_tasks(Vec::new()));
         assert_send(api.move_task_list(String::new(), MoveListTargetDto::default()));

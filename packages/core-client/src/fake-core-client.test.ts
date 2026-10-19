@@ -259,4 +259,27 @@ describe("FakeCoreClient", () => {
     expect(await names(), "neue Liste ans Ende").toBe("Inbox,B,C,A,D");
     expect(d.sortKey > (await core.listTaskLists())[3].sortKey).toBe(true);
   });
+
+  it("sorts Today/Upcoming by due (all-day first) and sets dues in one call", async () => {
+    const { core } = await setup();
+    const a = await core.createTask({ title: "a" });
+    const b = await core.createTask({ title: "b" });
+    const c = await core.createTask({ title: "c" });
+    const events: ChangedEventDto[] = [];
+    core.onChange((e) => events.push(e));
+    const changed = await core.setDues([
+      { id: a.id, due: { kind: "dateTime", at: "2026-10-18T08:00:00.000Z", tz: "Europe/Berlin" } },
+      { id: b.id, due: { kind: "date", date: "2026-10-18" } },
+      { id: c.id, due: { kind: "date", date: "2026-10-16" } },
+      { id: "unbekannt", due: null },
+    ]);
+    expect(changed.map((t) => t.title)).toEqual(["a", "b", "c"]);
+    expect(events).toHaveLength(1);
+    expect(await titles(core, { view: { kind: "today", day } })).toEqual(["c", "b", "a"]);
+    expect(await core.setDues([{ id: b.id, due: { kind: "date", date: "2026-10-18" } }])).toEqual([]);
+    await expect(core.setDues([{ id: a.id, due: null }, { id: b.id, due: { kind: "date", date: "x" } }])).rejects.toMatchObject({
+      kind: "validation",
+    });
+    expect((await core.getTask(a.id)).due?.kind, "nichts geschrieben").toBe("dateTime");
+  });
 });

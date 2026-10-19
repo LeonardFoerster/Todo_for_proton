@@ -48,6 +48,7 @@ macro_rules! repository_contract_tests {
             rejects_invalid_limit_and_cursor,
             filter_inbox_and_list,
             filter_today_and_upcoming,
+            due_views_sorted_by_due,
             filter_completed_newest_first,
             filter_status_and_tag,
             summary_matches_task,
@@ -102,6 +103,7 @@ pub fn run_all<R: TaskRepository>(make: impl Fn() -> R) {
     rejects_invalid_limit_and_cursor(make());
     filter_inbox_and_list(make());
     filter_today_and_upcoming(make());
+    due_views_sorted_by_due(make());
     filter_completed_newest_first(make());
     filter_status_and_tag(make());
     summary_matches_task(make());
@@ -548,8 +550,51 @@ pub fn filter_today_and_upcoming<R: TaskRepository>(repo: R) {
     );
     assert_eq!(
         f.ids(TaskQuery::view(SmartView::Upcoming(today)), 2),
-        [t[2].id(), t[4].id()]
+        [t[4].id(), t[2].id()],
+        "nach Fälligkeit: 2 000 ms vor dem 18. (≈ 86 401 000 ms)"
     );
+}
+
+/// Heute/Geplant sortieren nach Fälligkeit (Ganztägiges als Tagesbeginn, vor Uhrzeiten desselben
+/// Tages), bei Gleichstand nach `sort_key`, dann `id` – auch über Seitengrenzen (ADR-026).
+pub fn due_views_sorted_by_due<R: TaskRepository>(repo: R) {
+    const DAY: i64 = 86_400_000;
+    let f = setup(repo);
+    let start = Timestamp::from_millis(100 * DAY);
+    let today = LocalDay::new(date(17), start, start.plus_millis(DAY)).expect("day");
+    let at = |ms: i64| Due::DateTime {
+        at: start.plus_millis(ms),
+        tz: "UTC".into(),
+    };
+    // Anlegereihenfolge = sort_key-Reihenfolge, absichtlich quer zur Fälligkeit.
+    let mut t = f.add_tasks(f.inbox.id(), 9);
+    let dues = [
+        at(DAY + 3_600_000), // 18., 01:00
+        Due::Date(date(20)),
+        Due::Date(date(18)), // ganztägig vor 01:00
+        at(-DAY),            // überfällig, 16. 00:00
+        Due::Date(date(17)),
+        Due::Date(date(15)), // ältestes
+        at(5_000),           // heute 00:00:05
+        Due::Date(date(18)), // gleicher Tag wie t[2]: danach (sort_key)
+        Due::Date(date(17)),
+    ];
+    for (task, due) in t.iter_mut().zip(dues) {
+        task.set_due(Some(due), &f.clock).expect("due");
+    }
+    f.save(&t);
+    for limit in [1, 2, 3, 10] {
+        assert_eq!(
+            f.ids(TaskQuery::view(SmartView::Today(today)), limit),
+            [t[5].id(), t[3].id(), t[4].id(), t[8].id(), t[6].id()],
+            "Heute, limit {limit}"
+        );
+        assert_eq!(
+            f.ids(TaskQuery::view(SmartView::Upcoming(today)), limit),
+            [t[2].id(), t[7].id(), t[0].id(), t[1].id()],
+            "Geplant, limit {limit}"
+        );
+    }
 }
 
 /// Completed: nur erledigte Tasks, zuletzt erledigte zuerst – auch über Seitengrenzen.

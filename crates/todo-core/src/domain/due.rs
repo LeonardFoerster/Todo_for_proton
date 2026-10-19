@@ -43,7 +43,18 @@ impl LocalDay {
     pub fn span(&self) -> Range<Timestamp> {
         self.start..self.end
     }
+
+    /// Ungefährer Beginn des lokalen Tages `date`: Beginn dieses Tages plus volle 24 Stunden je
+    /// Tag Abstand. Ohne Zonendaten weicht das an Tagen mit anderer UTC-Abweichung
+    /// (Zeitumstellung dazwischen) um deren Differenz ab – genug für die Sortierung (ADR-026).
+    #[must_use]
+    pub fn approx_start_of(&self, date: NaiveDate) -> Timestamp {
+        let days = (date - self.date).num_days();
+        self.start.plus_millis(days.saturating_mul(MILLIS_PER_DAY))
+    }
 }
+
+const MILLIS_PER_DAY: i64 = 86_400_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Due {
@@ -88,6 +99,16 @@ impl Due {
         }
     }
 
+    /// Sortierzeitpunkt in „Heute"/„Geplant" (ADR-026): der Zeitpunkt bzw. der (ungefähre)
+    /// Beginn des Tages, relativ zu `day`. Ganztägiges steht damit vor Uhrzeiten desselben Tages.
+    #[must_use]
+    pub fn sort_instant(&self, day: &LocalDay) -> Timestamp {
+        match self {
+            Self::Date(date) => day.approx_start_of(*date),
+            Self::DateTime { at, .. } => *at,
+        }
+    }
+
     /// Prüft die Invarianten und trimmt den Zonennamen.
     pub(crate) fn normalized(self) -> CoreResult<Self> {
         match self {
@@ -109,6 +130,23 @@ mod tests {
     }
 
     const NOW: Timestamp = Timestamp::from_millis(1_000_000);
+
+    #[test]
+    fn sort_instant_puts_all_day_first_and_follows_the_calendar() {
+        let start = Timestamp::from_millis(10 * MILLIS_PER_DAY);
+        let today = LocalDay::new(day(17), start, start.plus_millis(MILLIS_PER_DAY)).unwrap();
+        assert_eq!(Due::Date(day(17)).sort_instant(&today), start);
+        assert_eq!(
+            Due::Date(day(15)).sort_instant(&today),
+            start.plus_millis(-2 * MILLIS_PER_DAY)
+        );
+        let morning = Due::DateTime {
+            at: start.plus_millis(MILLIS_PER_DAY + 1),
+            tz: "UTC".into(),
+        };
+        assert!(Due::Date(day(18)).sort_instant(&today) < morning.sort_instant(&today));
+        assert!(morning.sort_instant(&today) < Due::Date(day(19)).sort_instant(&today));
+    }
 
     #[test]
     fn date_overdue_only_after_the_day() {

@@ -7,15 +7,15 @@
 //! - Tasks: `create_task`, `update_task` (Titel, Notizen, Priorität, Fälligkeit), `complete_task`
 //!   (abhaken/öffnen), `move_task` (Liste/Reihenfolge), `delete_task`
 //! - Sammelaktionen (ein Aufruf = eine Meldung): `complete_tasks`, `delete_tasks`, `move_tasks`,
-//!   `restore_tasks`
+//!   `restore_tasks`, `set_dues`
 //!
 //! Lesende Commands (`list_*`, `get_task`, `ensure_inbox`, `auth_*`, `sync_*`, `app_ready`) melden
 //! nichts. Nachweis: `tests/commands.rs` (`only_writing_commands_trigger_a_sync`).
 
 use tauri::State;
 use todo_core::api::dto::{
-    CreateTaskDto, MoveListTargetDto, MoveTargetDto, PageDto, PageRequestDto, TaskDto, TaskListDto,
-    TaskPatchDto, TaskQueryDto, TaskSummaryDto,
+    CreateTaskDto, MoveListTargetDto, MoveTargetDto, PageDto, PageRequestDto, TaskDto, TaskDueDto,
+    TaskListDto, TaskPatchDto, TaskQueryDto, TaskSummaryDto,
 };
 use todo_sync::SchedulerEvent;
 
@@ -152,6 +152,13 @@ pub async fn move_tasks(
     target: MoveTargetDto,
 ) -> Result<Vec<TaskDto>> {
     let tasks = state.api.move_tasks(ids, target).await?;
+    state.sync.local_change();
+    Ok(tasks)
+}
+
+#[tauri::command]
+pub async fn set_dues(state: State<'_, AppState>, dues: Vec<TaskDueDto>) -> Result<Vec<TaskDto>> {
+    let tasks = state.api.set_dues(dues).await?;
     state.sync.local_change();
     Ok(tasks)
 }

@@ -277,6 +277,11 @@ fn only_writing_commands_trigger_a_sync() {
         json!({ "ids": [a["id"], b["id"]], "target": { "listId": list["id"] } }),
         1,
     );
+    expect(
+        "set_dues",
+        json!({ "dues": [{ "id": a["id"], "due": { "kind": "date", "date": "2026-10-20" } }, { "id": b["id"], "due": null }] }),
+        1,
+    );
     let deleted = expect("delete_tasks", json!({ "ids": [a["id"]] }), 1);
     expect("restore_tasks", json!({ "tasks": deleted }), 1);
     expect("delete_task", json!({ "id": b["id"] }), 1);

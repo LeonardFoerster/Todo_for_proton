@@ -6,6 +6,8 @@
     icon: IconComponent;
     label: string;
     count?: string;
+    /** Davon überfällig (rot vor dem Zähler, P4-02). */
+    overdue?: string;
     active?: boolean;
     collapsed?: boolean;
     /** Eingeklappt statt Icon (unterscheidet Listen). */
@@ -23,6 +25,7 @@
     icon: Icon,
     label,
     count,
+    overdue,
     active = false,
     collapsed = false,
     monogram,
@@ -32,6 +35,8 @@
     ondragstart,
     dragging = false,
   }: Props = $props();
+
+  const hasOverdue = $derived(!!overdue && overdue !== "0");
 </script>
 
 <a
@@ -68,9 +73,10 @@
   {/if}
   {#if !collapsed}
     <span class="label">{label}</span>
-    {#if count && count !== "0"}<span class="count">{count}</span>{/if}
+    {#if hasOverdue}<span class="overdue"><span class="sr-only">überfällig:&nbsp;</span>{overdue}</span>{/if}
+    {#if count && count !== "0"}<span class="count">{#if hasOverdue}<span class="sr-only">, gesamt:&nbsp;</span>{/if}{count}</span>{/if}
   {:else if count && count !== "0"}
-    <span class="dot" aria-hidden="true"></span>
+    <span class="dot" class:alert={hasOverdue} aria-hidden="true"></span>
   {/if}
 </a>
 
@@ -107,6 +113,20 @@
     color: var(--color-text-muted);
     font-size: var(--text-xs);
     font-variant-numeric: tabular-nums;
+  }
+  .overdue {
+    color: var(--color-danger);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
+    font-variant-numeric: tabular-nums;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
   .active {
     background: var(--color-bg-selected);
@@ -171,5 +191,8 @@
     height: 6px;
     border-radius: var(--radius-full);
     background: var(--color-accent);
+  }
+  .dot.alert {
+    background: var(--color-danger);
   }
 </style>

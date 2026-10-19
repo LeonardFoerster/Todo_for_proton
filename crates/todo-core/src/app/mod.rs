@@ -17,6 +17,7 @@ mod move_tasks;
 mod rename_task_list;
 mod reopen_task;
 mod restore_tasks;
+mod set_dues;
 mod update_task;
 
 use std::{fmt, sync::Arc};
@@ -37,6 +38,7 @@ pub use move_tasks::{MoveTasks, MoveTasksInput};
 pub use rename_task_list::{RenameTaskList, RenameTaskListInput};
 pub use reopen_task::{ReopenTask, ReopenTaskInput};
 pub use restore_tasks::{RestoreTasks, RestoreTasksInput};
+pub use set_dues::{SetDues, SetDuesInput};
 pub use update_task::{TaskPatch, UpdateTask, UpdateTaskInput};
 
 use crate::{
@@ -104,7 +106,7 @@ pub(crate) async fn load_task(repo: &dyn TaskRepository, id: TaskId) -> CoreResu
 }
 
 /// Höchstzahl an Tasks pro Sammel-Aufruf (`CompleteTasks`, `DeleteTasks`, `MoveTasks`,
-/// `RestoreTasks`).
+/// `RestoreTasks`, `SetDues`).
 pub const BULK_LIMIT_MAX: usize = 2_000;
 
 /// Prüft die Obergrenze und entfernt doppelte IDs (erstes Vorkommen bleibt).

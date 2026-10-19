@@ -10,6 +10,7 @@ import type {
   SessionDto,
   SyncStatusDto,
   TaskDto,
+  TaskDueDto,
   TaskListDto,
   TaskPatchDto,
   TaskQueryDto,
@@ -69,6 +70,8 @@ export interface CoreClient {
   moveTasks(ids: string[], target: MoveTargetDto): Promise<TaskDto[]>;
   /** Kopien gelöschter Tasks mit **neuen** IDs, alle Felder, alte Position (Rückgängig). */
   restoreTasks(tasks: TaskDto[]): Promise<TaskDto[]>;
+  /** Je Task eine eigene Fälligkeit (`null` = entfernen); Tasks mit diesem Wert fehlen im Ergebnis. */
+  setDues(dues: TaskDueDto[]): Promise<TaskDto[]>;
 
   auth: AuthClient;
   sync: SyncClient;

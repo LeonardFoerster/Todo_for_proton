@@ -24,6 +24,7 @@
     "allow-delete-tasks",
     "allow-move-tasks",
     "allow-restore-tasks",
+    "allow-set-dues",
     "allow-list-tasks",
     "allow-auth-info",
     "allow-auth-current",

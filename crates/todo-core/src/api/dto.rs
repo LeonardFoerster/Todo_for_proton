@@ -363,6 +363,15 @@ pub struct MoveTargetDto {
     pub before: Option<String>,
 }
 
+/// Neue Fälligkeit einer Task für `set_dues` (`due: null` = entfernen).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TaskDueDto {
+    pub id: String,
+    pub due: Option<DueDto>,
+}
+
 /// Ziel beim Umsortieren einer Liste (Semantik wie `MoveTaskListInput`; Nachbarn sind Listen-IDs).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]

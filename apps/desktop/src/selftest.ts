@@ -1676,6 +1676,8 @@ const p4due: Step[] = [
   [
     "Uhrzeit setzen, Datum ändern, Uhrzeit bleibt",
     async (client) => {
+      location.hash = "#/inbox";
+      await until("Eingang", () => heading() === "Eingang");
       const input = await openNewTask();
       type(input, "Termin morgen um 14:00");
       key(input, "Enter");
@@ -1705,7 +1707,35 @@ const p4due: Step[] = [
   ],
 ];
 
-const SUITES: Record<string, Step[]> = { p002, p3new, p4due, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
+// P4-02: „Heute“ mit Abschnitt „Überfällig“; „Alle auf heute“ ist ein `set_dues` über die echte IPC.
+const p4today: Step[] = [
+  [
+    "Drei überfällige → „Alle auf heute“ → Abschnitt weg",
+    async (client) => {
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const ago = (days: number) => {
+        const d = new Date();
+        d.setDate(d.getDate() - days);
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      };
+      for (const [title, days] of [["Ü1", 1], ["Ü2", 3], ["Ü3", 9]] as const) {
+        await client.createTask({ title, due: { kind: "date", date: ago(days) } });
+      }
+      location.hash = "#/today";
+      await until("Abschnitt Überfällig", () => [...document.querySelectorAll(".heading .label")].some((e) => e.textContent === "Überfällig"));
+      const order = [...document.querySelectorAll('[role="option"] .title')].map((e) => e.textContent).join(",");
+      if (order !== "Ü3,Ü2,Ü1") throw new Error(`Reihenfolge ${order}`);
+      await click("button", "Alle auf heute");
+      await until("Abschnitt weg", () => !document.querySelector(".heading"), 5000);
+      const all = await client.listTasks({ view: { kind: "today", day: { date: ago(0), start: new Date(new Date().setHours(0, 0, 0, 0)).toISOString(), end: new Date(new Date().setHours(24, 0, 0, 0)).toISOString() } } }, { limit: 50 });
+      const moved = all.items.filter((t) => t.title.startsWith("Ü"));
+      if (moved.length !== 3 || moved.some((t) => t.due?.kind !== "date" || t.due.date !== ago(0))) throw new Error(JSON.stringify(moved.map((t) => t.due)));
+      return "3 Tasks auf heute";
+    },
+  ],
+];
+
+const SUITES: Record<string, Step[]> = { p002, p3new, p4due, p4today, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
   p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */
