@@ -14,6 +14,8 @@ describe("ShortcutRegistry", () => {
     expect(comboOf(new KeyboardEvent("keydown", { key: "ArrowUp", altKey: true }))).toBe("alt+arrowup");
     expect(comboOf(new KeyboardEvent("keydown", { key: " " }))).toBe("space");
     expect(comboOf(new KeyboardEvent("keydown", { key: "?", shiftKey: true }))).toBe("?");
+    expect(comboOf(new KeyboardEvent("keydown", { key: "T", shiftKey: true }))).toBe("shift+t");
+    expect(comboOf(new KeyboardEvent("keydown", { key: "T" }))).toBe("t"); // Feststelltaste
   });
 
   it("runs matching shortcuts and prevents the default", () => {

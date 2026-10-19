@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { CoreClient } from "@tasks/core-client";
+  import type { CoreClient, DueDto } from "@tasks/core-client";
   import { onMount, tick, untrack } from "svelte";
   import IconButton from "./components/IconButton.svelte";
   import Toaster from "./components/Toaster.svelte";
@@ -14,6 +14,7 @@
   import {
     ArrowDown,
     ArrowUp,
+    CalendarDays,
     CircleCheck,
     Ellipsis,
     FolderInput,
@@ -26,7 +27,10 @@
     SquareKanban,
     Trash,
     Undo,
+    X,
   } from "./icons";
+  import DuePrompt from "./features/due/DuePrompt.svelte";
+  import { applyDue, dueChoices, type DueTarget } from "./features/due/due-actions";
   import Board from "./features/board/Board.svelte";
   import Menu, { type MenuItem } from "./components/Menu.svelte";
   import DeleteListDialog from "./features/lists/DeleteListDialog.svelte";
@@ -76,6 +80,9 @@
   let renamingId = $state<string | null>(null);
   let renameDialog = $state<TaskListDto | null>(null);
   let deleteTarget = $state<TaskListDto | null>(null);
+  /** Menü „Fälligkeit“ bzw. Eingabe „Datum wählen…“ für diese Tasks (P4-04). */
+  let dueMenu = $state<{ targets: DueTarget[]; x: number; y: number } | null>(null);
+  let duePrompt = $state<DueTarget[] | null>(null);
   let showSettings = $state(false);
   /** Einstellungen/Login werden erst bei Bedarf geladen (eigener Chunk). */
   let SettingsDialog = $state<typeof SettingsDialogType | null>(null);
@@ -211,6 +218,41 @@
     taskList?.openMoveMenu(rect?.left ?? 0, (rect?.bottom ?? 0) + 4);
   }
 
+  // --- Fälligkeit (P4-04) ---------------------------------------------------------------------
+
+  /** Worauf T/Umschalt+T/D wirken: Board-Cursor, sonst die Auswahl, sonst die fokussierte Zeile. */
+  function dueTargets(): DueTarget[] {
+    if (showBoard) {
+      const card = board?.cursorTask();
+      return card ? [card] : [];
+    }
+    if (hasSelection()) return taskList?.selectedTasks() ?? [];
+    const task = selecting() ? undefined : selected();
+    return task ? [task] : [];
+  }
+
+  function setDue(targets: DueTarget[], due: DueDto | null) {
+    if (targets.length > 0) void applyDue(client, targets, due);
+  }
+
+  /** Menü „Fälligkeit“ unter dem Button der Auswahlleiste bzw. an der fokussierten Zeile/Karte. */
+  function openDueMenu(targets = dueTargets(), at?: { x: number; y: number }) {
+    if (targets.length === 0) return;
+    const anchor = hasSelection() ? document.querySelector("[data-due-button]") : document.activeElement;
+    const rect = anchor?.getBoundingClientRect();
+    dueMenu = { targets, x: at?.x ?? rect?.left ?? 0, y: at?.y ?? (rect?.bottom ?? 0) + 4 };
+  }
+
+  function dueMenuItems(targets: DueTarget[]): MenuItem[] {
+    const shortcut = { today: "T", tomorrow: "Umschalt+T" } as Record<string, string | undefined>;
+    const items: MenuItem[] = dueChoices()
+      .filter((c) => c.id !== "none")
+      .map((c) => ({ id: c.id, label: c.label, icon: CalendarDays, shortcut: shortcut[c.id], action: () => setDue(targets, c.due) }));
+    items.push({ label: "Datum wählen…", icon: CalendarDays, action: () => (duePrompt = targets) });
+    if (targets.some((t) => t.due)) items.push({ label: "Fälligkeit entfernen", icon: X, action: () => setDue(targets, null) });
+    return items;
+  }
+
   /** Auswahl verschieben; ohne Auswahl die erste bzw. letzte Zeile. */
   function selectBy(delta: -1 | 1) {
     const items = taskList?.items() ?? [];
@@ -315,7 +357,7 @@
     else selectedId = null;
   }
 
-  shortcuts.setModal(() => showShortcuts || showSettings || showNewTask || !!deleteTarget || !!renameDialog);
+  shortcuts.setModal(() => showShortcuts || showSettings || showNewTask || !!deleteTarget || !!renameDialog || !!duePrompt);
   shortcuts.register(
     {
       keys: ["shift+f10", "contextmenu"],
@@ -448,6 +490,28 @@
       run: () => void taskList?.deleteSelected(),
     },
     { keys: ["m"], description: "Ausgewählte verschieben nach…", group: "Auswahl", when: hasSelection, run: openMoveMenu },
+    // Fälligkeit (P4-04): fokussierte Zeile/Karte oder die Auswahl; eine Uhrzeit bleibt.
+    {
+      keys: ["t"],
+      description: "Fällig heute",
+      group: "Fälligkeit",
+      when: () => dueTargets().length > 0,
+      run: () => setDue(dueTargets(), todayPlus(0)),
+    },
+    {
+      keys: ["shift+t"],
+      description: "Fällig morgen",
+      group: "Fälligkeit",
+      when: () => dueTargets().length > 0,
+      run: () => setDue(dueTargets(), todayPlus(1)),
+    },
+    {
+      keys: ["d"],
+      description: "Fälligkeit wählen…",
+      group: "Fälligkeit",
+      when: () => dueTargets().length > 0,
+      run: () => openDueMenu(),
+    },
     {
       keys: ["alt+arrowup"],
       description: "Auswahlblock nach oben",
@@ -595,6 +659,14 @@
               onclick={openMoveMenu}
             />
             <IconButton
+              label="Fälligkeit…"
+              shortcut="D"
+              icon={CalendarDays}
+              disabled={selection.count === 0}
+              data-due-button
+              onclick={() => openDueMenu()}
+            />
+            <IconButton
               label="Löschen"
               shortcut="Entf"
               icon={Trash}
@@ -657,7 +729,16 @@
                 oncolumnmenu={(list, x, y) => (listMenu = { list, x, y })}
               />
             {:else}
-              <TaskList bind:this={taskList} {route} {lists} bind:selectedId onopen={(id) => (openId = id)} onready={listReady} onnewtask={newTask} />
+              <TaskList
+                bind:this={taskList}
+                {route}
+                {lists}
+                bind:selectedId
+                onopen={(id) => (openId = id)}
+                onready={listReady}
+                onnewtask={newTask}
+                ondue={(tasks, x, y) => openDueMenu(tasks, { x, y })}
+              />
             {/if}
           </div>
         {/key}
@@ -697,6 +778,23 @@
     x={listMenu.x}
     y={listMenu.y}
     onclose={() => (listMenu = null)}
+  />
+{/if}
+{#if dueMenu}
+  <Menu
+    label="Fälligkeit"
+    items={dueMenuItems(dueMenu.targets)}
+    x={dueMenu.x}
+    y={dueMenu.y}
+    onclose={() => (dueMenu = null)}
+  />
+{/if}
+{#if duePrompt}
+  {@const targets = duePrompt}
+  <DuePrompt
+    subject={targets.length === 1 ? `„${targets[0].title}“` : `${targets.length} Tasks`}
+    onsubmit={(due) => setDue(targets, due)}
+    onclose={() => (duePrompt = null)}
   />
 {/if}
 {#if deleteTarget}

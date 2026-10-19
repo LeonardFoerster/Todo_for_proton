@@ -5,7 +5,7 @@
   import Menu, { type MenuItem } from "../../components/Menu.svelte";
   import { toasts } from "../../components/toasts.svelte";
   import VirtualList from "../../components/VirtualList.svelte";
-  import { ArrowDown, ArrowUp, CircleCheck, FolderInput, Hash, Inbox, PanelRight, Plus, Trash, Undo } from "../../icons";
+  import { ArrowDown, ArrowUp, CalendarDays, CircleCheck, FolderInput, Hash, Inbox, PanelRight, Plus, Trash, Undo } from "../../icons";
   import { useCoreClient } from "../../lib/context";
   import type { ListsState } from "../../lib/lists.svelte";
   import { localDay } from "../../lib/local-day";
@@ -28,9 +28,11 @@
     onready?: () => void;
     /** Leere Ansicht: „Neue Task“ anbieten (fehlt in „Erledigt“). */
     onnewtask?: () => void;
+    /** Kontextmenü „Fälligkeit…“ für diese Tasks an Position (P4-04). */
+    ondue?: (tasks: TaskSummaryDto[], x: number, y: number) => void;
   }
 
-  let { route, lists, selectedId = $bindable(null), onopen, onready, onnewtask }: Props = $props();
+  let { route, lists, selectedId = $bindable(null), onopen, onready, onnewtask, ondue }: Props = $props();
 
   const ROW = 36;
   const client = useCoreClient();
@@ -475,6 +477,7 @@
     const unsortable = sortable ? undefined : "Nur im Eingang und in Listen sortierbar";
     items.push(
       { label: "Verschieben nach…", icon: FolderInput, shortcut: "M", action: () => openMoveMenu(at.x, at.y) },
+      { label: "Fälligkeit…", icon: CalendarDays, shortcut: "D", action: () => ondue?.(selectedRows(), at.x, at.y) },
       {
         label: "Nach oben",
         icon: ArrowUp,
@@ -508,6 +511,7 @@
         shortcut: "Leertaste",
         action: () => void toggle(task, !done),
       },
+      { label: "Fälligkeit…", icon: CalendarDays, shortcut: "D", action: () => ondue?.([task], at.x, at.y) },
       {
         label: "Nach oben",
         icon: ArrowUp,
@@ -538,6 +542,11 @@
   /** Für Tastatur-/Detail-Steuerung von außen. */
   export function items(): readonly TaskSummaryDto[] {
     return rows.items;
+  }
+
+  /** Ausgewählte Tasks in Anzeigereihenfolge (Fälligkeit für die Auswahl). */
+  export function selectedTasks(): TaskSummaryDto[] {
+    return selectedRows();
   }
 
   /** Scrollt zur Task mit diesem Index in `items()` (nicht zum Eintrag der Anzeige). */

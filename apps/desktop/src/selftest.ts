@@ -1723,8 +1723,13 @@ const p4today: Step[] = [
       }
       location.hash = "#/today";
       await until("Abschnitt Überfällig", () => [...document.querySelectorAll(".heading .label")].some((e) => e.textContent === "Überfällig"));
-      const order = [...document.querySelectorAll('[role="option"] .title')].map((e) => e.textContent).join(",");
-      if (order !== "Ü3,Ü2,Ü1") throw new Error(`Reihenfolge ${order}`);
+      const order = () =>
+        [...document.querySelectorAll('[role="option"] .title')]
+          .map((e) => e.textContent)
+          .filter((t) => t?.startsWith("Ü"))
+          .join(",");
+      await until("drei Überfällige", () => order().split(",").length === 3).catch(() => undefined);
+      if (order() !== "Ü3,Ü2,Ü1") throw new Error(`Reihenfolge ${order()}`);
       await click("button", "Alle auf heute");
       await until("Abschnitt weg", () => !document.querySelector(".heading"), 5000);
       const all = await client.listTasks({ view: { kind: "today", day: { date: ago(0), start: new Date(new Date().setHours(0, 0, 0, 0)).toISOString(), end: new Date(new Date().setHours(24, 0, 0, 0)).toISOString() } } }, { limit: 50 });
@@ -1806,7 +1811,29 @@ const p4upcoming: Step[] = [
   ],
 ];
 
-const SUITES: Record<string, Step[]> = { p002, p3new, p4due, p4today, p4upcoming, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
+// P4-04: Fälligkeit per Kürzel – `T` auf der fokussierten Zeile ist ein `set_dues` über die echte IPC.
+const p4keys: Step[] = [
+  [
+    "T auf einer Eingang-Task → erscheint in „Heute“",
+    async (client) => {
+      location.hash = "#/inbox";
+      await until("Eingang", () => heading() === "Eingang");
+      await client.createTask({ title: "Kürzel-Test" });
+      const row = await until("Zeile", () => byRole("option", /^Kürzel-Test/));
+      row.click();
+      await click("button", "Schließen").catch(() => undefined);
+      row.focus();
+      key(row, "t");
+      location.hash = "#/today";
+      await until("in Heute", () => heading() === "Heute" && byRole("option", /^Kürzel-Test/), 5000);
+      key(focused(), "d");
+      await until("Menü Fälligkeit", () => document.querySelector('[role="menu"][aria-label="Fälligkeit"]'));
+      key(focused(), "Escape");
+    },
+  ],
+];
+
+const SUITES: Record<string, Step[]> = { p002, p3new, p4due, p4today, p4upcoming, p4keys, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
   p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */

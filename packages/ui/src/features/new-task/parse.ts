@@ -41,20 +41,8 @@ interface Hit<T> {
   value: T;
 }
 
-/**
- * Zerlegt die Eingabe im Fenster „Neue Task“ in Titel und Eigenschaften (ganze Wörter, groß/klein egal):
- * - Tag: `heute`, `morgen`, `übermorgen`, Wochentag (`Fr`, `Freitag` – nächster, nie heute), `24.10.`, `24.10.2026`
- * - Uhrzeit: `14:00`, `14 Uhr` (ohne Tag: heute, falls schon vorbei morgen)
- * - Priorität: `!1` hoch, `!2` mittel, `!3` niedrig
- * - Liste: `@name` (Anfang des Namens reicht, wenn eindeutig)
- *
- * Je Art zählt die letzte Angabe; nur sie verschwindet aus dem Titel (samt „am/um/bis“ davor). Bleibt
- * kein Titel übrig, gilt der Text unverändert als Titel („Morgen“).
- */
-export function parseNewTask(input: string, options: ParseOptions = {}): ParsedNewTask {
-  const now = options.now ?? new Date();
-  const text = input.trim();
-  const tokens = text.split(/\s+/).filter(Boolean);
+/** Erkennt Tag, Uhrzeit, Priorität und Liste in den Wörtern; je Art zählt die letzte Angabe. */
+function scan(tokens: readonly string[], now: Date, lists: readonly TaskListDto[] | undefined) {
   let day: Hit<Day> | null = null;
   let time: Hit<Time> | null = null;
   let priority: Hit<PriorityDto> | null = null;
@@ -87,11 +75,41 @@ export function parseNewTask(input: string, options: ParseOptions = {}): ParsedN
       priority = { start: i, end: i + 1, value: PRIORITIES[word] };
       continue;
     }
-    if (word.startsWith("@") && word.length > 1 && options.lists) {
-      const id = matchList(word.slice(1), options.lists);
+    if (word.startsWith("@") && word.length > 1 && lists) {
+      const id = matchList(word.slice(1), lists);
       if (id) list = { start: i, end: i + 1, value: id };
     }
   }
+
+  return { day, time, priority, list };
+}
+
+/**
+ * Nur eine Fälligkeit aus Text wie in der Titelzeile („fr“, „24.10.“, „morgen 14:00“) – für
+ * „Datum wählen…“ (P4-04). Andere Wörter werden ignoriert; ohne Tag und Uhrzeit `null`.
+ */
+export function parseDue(input: string, options: Omit<ParseOptions, "lists"> = {}): DueDto | null {
+  const now = options.now ?? new Date();
+  const { day, time } = scan(input.trim().split(/\s+/).filter(Boolean), now, undefined);
+  if (!day && !time) return null;
+  return toDue(day?.value.date ?? null, time?.value ?? null, now, options.tz);
+}
+
+/**
+ * Zerlegt die Eingabe im Fenster „Neue Task“ in Titel und Eigenschaften (ganze Wörter, groß/klein egal):
+ * - Tag: `heute`, `morgen`, `übermorgen`, Wochentag (`Fr`, `Freitag` – nächster, nie heute), `24.10.`, `24.10.2026`
+ * - Uhrzeit: `14:00`, `14 Uhr` (ohne Tag: heute, falls schon vorbei morgen)
+ * - Priorität: `!1` hoch, `!2` mittel, `!3` niedrig
+ * - Liste: `@name` (Anfang des Namens reicht, wenn eindeutig)
+ *
+ * Je Art zählt die letzte Angabe; nur sie verschwindet aus dem Titel (samt „am/um/bis“ davor). Bleibt
+ * kein Titel übrig, gilt der Text unverändert als Titel („Morgen“).
+ */
+export function parseNewTask(input: string, options: ParseOptions = {}): ParsedNewTask {
+  const now = options.now ?? new Date();
+  const text = input.trim();
+  const tokens = text.split(/\s+/).filter(Boolean);
+  const { day, time, priority, list } = scan(tokens, now, options.lists);
 
   const drop = new Set<number>();
   for (const hit of [day, time, priority, list]) {

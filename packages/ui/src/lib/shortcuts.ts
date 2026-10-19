@@ -28,8 +28,9 @@ export function comboOf(e: Pick<KeyboardEvent, "key" | "ctrlKey" | "altKey" | "s
   let key = e.key === " " ? "space" : e.key.toLowerCase();
   if (key === "del") key = "delete";
   const mods = [e.ctrlKey && "ctrl", e.altKey && "alt", e.metaKey && "meta"].filter(Boolean) as string[];
-  // Shift nur bei Nicht-Zeichen-Tasten (sonst ist „?“ schon „shift+ß“ o. ä. je nach Layout).
-  if (e.shiftKey && key.length > 1) mods.push("shift");
+  // Shift bei Nicht-Zeichen-Tasten und Buchstaben (`shift+t`); bei Satzzeichen nicht – „?“ ist je
+  // nach Layout schon „shift+ß“ o. ä.
+  if (e.shiftKey && (key.length > 1 || /^\p{L}$/u.test(key))) mods.push("shift");
   return [...mods, key].join("+");
 }
 
