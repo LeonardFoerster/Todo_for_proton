@@ -63,6 +63,8 @@ const PREV_SNAPSHOT_SEQ: &str = "prev_snapshot_seq";
 /// Erster Pull erledigt (ab dann keine Snapshot-Basis mehr nötig, außer bei Lücken).
 const INITIAL_PULL_DONE: &str = "initial_pull_done";
 const SNAPSHOTS_DIR: &str = "snapshots";
+/// Dateinamen der selbst geschriebenen Snapshots, älteste zuerst (kommagetrennt).
+const OWN_SNAPSHOTS: &str = "own_snapshots";
 /// So viele eigene Snapshots bleiben liegen (ein Ersatz, falls der neueste unlesbar ist).
 const KEEP_OWN_SNAPSHOTS: usize = 2;
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
@@ -342,25 +344,78 @@ impl SyncEngine {
         Ok(None)
     }
 
-    /// Lokaler Schlüssel, sonst der im App-Ordner, sonst ein neuer (und dort abgelegt).
+    /// Schlüssel aus dem App-Ordner, sonst (erstes Gerät) ein neuer, dort abgelegt.
+    ///
+    /// Ein lokal gespeicherter Schlüssel muss zu dem im App-Ordner passen: Sonst (anderes Konto,
+    /// ersetzte Datei) würde dieses Gerät still mit einem fremden Schlüssel weiterschreiben.
+    /// Fehlt die Schlüsseldatei, obwohl der Ordner schon Sync-Daten enthält, wird kein neuer
+    /// Schlüssel erzeugt – das spaltete die Geräte still auf.
     async fn ensure_key(&self, root: &RemoteDir) -> CoreResult<SecretBytes> {
-        if let Some(key) = self.key_store.get(&self.key_name()).await? {
-            return Ok(key);
-        }
+        let local = self.key_store.get(&self.key_name()).await?;
         let path = root.join(KEY_FILE)?;
         let key = match self.remote.read(&path).await {
-            Ok(bytes) => decode_key(&bytes)?,
+            Ok(bytes) => {
+                let remote = self.decode_key(&bytes)?;
+                if local.as_ref().is_some_and(|local| *local != remote) {
+                    return Err(CoreError::Validation(format!(
+                        "local sync key does not match {KEY_FILE}; sign out and in again"
+                    )));
+                }
+                remote
+            }
             Err(CoreError::NotFound(_)) => {
-                let key = self.cipher.generate_key()?;
+                let key = match local.clone() {
+                    // Datei verloren (z. B. von Hand gelöscht): mit dem bekannten Schlüssel ersetzen.
+                    Some(key) => key,
+                    None => {
+                        if self.folder_has_sync_data(root).await? {
+                            return Err(CoreError::Validation(format!(
+                                "{KEY_FILE} is missing although the sync folder has data"
+                            )));
+                        }
+                        self.cipher.generate_key()?
+                    }
+                };
                 match self.remote.create(&path, encode_key(&key)).await {
                     Ok(_) => key,
-                    Err(CoreError::Conflict(_)) => decode_key(&self.remote.read(&path).await?)?,
+                    Err(CoreError::Conflict(_)) => {
+                        let remote = self.decode_key(&self.remote.read(&path).await?)?;
+                        if local.as_ref().is_some_and(|local| *local != remote) {
+                            return Err(CoreError::Validation(format!(
+                                "local sync key does not match {KEY_FILE}; sign out and in again"
+                            )));
+                        }
+                        remote
+                    }
                     Err(e) => return Err(e),
                 }
             }
             Err(e) => return Err(e),
         };
-        self.key_store.put(&self.key_name(), key.clone()).await?;
+        if local.is_none() {
+            self.key_store.put(&self.key_name(), key.clone()).await?;
+        }
+        Ok(key)
+    }
+
+    /// Liegen schon Segmente, Snapshots oder Gerätedateien im App-Ordner?
+    async fn folder_has_sync_data(&self, root: &RemoteDir) -> CoreResult<bool> {
+        for dir in [OPS_DIR, SNAPSHOTS_DIR, DEVICES_DIR] {
+            let dir = root.join(dir)?;
+            if !self.remote.list(&dir, None).await?.entries.is_empty() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Schlüsseldatei lesen; der Schlüssel muss zur Cipher passen (Länge), sonst scheiterte
+    /// später jedes Ver- und Entschlüsseln.
+    fn decode_key(&self, bytes: &[u8]) -> CoreResult<SecretBytes> {
+        let key = decode_key(bytes)?;
+        self.cipher
+            .seal(&key, &[], &[])
+            .map_err(|_| CoreError::Validation(format!("invalid {KEY_FILE}")))?;
         Ok(key)
     }
 
@@ -453,12 +508,26 @@ impl SyncEngine {
         bytes: Vec<u8>,
     ) -> CoreResult<()> {
         let existing = self.remote.read(path).await?;
+        let expected = SegmentHeader::parse_file_name(path.file_name());
         match open_segment(self.cipher.as_ref(), &session.key, &existing) {
-            Ok((_, remote_ops)) if remote_ops == ops => Ok(()),
-            Ok(_) => Err(CoreError::Conflict(format!(
-                "segment {path} exists with different ops"
-            ))),
-            Err(_) => {
+            Ok((header, remote_ops))
+                if remote_ops == ops
+                    && header.device == session.device
+                    && Some((header.seq_from, header.seq_to)) == expected =>
+            {
+                Ok(())
+            }
+            // Lesbar, eigener Ort, andere Ops: darf nie passieren.
+            Ok((header, _))
+                if header.device == session.device
+                    && Some((header.seq_from, header.seq_to)) == expected =>
+            {
+                Err(CoreError::Conflict(format!(
+                    "segment {path} exists with different ops"
+                )))
+            }
+            // Unlesbar (abgebrochener Upload) oder fremdes Segment am eigenen Pfad: ersetzen.
+            Ok(_) | Err(_) => {
                 self.remote.delete(path).await?;
                 self.remote.create(path, bytes).await.map(|_| ())
             }
@@ -510,17 +579,21 @@ impl SyncEngine {
 
         let mut report = SyncReport::default();
         let mut behind = false;
+        let mut complete = true;
         for (device, mut segments) in plan {
             let cursor = self.repo.sync_cursor(device).await?.unwrap_or(0);
             segments.retain(|s| s.to > cursor);
             segments.sort_by_key(|s| (s.from, s.to));
             behind |= segments.first().is_some_and(|s| s.from > cursor + 1);
-            report.merge(
-                self.pull_device(&session, device, cursor, &segments)
-                    .await?,
-            );
+            let (pulled, intact) = self
+                .pull_device(&session, device, cursor, &segments)
+                .await?;
+            complete &= intact;
+            report.merge(pulled);
         }
-        if let Some(cursor) = next_feed {
+        // Nur weiterzählen, wenn alle Ketten lückenlos gelesen wurden: Sonst würden geänderte
+        // Geräte mit fehlenden/unlesbaren Segmenten erst bei ihrer nächsten Änderung wieder geprüft.
+        if let Some(cursor) = next_feed.filter(|_| complete) {
             self.repo.set_sync_value(FEED_CURSOR, cursor.0).await?;
         }
         Ok((report, behind))
@@ -554,13 +627,14 @@ impl SyncEngine {
     }
 
     /// Lädt die Segmente eines Geräts (parallel, max. 4) und wendet sie gruppenweise an.
+    /// Zweiter Wert: Die Kette war lückenlos lesbar.
     async fn pull_device(
         &self,
         session: &Session,
         device: DeviceId,
         cursor: u64,
         segments: &[Planned],
-    ) -> CoreResult<SyncReport> {
+    ) -> CoreResult<(SyncReport, bool)> {
         let mut report = SyncReport::default();
         // Nächste erwartete Nummer; der Cursor rückt nur über lückenlos gelesene Segmente vor.
         let mut next = cursor + 1;
@@ -568,7 +642,8 @@ impl SyncEngine {
         for group in segments.chunks(SEGMENTS_PER_APPLY) {
             let mut ops = Vec::new();
             for downloads in group.chunks(PARALLEL_DOWNLOADS) {
-                let fetched = join_all(downloads.iter().map(|s| self.fetch(session, s))).await;
+                let fetched =
+                    join_all(downloads.iter().map(|s| self.fetch(session, device, s))).await;
                 for (segment, result) in downloads.iter().zip(fetched) {
                     match result? {
                         Fetched::Ops(segment_ops) => {
@@ -581,10 +656,12 @@ impl SyncEngine {
                         }
                         // Zwischen Listing und Lesen gelöscht (Kompaktierung) – später erneut.
                         Fetched::Missing => chain_intact = false,
+                        // Ein Segment einer neueren Version pausiert nicht den ganzen Sync: Die
+                        // Version steht vor der Authentisierung, jeder Schreiber im Backend
+                        // könnte sie setzen. Pausiert wird nur über das Manifest.
                         Fetched::Unreadable(err) => {
                             chain_intact = false;
                             report.skipped_segments += 1;
-                            report.newer_format |= matches!(err, SegmentError::NewerFormat(_));
                             report
                                 .warnings
                                 .push(format!("skipped {}: {err}", segment.path.file_name()));
@@ -612,10 +689,18 @@ impl SyncEngine {
             report.changed += u32::try_from(receipt.changed.len()).unwrap_or(u32::MAX);
             report.clock_skews += receipt.clock_skews;
         }
-        Ok(report)
+        Ok((report, chain_intact))
     }
 
-    async fn fetch(&self, session: &Session, segment: &Planned) -> CoreResult<Fetched> {
+    /// Lädt ein Segment aus `ops/<device>/`. Gerät und Bereich im (authentisierten) Header
+    /// müssen zum Ablageort passen: Sonst könnte das Backend ein fremdes Segment unterschieben
+    /// und den Cursor von `device` über dessen echte Ops hinwegschieben.
+    async fn fetch(
+        &self,
+        session: &Session,
+        device: DeviceId,
+        segment: &Planned,
+    ) -> CoreResult<Fetched> {
         let bytes = match self.remote.read(&segment.path).await {
             Ok(bytes) => bytes,
             Err(CoreError::NotFound(_)) => return Ok(Fetched::Missing),
@@ -624,12 +709,13 @@ impl SyncEngine {
         Ok(
             match open_segment(self.cipher.as_ref(), &session.key, &bytes) {
                 Ok((header, ops))
-                    if (header.seq_from, header.seq_to) == (segment.from, segment.to) =>
+                    if header.device == device
+                        && (header.seq_from, header.seq_to) == (segment.from, segment.to) =>
                 {
                     Fetched::Ops(ops)
                 }
                 Ok(_) => Fetched::Unreadable(SegmentError::Corrupt(
-                    "file name does not match header".into(),
+                    "file location does not match header".into(),
                 )),
                 Err(err) => Fetched::Unreadable(err),
             },
@@ -677,9 +763,19 @@ impl SyncEngine {
         if behind {
             // Segmente wurden kompaktiert, bevor dieses Gerät sie las.
             let loaded = self.load_snapshot().await?;
-            if loaded.snapshot_loaded {
+            let still_behind = if loaded.snapshot_loaded {
                 report.merge(loaded);
-                report.merge(self.pull_inner().await?.0);
+                let (pulled, behind) = self.pull_inner().await?;
+                report.merge(pulled);
+                behind
+            } else {
+                true
+            };
+            if still_behind {
+                // Kein Snapshot deckt die Lücke (noch) ab: sichtbar machen statt still zu fehlen.
+                report
+                    .warnings
+                    .push("ops of another device are missing and no snapshot covers them".into());
             }
         }
         self.repo
@@ -705,11 +801,20 @@ impl SyncEngine {
                 Err(CoreError::NotFound(_)) => continue,
                 Err(e) => return Err(e),
             };
-            let body = match open_snapshot(self.cipher.as_ref(), &session.key, &bytes) {
-                Ok((_, body)) => body,
+            // Der Header ist authentisiert, der Dateiname nicht: Beide müssen übereinstimmen,
+            // sonst wäre eine umbenannte (z. B. alte) Datei als „neuester Snapshot" lesbar.
+            let opened = open_snapshot(self.cipher.as_ref(), &session.key, &bytes).and_then(
+                |(header, body)| match SnapshotHeader::parse_file_name(path.file_name()) {
+                    Some((hlc, owner)) if hlc == header.hlc && owner == header.device => Ok(body),
+                    _ => Err(SegmentError::Corrupt(
+                        "file name does not match header".into(),
+                    )),
+                },
+            );
+            let body = match opened {
+                Ok(body) => body,
                 Err(err) => {
                     report.skipped_segments += 1;
-                    report.newer_format |= matches!(err, SegmentError::NewerFormat(_));
                     report
                         .warnings
                         .push(format!("skipped {}: {err}", path.file_name()));
@@ -718,13 +823,20 @@ impl SyncEngine {
             };
             let local: BTreeMap<DeviceId, u64> =
                 self.repo.sync_cursors().await?.into_iter().collect();
+            // Cursor nie über die tatsächlich vorhandenen Segmente eines Geräts hinaus setzen:
+            // Ein fehlerhafter Vektor würde dessen künftige Ops sonst dauerhaft verschlucken.
+            let highest = self.highest_segments(&session).await?;
             let cursors = body
                 .vector
                 .iter()
-                .filter(|(device, seq)| {
-                    *device != session.device && local.get(device).is_none_or(|c| seq > c)
+                .filter(|(device, _)| *device != session.device)
+                .map(|(device, seq)| {
+                    (
+                        *device,
+                        (*seq).min(highest.get(device).copied().unwrap_or(0)),
+                    )
                 })
-                .copied()
+                .filter(|(device, seq)| *seq > 0 && local.get(device).is_none_or(|c| seq > c))
                 .collect();
             let receipt = self
                 .repo
@@ -740,6 +852,19 @@ impl SyncEngine {
             return Ok(report);
         }
         Ok(report)
+    }
+
+    /// Höchste Op-Nummer je fremdem Gerät laut Segment-Listing (`ops/<device>/<from>-<to>.seg`).
+    async fn highest_segments(&self, session: &Session) -> CoreResult<BTreeMap<DeviceId, u64>> {
+        let ops_dir = session.root.join(OPS_DIR)?;
+        let mut highest: BTreeMap<DeviceId, u64> = BTreeMap::new();
+        for entry in self.remote.list(&ops_dir, None).await?.entries {
+            if let Some((device, _, to)) = parse_segment_path(&entry.path, &ops_dir) {
+                let seq = highest.entry(device).or_default();
+                *seq = (*seq).max(to);
+            }
+        }
+        Ok(highest)
     }
 
     /// Snapshot-Dateien, nach Alter aufsteigend; mit `device` nur die dieses Geräts.
@@ -829,10 +954,26 @@ impl SyncEngine {
             .set_sync_value(SNAPSHOT_SEQ, own_seq.to_string())
             .await?;
 
-        let own = self.snapshot_paths(&session, Some(session.device)).await?;
-        for old in own.iter().rev().skip(KEEP_OWN_SNAPSHOTS) {
-            self.remote.delete(old).await?;
+        // Nur selbst geschriebene Snapshots löschen (lokal gemerkt): Dateinamen im Backend sind
+        // nicht authentisiert; ein untergeschobenes „<hlc>-<eigenes Gerät>.snap" in der Zukunft
+        // ließe sonst die echten Snapshots verschwinden.
+        let mut own: Vec<String> = self
+            .repo
+            .sync_value(OWN_SNAPSHOTS)
+            .await?
+            .map(|names| names.split(',').map(str::to_owned).collect())
+            .unwrap_or_default();
+        own.retain(|name| !name.is_empty() && *name != header.file_name());
+        own.push(header.file_name());
+        let excess = own.len().saturating_sub(KEEP_OWN_SNAPSHOTS);
+        for old in own.drain(..excess) {
+            self.remote
+                .delete(&session.root.join(&format!("{SNAPSHOTS_DIR}/{old}"))?)
+                .await?;
         }
+        self.repo
+            .set_sync_value(OWN_SNAPSHOTS, own.join(","))
+            .await?;
         Ok(SyncReport {
             snapshot_written: true,
             segments_deleted: self.compact(&session).await?,
@@ -857,19 +998,24 @@ impl SyncEngine {
                 Err(CoreError::NotFound(_)) => continue,
                 Err(e) => return Err(e),
             };
-            // Unlesbare Gerätedateien gelten als aktiv, ohne etwas gelesen zu haben.
+            // Unlesbare Gerätedateien (auch solche, deren Geräte-ID nicht zum Dateinamen passt)
+            // gelten als aktiv, ohne etwas gelesen zu haben. `last_seen` aus der Zukunft zählt
+            // als „jetzt", damit eine Datei die Kompaktierung nicht für immer festhält.
+            let stem = entry.path.file_name().strip_suffix(".json").unwrap_or("");
             let (device, last_seen, cursor) = match serde_json::from_slice::<DeviceInfo>(&bytes) {
-                Ok(info) => (
+                Ok(info) if info.device_id.to_string() == stem => (
                     Some(info.device_id),
-                    info.last_seen,
+                    info.last_seen.min(now),
                     info.cursors
                         .get(&session.device.to_string())
                         .copied()
                         .unwrap_or(0),
                 ),
-                Err(_) => (None, now, 0),
+                Ok(_) | Err(_) => (None, now, 0),
             };
-            if device == Some(session.device) || now - last_seen > self.config.inactive_device_ms {
+            if device == Some(session.device)
+                || now.saturating_sub(last_seen) > self.config.inactive_device_ms
+            {
                 continue;
             }
             bound = bound.min(cursor);

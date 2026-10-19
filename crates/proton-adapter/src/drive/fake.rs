@@ -35,7 +35,9 @@ struct FakeRevision {
     /// 0 Entwurf, 1 aktiv, 2 veraltet.
     state: u8,
     code: Vec<u8>,
-    blocks: BTreeMap<u32, String>,
+    /// Index → (Blob, Hash wie beim Upload angegeben).
+    blocks: BTreeMap<u32, (String, String)>,
+    manifest_signature: Option<String>,
     sizes: u64,
     client_uid: Option<String>,
 }
@@ -54,14 +56,17 @@ struct State {
     links: HashMap<String, FakeLink>,
     revisions: HashMap<String, FakeRevision>,
     blobs: HashMap<String, Vec<u8>>,
-    /// Upload-Token → (Revision, Index, erwarteter Verifier).
-    uploads: HashMap<String, (String, u32, Vec<u8>)>,
+    /// Upload-Token → (Revision, Index, erwarteter Verifier, Hash).
+    uploads: HashMap<String, (String, u32, Vec<u8>, String)>,
     events: Vec<(u64, Value)>,
     next: u64,
     faults: Vec<(String, String, Fault)>,
     calls: Vec<String>,
     origin: String,
     static_json: HashMap<&'static str, Value>,
+    /// Schlüssel des Wurzelordners (armiert, Passphrase) – nur für Angriffs-Tests: Der Server
+    /// kennt den öffentlichen Teil ohnehin, mehr wird damit nicht getan.
+    root_key: (String, String),
 }
 
 impl State {
@@ -168,7 +173,10 @@ impl FakeDrive {
         let root = crypto.new_node(&share, &[0; 32], &address, "root").unwrap();
         let (_, root_hash_key) = crypto.new_folder_hash_key(&root.key).unwrap();
 
-        let mut state = State::default();
+        let mut state = State {
+            root_key: (export(&root.key, b"root-test"), "root-test".into()),
+            ..State::default()
+        };
         state.static_json.insert(
             "users",
             json!({ "User": { "ID": "user-1", "Name": "fake", "Email": "fake@example.org", "Keys": [{
@@ -286,6 +294,46 @@ impl FakeDrive {
         state.event(1, link);
     }
 
+    /// Feindlicher Server: ersetzt Schlüssel und Passphrase des Ordners `name` direkt unter der
+    /// Wurzel durch eigene. Die neue Passphrase ist nur an den (öffentlich bekannten) Wurzel-Key
+    /// verschlüsselt; signiert ist sie gar nicht oder mit einem eigenen Schlüssel.
+    pub(crate) fn rekey_root_child(&self, sign_with_own_key: bool) {
+        let p = proton_crypto::new_pgp_provider();
+        let crypto = DriveCrypto::new(p.clone());
+        let mut state = self.state();
+        let (armored, pass) = state.root_key.clone();
+        let root = crypto.import_key(&armored, pass.as_bytes()).unwrap();
+        let own = p
+            .new_key_generator()
+            .with_user_id("server", "server@example.invalid")
+            .generate()
+            .unwrap();
+        let node = crypto.new_node(&root, &[0; 32], &own, "x").unwrap();
+        let (_, hash_key) = crypto.new_folder_hash_key(&node.key).unwrap();
+        let link = state
+            .links
+            .values_mut()
+            .find(|l| l.parent.as_deref() == Some(ROOT) && l.json["Type"] == json!(1))
+            .expect("folder under root");
+        link.json["NodeKey"] = json!(node.node_key);
+        link.json["NodePassphrase"] = json!(node.node_passphrase);
+        link.json["NodePassphraseSignature"] = if sign_with_own_key {
+            json!(node.node_passphrase_signature)
+        } else {
+            Value::Null
+        };
+        link.json["FolderProperties"]["NodeHashKey"] = json!(hash_key);
+    }
+
+    /// Feindlicher Server: kippt ein Bit in jedem gespeicherten Block.
+    pub(crate) fn corrupt_blobs(&self) {
+        for blob in self.state().blobs.values_mut() {
+            if let Some(byte) = blob.last_mut() {
+                *byte ^= 1;
+            }
+        }
+    }
+
     fn handle(&self, req: &Request) -> ResponseTemplate {
         let method = req.method.as_str().to_owned();
         let path = req.url.path().to_owned();
@@ -398,7 +446,11 @@ fn route(
                 "MIMEType": body["MIMEType"],
                 "NodeKey": body["NodeKey"], "NodePassphrase": body["NodePassphrase"],
                 "NodePassphraseSignature": body["NodePassphraseSignature"],
-                "FileProperties": { "ContentKeyPacket": body["ContentKeyPacket"], "ActiveRevision": null },
+                "FileProperties": {
+                    "ContentKeyPacket": body["ContentKeyPacket"],
+                    "ContentKeyPacketSignature": body["ContentKeyPacketSignature"],
+                    "ActiveRevision": null,
+                },
                 "FolderProperties": null,
             });
             state.links.insert(
@@ -419,6 +471,7 @@ fn route(
                     state: 0,
                     code: random::<32>().unwrap().to_vec(),
                     blocks: BTreeMap::new(),
+                    manifest_signature: None,
                     sizes: 0,
                     client_uid: client_uid.clone(),
                 },
@@ -451,6 +504,7 @@ fn route(
                     state: 0,
                     code: random::<32>().unwrap().to_vec(),
                     blocks: BTreeMap::new(),
+                    manifest_signature: None,
                     sizes: 0,
                     client_uid: body["ClientUID"].as_str().map(str::to_owned),
                 },
@@ -489,10 +543,11 @@ fn route(
                     return error(400, 2000);
                 };
                 let token = STANDARD.decode(token).unwrap();
+                let hash = block["Hash"].as_str().unwrap_or_default().to_owned();
                 let upload = state.id("upload");
                 state
                     .uploads
-                    .insert(upload.clone(), (rev.clone(), index, token));
+                    .insert(upload.clone(), (rev.clone(), index, token, hash));
                 links.push(json!({ "Index": index, "Token": upload, "BareURL": format!("{origin}/storage/{upload}") }));
             }
             let _ = code;
@@ -507,7 +562,7 @@ fn route(
             if token != *upload {
                 return error(403, 0);
             }
-            let Some((rev, index, verifier)) = state.uploads.remove(*upload) else {
+            let Some((rev, index, verifier, hash)) = state.uploads.remove(*upload) else {
                 return error(404, 0);
             };
             let data = multipart_block(&req.body);
@@ -518,7 +573,7 @@ fn route(
             let blob = state.id("blob");
             state.blobs.insert(blob.clone(), data.clone());
             let revision = state.revisions.get_mut(&rev).unwrap();
-            revision.blocks.insert(index, blob);
+            revision.blocks.insert(index, (blob, hash));
             revision.sizes += data.len() as u64;
             ok(json!({}))
         }
@@ -540,6 +595,8 @@ fn route(
                 return error(422, 2001);
             }
             let size = revision.sizes;
+            let manifest_signature = body["ManifestSignature"].as_str().map(str::to_owned);
+            state.revisions.get_mut(*rev).unwrap().manifest_signature = manifest_signature;
             for r in state
                 .revisions
                 .values_mut()
@@ -574,9 +631,12 @@ fn route(
                 .blocks
                 .range(from..)
                 .take(size)
-                .map(|(index, blob)| json!({ "Index": index, "Token": blob, "BareURL": format!("{origin}/storage/{blob}"), "Hash": "" }))
+                .map(|(index, (blob, hash))| json!({ "Index": index, "Token": blob, "BareURL": format!("{origin}/storage/{blob}"), "Hash": hash }))
                 .collect();
-            ok(json!({ "Revision": { "ID": rev, "State": revision.state, "Blocks": blocks } }))
+            ok(json!({ "Revision": {
+                "ID": rev, "State": revision.state, "Blocks": blocks,
+                "ManifestSignature": revision.manifest_signature,
+            } }))
         }
         ("POST", ["drive", "shares", SHARE, "folders", _, "trash_multiple"]) => {
             let mut responses = Vec::new();

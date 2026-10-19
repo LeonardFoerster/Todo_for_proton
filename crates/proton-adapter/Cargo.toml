@@ -30,6 +30,7 @@ workspace = true
 
 [dev-dependencies]
 futures.workspace = true
+tempfile.workspace = true
 todo-core = { workspace = true, features = ["test-support"] }
 tokio = { version = "1.53.3", features = ["macros", "rt-multi-thread", "time"] }
 tracing-subscriber = "0.3.23"

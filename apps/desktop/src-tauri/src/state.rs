@@ -17,7 +17,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 use todo_core::{
     api::CoreApi,
     domain::Timestamp,
-    ports::{AuthProvider, Clock, KeyStore},
+    ports::{AuthError, AuthProvider, Clock, KeyStore},
     CoreError, CoreResult,
 };
 use todo_crypto::XChaCha20Poly1305Cipher;
@@ -90,6 +90,7 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, options: &Options) -> Result<AppStat
         None => app.path().app_data_dir().map_err(|e| e.to_string())?,
     };
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    restrict_to_owner(&dir);
     let repo = SqliteTaskRepository::open(dir.join(DB_FILE)).map_err(|e| e.to_string())?;
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let api = Arc::new(CoreApi::new(Arc::new(repo), Arc::clone(&clock)));
@@ -209,8 +210,10 @@ impl Account {
         );
         Ok(Arc::new(ProtonRunner {
             auth: Arc::clone(&backend.auth),
+            key_store: Arc::clone(&backend.key_store),
             engine,
             resumed: AtomicBool::new(false),
+            account_id: Mutex::new(None),
         }))
     }
 
@@ -272,15 +275,18 @@ impl Account {
         Ok(())
     }
 
-    /// Meldet ab und entfernt den Sync-Schlüssel; lokale Daten bleiben.
+    /// Meldet ab und entfernt den Sync-Schlüssel; lokale Daten bleiben. Sitzung und Schlüssel
+    /// werden unabhängig voneinander entfernt (scheitert eins, wird das andere trotzdem gelöscht).
     pub async fn logout(&self, sync: &SyncHandle) -> Result<(), ErrorDto> {
         let backend = self.require().await?;
         sync.set_runner(None);
-        backend.auth.logout().await?;
-        backend
+        let session = backend.auth.logout().await;
+        let key = backend
             .key_store
             .delete(&SyncConfig::default().key_name())
-            .await?;
+            .await;
+        session?;
+        key?;
         Ok(())
     }
 
@@ -339,20 +345,56 @@ async fn connect(keyring_id: &str) -> Option<Backend> {
 /// Schlüssel und Ordner-Cache nur einmal geladen werden (P6-05).
 struct ProtonRunner {
     auth: Arc<ProtonAuthProvider>,
+    key_store: Arc<dyn KeyStore>,
     engine: SyncEngine,
     resumed: AtomicBool,
+    /// Konto, für das Engine und Store (Schlüssel, Ordner-Cache) geladen wurden.
+    account_id: Mutex<Option<String>>,
 }
 
-#[async_trait::async_trait]
-impl SyncRunner for ProtonRunner {
-    async fn sync_once(&self) -> CoreResult<SyncReport> {
+impl ProtonRunner {
+    async fn run(&self) -> CoreResult<SyncReport> {
         if !self.resumed.load(Ordering::Acquire) {
             match self.auth.resume().await? {
                 Some(_) => self.resumed.store(true, Ordering::Release),
                 None => return Err(CoreError::AuthRequired),
             }
         }
+        // Ein Runner gehört zu genau einem Konto: Nach Abmelden und Anmelden mit einem anderen
+        // Konto läuft er nicht mehr (die Shell setzt dann einen neuen).
+        let current = self.auth.current_session().await?.map(|s| s.account_id);
+        {
+            let mut bound = self
+                .account_id
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            match (&*bound, &current) {
+                (_, None) => return Err(CoreError::AuthRequired),
+                (None, Some(id)) => *bound = Some(id.clone()),
+                (Some(bound), Some(id)) if bound != id => return Err(CoreError::AuthRequired),
+                _ => {}
+            }
+        }
         self.engine.sync_once().await
+    }
+}
+
+#[async_trait::async_trait]
+impl SyncRunner for ProtonRunner {
+    async fn sync_once(&self) -> CoreResult<SyncReport> {
+        let result = self.run().await;
+        if matches!(result, Err(CoreError::Auth(AuthError::SessionRevoked))) {
+            // Wie beim Abmelden: Mit der Sitzung geht auch der Sync-Schlüssel (sonst nutzte ein
+            // späterer Login mit einem anderen Konto still den alten Schlüssel weiter).
+            if let Err(err) = self
+                .key_store
+                .delete(&SyncConfig::default().key_name())
+                .await
+            {
+                tracing::warn!(error = %err, "sync key not removed after revocation");
+            }
+        }
+        result
     }
 }
 
@@ -365,12 +407,44 @@ fn device_name() -> String {
         .unwrap_or_else(|| "Linux".into())
 }
 
+/// Datenverzeichnis nur für den Besitzer (die Datenbank enthält alle Tasks im Klartext).
+fn restrict_to_owner(dir: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(err) = fs::set_permissions(dir, fs::Permissions::from_mode(0o700)) {
+            tracing::warn!(error = %err, "data directory permissions not restricted");
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
+}
+
 /// Öffnet die Login-Seite im Standardbrowser (Fehler egal: die UI zeigt die URL zum Kopieren).
+///
+/// Die URL enthält im Fragment den Fork-Schlüssel und darf daher nicht in die Kommandozeile
+/// (`/proc/<pid>/cmdline` ist für andere Nutzer lesbar): Übergeben wird eine nur für den
+/// Besitzer lesbare HTML-Datei, die auf die Login-Seite weiterleitet.
 fn open_browser(url: &str) {
-    match std::process::Command::new("xdg-open").arg(url).spawn() {
-        // Abwarten, damit kein Zombie-Prozess bleibt.
-        Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
-        Err(err) => tracing::warn!(error = %err, "xdg-open failed"),
+    let page = match proton_adapter::write_login_redirect(url) {
+        Ok(page) => page,
+        Err(err) => {
+            tracing::warn!(error = %err, "login page not written; browser not opened");
+            return;
+        }
+    };
+    match std::process::Command::new("xdg-open").arg(&page).spawn() {
+        // Abwarten (kein Zombie-Prozess), dann die Datei entfernen, sobald der Browser sie
+        // sicher gelesen hat.
+        Ok(mut child) => drop(std::thread::spawn(move || {
+            let _ = child.wait();
+            std::thread::sleep(std::time::Duration::from_secs(60));
+            let _ = fs::remove_file(page);
+        })),
+        Err(err) => {
+            let _ = fs::remove_file(&page);
+            tracing::warn!(error = %err, "xdg-open failed");
+        }
     }
 }
 

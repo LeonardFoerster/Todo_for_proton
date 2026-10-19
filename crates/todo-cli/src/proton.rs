@@ -5,7 +5,7 @@ use std::{process::Command as Process, sync::Arc, time::Duration};
 
 use proton_adapter::{ApiConfig, ProtonAuthProvider, ProtonDriveRemoteStore};
 use todo_core::{
-    ports::{AuthError, AuthProvider, AuthStep, KeyStore, RemoteStore},
+    ports::{AuthError, AuthFlowId, AuthProvider, AuthStep, KeyStore, RemoteStore},
     CoreError,
 };
 use todo_keystore_secret_service::SecretServiceKeyStore;
@@ -57,7 +57,7 @@ pub async fn login() -> Result<()> {
     if let Some(info) = proton.auth.current_session().await? {
         println!(
             "Bereits angemeldet als {} (abmelden: todo-cli logout).",
-            info.account_label
+            crate::safe(&info.account_label)
         );
         return Ok(());
     }
@@ -76,14 +76,26 @@ pub async fn login() -> Result<()> {
         "Warte auf Bestätigung (höchstens {} min) …",
         expires_in_s / 60
     );
-    // Browser öffnen, wenn möglich; sonst genügt die angezeigte URL.
-    let _ = Process::new("xdg-open").arg(&url).spawn();
+    // Browser öffnen, wenn möglich; sonst genügt die angezeigte URL. Die URL (mit Fork-Schlüssel
+    // im Fragment) geht nicht in die Kommandozeile von xdg-open, sondern über eine private Datei.
+    let page = proton_adapter::write_login_redirect(&url).ok();
+    if let Some(page) = &page {
+        let _ = Process::new("xdg-open").arg(page).spawn();
+    }
+    let result = wait_for_login(&proton, &flow, poll_interval_s).await;
+    if let Some(page) = page {
+        let _ = std::fs::remove_file(page);
+    }
+    result
+}
+
+async fn wait_for_login(proton: &Proton, flow: &AuthFlowId, poll_interval_s: u32) -> Result<()> {
     loop {
         tokio::time::sleep(Duration::from_secs(u64::from(poll_interval_s))).await;
-        match proton.auth.poll_login(&flow).await? {
+        match proton.auth.poll_login(flow).await? {
             AuthStep::Pending { .. } => {}
             AuthStep::Done(info) => {
-                println!("Angemeldet als {}.", info.account_label);
+                println!("Angemeldet als {}.", crate::safe(&info.account_label));
                 return Ok(());
             }
             AuthStep::OpenBrowser { .. } => {
@@ -95,11 +107,14 @@ pub async fn login() -> Result<()> {
 
 pub async fn logout() -> Result<()> {
     let proton = Proton::connect().await?;
-    proton.auth.logout().await?;
-    proton
+    // Sitzung und Schlüssel unabhängig voneinander entfernen.
+    let session = proton.auth.logout().await;
+    let key = proton
         .key_store
         .delete(&SyncConfig::default().key_name())
-        .await?;
+        .await;
+    session?;
+    key?;
     println!("Abgemeldet; Sitzung und Sync-Schlüssel aus dem Schlüsselbund entfernt.");
     Ok(())
 }

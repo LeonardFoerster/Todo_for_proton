@@ -3,8 +3,20 @@
 use crate::{CoreError, CoreResult};
 
 /// Trimmt `input` und prüft: nicht leer, höchstens `max_chars` Unicode-Zeichen (nicht Bytes).
+///
+/// Titel und Namen sind einzeilig: Steuerzeichen (auch aus dem Sync) werden entfernt bzw.
+/// Zeilenumbrüche und Tabs zu Leerzeichen – sonst gelangten Escape-Sequenzen über einen Namen in
+/// Terminals oder Logs. Deterministisch, damit alle Geräte dasselbe Ergebnis sehen.
 pub(crate) fn normalize_name(input: &str, max_chars: usize, what: &str) -> CoreResult<String> {
-    let trimmed = input.trim();
+    let cleaned: String = input
+        .chars()
+        .filter_map(|c| match c {
+            c if c.is_control() && c.is_whitespace() => Some(' '),
+            c if c.is_control() => None,
+            c => Some(c),
+        })
+        .collect();
+    let trimmed = cleaned.trim();
     if trimmed.is_empty() {
         return Err(CoreError::Validation(format!("{what} must not be empty")));
     }
@@ -24,6 +36,15 @@ mod tests {
     #[test]
     fn trims_and_accepts() {
         assert_eq!(normalize_name("  Milch  ", 10, "title").unwrap(), "Milch");
+    }
+
+    #[test]
+    fn strips_control_characters() {
+        assert_eq!(
+            normalize_name("Milch\u{1b}]0;x\u{7}\nKaufen\t!", 50, "title").unwrap(),
+            "Milch]0;x Kaufen !"
+        );
+        assert!(normalize_name("\u{1b}\u{7}", 10, "title").is_err());
     }
 
     #[test]

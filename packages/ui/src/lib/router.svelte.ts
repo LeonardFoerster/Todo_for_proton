@@ -8,7 +8,14 @@ export const DEFAULT_ROUTE: Route = { view: "inbox" };
 
 export function parseHash(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean);
-  if (parts[0] === "list" && parts[1]) return { view: "list", listId: decodeURIComponent(parts[1]) };
+  if (parts[0] === "list" && parts[1]) {
+    // Kaputte %-Sequenzen (von Hand eingetippt) führen zur Startansicht statt zu einem Fehler.
+    try {
+      return { view: "list", listId: decodeURIComponent(parts[1]) };
+    } catch {
+      return DEFAULT_ROUTE;
+    }
+  }
   const view = parts[0] as SmartViewKind;
   return SMART.includes(view) ? { view } : DEFAULT_ROUTE;
 }

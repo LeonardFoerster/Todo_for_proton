@@ -172,11 +172,22 @@ impl Session {
         Ok(info)
     }
 
-    /// Vergisst die Sitzung (Speicher + KeyStore).
+    /// Vergisst die Sitzung (Speicher + KeyStore). Lässt sich der Eintrag nicht löschen, wird er
+    /// mit einem unbrauchbaren Wert überschrieben, damit er beim nächsten Start nicht wieder
+    /// auflebt; der Fehler wird trotzdem gemeldet.
     pub(crate) async fn clear(&self) -> CoreResult<()> {
         let mut state = self.state().await?;
         state.live = None;
-        self.key_store.delete(STORE_KEY).await
+        match self.key_store.delete(STORE_KEY).await {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                let _ = self
+                    .key_store
+                    .put(STORE_KEY, SecretBytes::new(b"{}".to_vec()))
+                    .await;
+                Err(err)
+            }
+        }
     }
 
     /// Erneuert die Tokens, sofern der aktuelle Access-Token fehlt oder `stale` ist; sonst
@@ -260,7 +271,9 @@ impl Session {
         let what = req.describe();
         let body = self.send(req).await?;
         serde_json::from_value(body).map_err(|e| {
-            CoreError::RemoteRejected(ApiError::Decode(format!("{what}: {e}")).to_string())
+            CoreError::RemoteRejected(
+                ApiError::Decode(crate::api_client::decode_error(&what, &e)).to_string(),
+            )
         })
     }
 

@@ -76,7 +76,7 @@ pub(crate) fn decrypt_payload(key: &ForkKey, payload_b64: &str) -> CoreResult<Se
 }
 
 /// Wie JS `encodeURIComponent`.
-fn encode_uri_component(text: &str) -> String {
+pub(crate) fn encode_uri_component(text: &str) -> String {
     let mut out = String::with_capacity(text.len() * 3);
     for byte in text.bytes() {
         if byte.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&byte) {

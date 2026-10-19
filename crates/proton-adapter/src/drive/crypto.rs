@@ -5,13 +5,19 @@
 //!
 //! Neue Inhalte im „pre-crypto-refresh"-Format, das die offiziellen Apps sicher lesen: v4-Keys,
 //! PKESK v3, SEIPD v1, keine AEAD – das Default-Profil des Rust-Backends (Test unten).
+//!
+//! Lesen ist **signaturgeprüft** (fail closed): Share- und Node-Passphrasen, Namen und das
+//! Block-Manifest müssen von einem Adress-Key des Nutzers signiert sein, `NodeHashKey` und
+//! `ContentKeyPacket` vom Node-Key. Sonst könnte der Server eigene Schlüssel unterschieben (die
+//! Verschlüsselung an einen Schlüssel braucht nur dessen öffentlichen Teil) und mitlesen, was
+//! danach hochgeladen wird.
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use hmac::{Hmac, Mac};
 use proton_crypto::crypto::{
     DataEncoding, Decryptor, DecryptorSync, Encryptor, EncryptorSync, KeyGenerator,
     KeyGeneratorSync, PGPProvider, PGPProviderSync, SessionKeyAlgorithm, Signer, SignerSync,
-    VerifiedData,
+    VerifiedData, Verifier, VerifierSync,
 };
 use proton_crypto_account::{
     keys::{AddressKeys, LockedKey, UnlockedAddressKey, UnlockedUserKey, UserKeys},
@@ -24,6 +30,7 @@ use crate::secret::Secret;
 
 pub(crate) type PrivateKey<P> = <P as PGPProvider>::PrivateKey;
 pub(crate) type SessionKey<P> = <P as PGPProvider>::SessionKey;
+pub(crate) type PublicKey<P> = <P as PGPProvider>::PublicKey;
 
 /// Krypto-Fehler sind endgültig: Die Daten im Backend passen nicht zu unseren Schlüsseln.
 fn crypto<E>(what: &str) -> impl FnOnce(E) -> CoreError + '_ {
@@ -99,7 +106,8 @@ impl<P: PGPProviderSync> DriveCrypto<P> {
         Ok(keys)
     }
 
-    /// Entschlüsselt eine armierte Nachricht mit einem der `keys`.
+    /// Entschlüsselt eine armierte Nachricht mit einem der `keys` (ohne Signaturprüfung; nur
+    /// für Daten, deren Echtheit anders gesichert ist, z. B. eine signierte Passphrase).
     pub(crate) fn decrypt(&self, keys: &[&PrivateKey<P>], armored: &str) -> CoreResult<Vec<u8>> {
         let data = self
             .p
@@ -110,6 +118,64 @@ impl<P: PGPProviderSync> DriveCrypto<P> {
         Ok(data.as_bytes().to_vec())
     }
 
+    /// Entschlüsselt und verlangt eine gültige eingebettete Signatur von einem der `verifiers`.
+    fn decrypt_verified(
+        &self,
+        keys: &[&PrivateKey<P>],
+        verifiers: &[PublicKey<P>],
+        armored: &str,
+        what: &'static str,
+    ) -> CoreResult<Vec<u8>> {
+        let data = self
+            .p
+            .new_decryptor()
+            .with_decryption_keys(keys.iter().copied())
+            .with_verification_keys(verifiers)
+            .decrypt(armored, DataEncoding::Armor)
+            .map_err(crypto(what))?;
+        data.verification_result()
+            .map_err(|_| CoreError::RemoteRejected(format!("drive crypto: {what} signature")))?;
+        Ok(data.as_bytes().to_vec())
+    }
+
+    /// Prüft eine abgetrennte armierte Signatur über `data`.
+    pub(crate) fn verify_detached(
+        &self,
+        verifiers: &[PublicKey<P>],
+        data: &[u8],
+        signature: &str,
+        what: &'static str,
+    ) -> CoreResult<()> {
+        if verifiers.is_empty() {
+            return Err(CoreError::RemoteRejected(format!(
+                "drive crypto: {what}: no verification key"
+            )));
+        }
+        self.p
+            .new_verifier()
+            .with_verification_keys(verifiers)
+            .verify_detached(data, signature.as_bytes(), DataEncoding::Armor)
+            .map(drop)
+            .map_err(|_| CoreError::RemoteRejected(format!("drive crypto: {what} signature")))
+    }
+
+    /// Öffentliche Schlüssel (zum Prüfen von Signaturen).
+    pub(crate) fn public_keys<'a>(
+        &self,
+        keys: impl IntoIterator<Item = &'a PrivateKey<P>>,
+    ) -> CoreResult<Vec<PublicKey<P>>>
+    where
+        P: 'a,
+    {
+        keys.into_iter()
+            .map(|k| {
+                self.p
+                    .private_key_to_public_key(k)
+                    .map_err(crypto("public key"))
+            })
+            .collect()
+    }
+
     /// Passphrase-geschützten armierten Schlüssel importieren.
     pub(crate) fn import_key(&self, armored: &str, passphrase: &[u8]) -> CoreResult<PrivateKey<P>> {
         self.p
@@ -117,41 +183,64 @@ impl<P: PGPProviderSync> DriveCrypto<P> {
             .map_err(crypto("import key"))
     }
 
-    /// Share-Key: Passphrase ist an einen Adress-Key verschlüsselt.
+    /// Share-Key: Passphrase ist an einen Adress-Key verschlüsselt und von ihm signiert.
     pub(crate) fn unlock_share(
         &self,
         address_keys: &[UnlockedAddressKey<P>],
+        verifiers: &[PublicKey<P>],
         key: &str,
         passphrase: &str,
+        signature: Option<&str>,
     ) -> CoreResult<PrivateKey<P>> {
         let keys: Vec<&PrivateKey<P>> = address_keys.iter().map(|k| &k.private_key).collect();
         let pass = self.decrypt(&keys, passphrase)?;
+        let signature = signature.ok_or_else(|| {
+            CoreError::RemoteRejected("drive crypto: share passphrase is not signed".into())
+        })?;
+        self.verify_detached(verifiers, &pass, signature, "share passphrase")?;
         self.import_key(key, &pass)
     }
 
-    /// Node-Key: Passphrase ist an den Schlüssel des Elternknotens verschlüsselt.
+    /// Node-Key: Passphrase ist an den Schlüssel des Elternknotens verschlüsselt und von einem
+    /// Adress-Key signiert (`NodePassphraseSignature`).
     pub(crate) fn unlock_node(
         &self,
         parent: &PrivateKey<P>,
+        verifiers: &[PublicKey<P>],
         node_key: &str,
         node_passphrase: &str,
+        signature: Option<&str>,
     ) -> CoreResult<PrivateKey<P>> {
         let pass = self.decrypt(&[parent], node_passphrase)?;
+        let signature = signature.ok_or_else(|| {
+            CoreError::RemoteRejected("drive crypto: node passphrase is not signed".into())
+        })?;
+        self.verify_detached(verifiers, &pass, signature, "node passphrase")?;
         self.import_key(node_key, &pass)
     }
 
-    pub(crate) fn decrypt_name(&self, parent: &PrivateKey<P>, armored: &str) -> CoreResult<String> {
-        let bytes = self.decrypt(&[parent], armored)?;
+    /// Name eines Knotens: an den Eltern-Key verschlüsselt, von einem Adress-Key signiert.
+    pub(crate) fn decrypt_name(
+        &self,
+        parent: &PrivateKey<P>,
+        verifiers: &[PublicKey<P>],
+        armored: &str,
+    ) -> CoreResult<String> {
+        let bytes = self.decrypt_verified(&[parent], verifiers, armored, "name")?;
         String::from_utf8(bytes).map_err(|_| CoreError::RemoteRejected("drive crypto: name".into()))
     }
 
-    /// `NodeHashKey` eines Ordners (an den eigenen Node-Key verschlüsselt).
+    /// `NodeHashKey` eines Ordners (an den eigenen Node-Key verschlüsselt und von ihm – bei
+    /// älteren Clients vom Adress-Key – signiert).
     pub(crate) fn decrypt_hash_key(
         &self,
         node: &PrivateKey<P>,
+        verifiers: &[PublicKey<P>],
         armored: &str,
     ) -> CoreResult<Vec<u8>> {
-        self.decrypt(&[node], armored)
+        let mut allowed = self.public_keys([node])?;
+        allowed.extend(verifiers.iter().cloned());
+        self.decrypt_verified(&[node], &allowed, armored, "hash key")
     }
 
     pub(crate) fn encrypt(
@@ -261,20 +350,39 @@ impl<P: PGPProviderSync> DriveCrypto<P> {
         })
     }
 
-    /// Session-Key aus dem `ContentKeyPacket` (base64) einer bestehenden Datei.
+    /// Session-Key aus dem `ContentKeyPacket` (base64) einer bestehenden Datei; die Signatur
+    /// des Node-Keys über den Klartext-Key (`ContentKeyPacketSignature`) muss passen.
     pub(crate) fn session_key(
         &self,
         node: &PrivateKey<P>,
         packet_b64: &str,
+        signature: Option<&str>,
     ) -> CoreResult<SessionKey<P>> {
         let packet = STANDARD
             .decode(packet_b64)
             .map_err(|_| CoreError::RemoteRejected("drive crypto: key packet base64".into()))?;
-        self.p
+        let session_key = self
+            .p
             .new_decryptor()
             .with_decryption_key(node)
             .decrypt_session_key(&packet)
-            .map_err(crypto("session key"))
+            .map_err(crypto("session key"))?;
+        let signature = signature.ok_or_else(|| {
+            CoreError::RemoteRejected("drive crypto: content key is not signed".into())
+        })?;
+        {
+            let (raw, _) = self
+                .p
+                .session_key_export(&session_key)
+                .map_err(crypto("session key export"))?;
+            self.verify_detached(
+                &self.public_keys([node])?,
+                raw.as_ref(),
+                signature,
+                "content key",
+            )?;
+        }
+        Ok(session_key)
     }
 
     /// Verschlüsselt einen Block (nur Datenpaket); die Klartext-Signatur des Adress-Keys wird an
@@ -405,16 +513,28 @@ mod tests {
                 .unwrap()
         };
         let address = generate();
+        let verifiers = c.public_keys([&address]).unwrap();
         let parent = generate();
 
         let folder = c.new_node(&parent, &[9; 32], &address, "Tasks").unwrap();
         let folder_key = c
-            .unlock_node(&parent, &folder.node_key, &folder.node_passphrase)
+            .unlock_node(
+                &parent,
+                &verifiers,
+                &folder.node_key,
+                &folder.node_passphrase,
+                Some(&folder.node_passphrase_signature),
+            )
             .unwrap();
-        assert_eq!(c.decrypt_name(&parent, &folder.name).unwrap(), "Tasks");
+        assert_eq!(
+            c.decrypt_name(&parent, &verifiers, &folder.name).unwrap(),
+            "Tasks"
+        );
         assert_eq!(folder.hash, name_hash(&[9; 32], "Tasks"));
         let (plain_hash_key, armored) = c.new_folder_hash_key(&folder_key).unwrap();
-        let hash_key = c.decrypt_hash_key(&folder_key, &armored).unwrap();
+        let hash_key = c
+            .decrypt_hash_key(&folder_key, &verifiers, &armored)
+            .unwrap();
         assert_eq!(hash_key, plain_hash_key);
         assert_eq!(
             hash_key.len(),
@@ -426,10 +546,22 @@ mod tests {
             .new_node(&folder_key, &hash_key, &address, "1-3.seg")
             .unwrap();
         let file_key = c
-            .unlock_node(&folder_key, &file.node_key, &file.node_passphrase)
+            .unlock_node(
+                &folder_key,
+                &verifiers,
+                &file.node_key,
+                &file.node_passphrase,
+                Some(&file.node_passphrase_signature),
+            )
             .unwrap();
         let content = c.new_content_key(&file.key).unwrap();
-        let session_key = c.session_key(&file_key, &content.key_packet_b64).unwrap();
+        let session_key = c
+            .session_key(
+                &file_key,
+                &content.key_packet_b64,
+                Some(&content.key_packet_signature),
+            )
+            .unwrap();
         let plain = b"segment".repeat(100);
         let block = c
             .encrypt_block(&content.session_key, &file.key, &address, &plain)
@@ -442,5 +574,58 @@ mod tests {
         let packet = STANDARD.decode(&content.key_packet_b64).unwrap();
         assert_eq!(packet_version(&packet, 1), 3, "PKESK v3");
         assert_eq!(packet_version(&block.data, 18), 1, "SEIPD v1");
+    }
+
+    /// Was der Server ohne die privaten Schlüssel des Nutzers erzeugen kann (Verschlüsselung an
+    /// öffentliche Schlüssel, eigene Signaturen), wird abgelehnt.
+    #[test]
+    fn unsigned_or_foreign_signed_material_is_rejected() {
+        let c = provider();
+        let generate = || {
+            c.p.new_key_generator()
+                .with_user_id("t", "t@example.org")
+                .generate()
+                .unwrap()
+        };
+        let address = generate();
+        let verifiers = c.public_keys([&address]).unwrap();
+        let server = generate();
+        let parent = generate();
+
+        // Vom Server erzeugter Knoten: Passphrase nicht oder mit fremdem Key signiert.
+        let forged = c.new_node(&parent, &[1; 32], &server, "Tasks").unwrap();
+        for signature in [None, Some(forged.node_passphrase_signature.as_str())] {
+            assert!(c
+                .unlock_node(
+                    &parent,
+                    &verifiers,
+                    &forged.node_key,
+                    &forged.node_passphrase,
+                    signature
+                )
+                .is_err());
+        }
+        // Name mit fremder Signatur bzw. ganz ohne.
+        assert!(c.decrypt_name(&parent, &verifiers, &forged.name).is_err());
+        let unsigned = c.encrypt(&parent, b"Tasks", None).unwrap();
+        assert!(c.decrypt_name(&parent, &verifiers, &unsigned).is_err());
+        // Hash-Key, den nur der Server signiert hat.
+        let (_, foreign_hash_key) = c.new_folder_hash_key(&server).unwrap();
+        let node = generate();
+        let reencrypted = c.encrypt(&node, b"hash-key", Some(&server)).unwrap();
+        assert!(c.decrypt_hash_key(&node, &verifiers, &reencrypted).is_err());
+        let _ = foreign_hash_key;
+        // Content-Key mit Signatur eines anderen Schlüssels.
+        let file = generate();
+        let content = c.new_content_key(&file).unwrap();
+        let other = c.new_content_key(&server).unwrap();
+        assert!(c
+            .session_key(
+                &file,
+                &content.key_packet_b64,
+                Some(&other.key_packet_signature)
+            )
+            .is_err());
+        assert!(c.session_key(&file, &content.key_packet_b64, None).is_err());
     }
 }

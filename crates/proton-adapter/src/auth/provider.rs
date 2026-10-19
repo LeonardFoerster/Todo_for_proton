@@ -125,6 +125,14 @@ impl ProtonAuthProvider {
             .find(|s| !s.is_empty())
             .unwrap_or_else(|| user.id.clone());
         let account_id = done.user_id.unwrap_or(user.id);
+        // Eine noch bestehende Sitzung ersetzen: serverseitig beenden, damit kein gültiges
+        // Token-Paar zurückbleibt (Fehler egal, sie verfällt sonst von selbst).
+        if self.session.info().await?.is_some() {
+            let request = Request::new(Method::DELETE, "/auth/v4", "/auth/v4");
+            if let Err(err) = self.session.send(request).await {
+                tracing::debug!(error = %err, "previous session not revoked");
+            }
+        }
         self.session
             .install(NewSession {
                 uid: done.uid,
@@ -155,10 +163,17 @@ impl AuthProvider for ProtonAuthProvider {
                 "/auth/v4/sessions/forks",
             ))
             .await?;
+        // Werte vom Server landen in URL-Pfad bzw. -Fragment: nur einfache Kennungen zulassen.
+        if !is_token(&init.selector) || !is_token(&init.user_code) {
+            return Err(CoreError::RemoteRejected("unexpected fork response".into()));
+        }
         let key = ForkKey::generate()?;
         let url = fork::login_url(&init.user_code, &key);
         let flow = AuthFlowId(random_id()?);
-        self.flows().insert(
+        let mut flows = self.flows();
+        // Abgelaufene, nie abgefragte Vorgänge nicht ewig behalten.
+        flows.retain(|_, f| f.started.elapsed() <= self.login_expires);
+        flows.insert(
             flow.0.clone(),
             Flow {
                 selector: Secret::new(init.selector),
@@ -166,6 +181,7 @@ impl AuthProvider for ProtonAuthProvider {
                 started: Instant::now(),
             },
         );
+        drop(flows);
         Ok(AuthStep::OpenBrowser {
             flow,
             url: url.expose().to_owned(),
@@ -186,7 +202,10 @@ impl AuthProvider for ProtonAuthProvider {
             }
             (entry.selector.clone(), entry.key.clone())
         };
-        let path = format!("/auth/v4/sessions/forks/{}", selector.expose());
+        let path = format!(
+            "/auth/v4/sessions/forks/{}",
+            fork::encode_uri_component(selector.expose())
+        );
         let result = self
             .session
             .api()
@@ -209,7 +228,10 @@ impl AuthProvider for ProtonAuthProvider {
             return Ok(());
         };
         // Selector serverseitig verwerfen; scheitert das, verfällt er von selbst.
-        let path = format!("/auth/v4/sessions/forks/{}", entry.selector.expose());
+        let path = format!(
+            "/auth/v4/sessions/forks/{}",
+            fork::encode_uri_component(entry.selector.expose())
+        );
         let request = Request::new(Method::DELETE, "/auth/v4/sessions/forks/{selector}", path);
         if let Err(err) = self.session.api().send(request).await {
             tracing::debug!(error = %err, "fork selector not discarded");
@@ -239,6 +261,12 @@ impl AuthProvider for ProtonAuthProvider {
         }
         self.session.clear().await
     }
+}
+
+/// Selector und User-Code: sichtbares ASCII ohne Leerzeichen, höchstens 256 Zeichen. In URLs
+/// werden sie zusätzlich prozentkodiert.
+fn is_token(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 256 && value.bytes().all(|b| b.is_ascii_graphic())
 }
 
 fn random_id() -> CoreResult<String> {

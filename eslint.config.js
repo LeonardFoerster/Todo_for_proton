@@ -6,7 +6,7 @@ import ts from "typescript-eslint";
 
 export default ts.config(
   {
-    ignores: ["**/dist/**", "**/node_modules/**", "target/**", "**/src-tauri/**", "**/generated/**", "spikes/**", "development/**"],
+    ignores: ["**/dist/**", "**/node_modules/**", "target/**", "**/src-tauri/**", "**/generated/**", "spikes/**", "development/**", "run-*/**"],
   },
   js.configs.recommended,
   ...ts.configs.recommended,

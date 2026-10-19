@@ -20,6 +20,12 @@ use crate::{
 pub const DEFAULT_BASE_URL: &str = "https://drive-api.proton.me";
 
 const ACCEPT: &str = "application/vnd.protonmail.v1+json";
+/// Höchstgröße einer API-Antwort (JSON). Großzügig für Ordnerseiten mit vielen Schlüsseln.
+const MAX_API_BODY: usize = 16 * 1024 * 1024;
+/// Höchstgröße eines Storage-Blocks (4 MiB Klartext plus Verschlüsselungs-Overhead).
+pub(crate) const MAX_STORAGE_BODY: usize = 5 * 1024 * 1024;
+/// Erlaubte Storage-Hosts: Proton-Domain (Unterdomains wie `fra-storage.proton.me`).
+const STORAGE_DOMAIN: &str = "proton.me";
 const LOG_TARGET: &str = "proton_adapter::http";
 
 /// Verbindungsparameter. `app_version` muss ehrlich sein:
@@ -130,6 +136,10 @@ impl ApiClient {
             ))
             .timeout(config.timeout)
             .connect_timeout(config.connect_timeout)
+            // Keine Weiterleitungen: Sie trügen `x-pm-uid` bzw. `pm-storage-token` zu einem
+            // anderen Ziel (reqwest entfernt nur Standard-Auth-Header).
+            .redirect(reqwest::redirect::Policy::none())
+            .https_only(config.base_url.starts_with("https://"))
             .build()
             .map_err(|e| CoreError::Internal(format!("http client: {}", e.without_url())))?;
         Ok(Self { http, config })
@@ -168,7 +178,7 @@ impl ApiClient {
         };
         let status = response.status();
         let retry_after_s = retry_after(response.headers());
-        let bytes = response.bytes().await.map_err(|e| transport(&e))?;
+        let bytes = read_capped(response, MAX_API_BODY).await?;
         let body: Option<Value> = serde_json::from_slice(&bytes).ok();
         let proton_code = body
             .as_ref()
@@ -204,7 +214,7 @@ impl ApiClient {
     ) -> Result<T, ApiError> {
         let what = format!("{} {}", req.method, req.route);
         let body = self.send(req).await?;
-        serde_json::from_value(body).map_err(|e| ApiError::Decode(format!("{what}: {e}")))
+        serde_json::from_value(body).map_err(|e| ApiError::Decode(decode_error(&what, &e)))
     }
 
     /// Lädt einen verschlüsselten Block zu einer Storage-URL hoch (Multipart-Feld `Block`).
@@ -214,6 +224,7 @@ impl ApiClient {
         token: &Secret,
         bytes: Vec<u8>,
     ) -> Result<(), ApiError> {
+        self.check_storage_url(url)?;
         let part = multipart::Part::bytes(bytes)
             .file_name("blob")
             .mime_str("application/octet-stream")
@@ -233,6 +244,7 @@ impl ApiClient {
         url: &str,
         token: &Secret,
     ) -> Result<Vec<u8>, ApiError> {
+        self.check_storage_url(url)?;
         let request = self
             .http
             .get(url)
@@ -257,11 +269,11 @@ impl ApiClient {
         })?;
         let status = response.status();
         let retry_after_s = retry_after(response.headers());
-        let bytes = response.bytes().await.map_err(|e| transport(&e))?;
+        let bytes = read_capped(response, MAX_STORAGE_BODY).await?;
         tracing::debug!(target: LOG_TARGET, %method, route = "<storage>",
             status = status.as_u16(), bytes = bytes.len(), elapsed_ms, "request");
         if status.is_success() {
-            Ok(bytes.to_vec())
+            Ok(bytes)
         } else {
             Err(ApiError::Status {
                 status: status.as_u16(),
@@ -271,6 +283,54 @@ impl ApiClient {
             })
         }
     }
+}
+
+impl ApiClient {
+    /// Storage-URLs kommen vom Server; das Token geht nur per HTTPS an Proton-Hosts (bzw. bei
+    /// einer abweichenden Basis-URL – Tests – an deren Origin).
+    fn check_storage_url(&self, url: &str) -> Result<(), ApiError> {
+        let rejected = || ApiError::Decode("storage url is not allowed".into());
+        let url = reqwest::Url::parse(url).map_err(|_| rejected())?;
+        let base = reqwest::Url::parse(&self.config.base_url).map_err(|_| rejected())?;
+        let host = url.host_str().unwrap_or_default();
+        let proton = url.scheme() == "https"
+            && (host == STORAGE_DOMAIN || host.ends_with(&format!(".{STORAGE_DOMAIN}")));
+        let same_origin = url.origin() == base.origin();
+        if proton || (same_origin && self.config.base_url != DEFAULT_BASE_URL) {
+            Ok(())
+        } else {
+            Err(rejected())
+        }
+    }
+}
+
+/// Liest den Body höchstens bis `max` Bytes (sonst Fehler statt unbegrenzt Speicher).
+async fn read_capped(mut response: reqwest::Response, max: usize) -> Result<Vec<u8>, ApiError> {
+    let too_large = || ApiError::Decode("response body too large".into());
+    if response
+        .content_length()
+        .is_some_and(|len| len > max as u64)
+    {
+        return Err(too_large());
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| transport(&e))? {
+        if bytes.len() + chunk.len() > max {
+            return Err(too_large());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+/// Decode-Fehler ohne den Text von serde (der Werte aus der Antwort zitieren kann).
+pub(crate) fn decode_error(what: &str, err: &serde_json::Error) -> String {
+    format!(
+        "{what}: unexpected response ({:?} at {}:{})",
+        err.classify(),
+        err.line(),
+        err.column()
+    )
 }
 
 fn storage_code(body: &[u8]) -> Option<i64> {
@@ -365,6 +425,57 @@ pub(crate) mod tests {
             .await
             .expect("ok");
         assert_eq!(body["User"]["Name"], "testuser");
+    }
+
+    #[test]
+    fn storage_urls_must_be_proton_https() {
+        let api = ApiClient::new(ApiConfig::new(APP_VERSION)).expect("client");
+        assert!(api
+            .check_storage_url("https://fra-storage.proton.me/storage/blocks/x")
+            .is_ok());
+        for bad in [
+            "http://fra-storage.proton.me/storage/blocks/x",
+            "https://proton.me.evil.example/x",
+            "https://evil.example/x",
+            "http://127.0.0.1:9/x",
+            "not a url",
+        ] {
+            assert!(api.check_storage_url(bad).is_err(), "{bad}");
+        }
+    }
+
+    /// Eine Weiterleitung wird nicht verfolgt (sie trüge Session- bzw. Storage-Header woandershin).
+    #[tokio::test]
+    async fn redirects_are_not_followed() {
+        let server = MockServer::start().await;
+        Mock::given(path("/start"))
+            .respond_with(ResponseTemplate::new(302).insert_header("location", "/elsewhere"))
+            .mount(&server)
+            .await;
+        Mock::given(path("/elsewhere"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "Code": 1000 })))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let err = client(&server)
+            .send(Request::get("/start", "/start"))
+            .await
+            .unwrap_err();
+        assert_eq!(err.status(), Some(302));
+    }
+
+    #[tokio::test]
+    async fn oversized_bodies_are_rejected() {
+        let server = MockServer::start().await;
+        Mock::given(path("/big"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![b' '; MAX_API_BODY + 1]))
+            .mount(&server)
+            .await;
+        let err = client(&server)
+            .send(Request::get("/big", "/big"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ApiError::Decode(_)), "{err:?}");
     }
 
     #[tokio::test]

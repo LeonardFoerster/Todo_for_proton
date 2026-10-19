@@ -60,6 +60,7 @@ macro_rules! repository_contract_tests {
             entity_state_tracks_field_clocks,
             apply_remote_creates_entities_and_sets_cursor,
             apply_remote_is_idempotent,
+            apply_remote_ignores_implausible_future_ops,
             apply_remote_merges_field_wise_with_local,
             apply_remote_delete_wins,
             apply_remote_task_without_list_goes_to_inbox,
@@ -113,6 +114,7 @@ pub fn run_all<R: TaskRepository>(make: impl Fn() -> R) {
     entity_state_tracks_field_clocks(make());
     apply_remote_creates_entities_and_sets_cursor(make());
     apply_remote_is_idempotent(make());
+    apply_remote_ignores_implausible_future_ops(make());
     apply_remote_merges_field_wise_with_local(make());
     apply_remote_delete_wins(make());
     apply_remote_task_without_list_goes_to_inbox(make());

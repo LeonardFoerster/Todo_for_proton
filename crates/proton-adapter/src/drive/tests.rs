@@ -423,3 +423,62 @@ fn wrong_key_password_is_rejected() {
         Err(CoreError::RemoteRejected(_))
     ));
 }
+
+/// Audit run-1: Der Server tauscht den Schlüssel des App-Ordners gegen einen eigenen. Ein neues
+/// Gerät darf den Ordner nicht öffnen und nichts hineinschreiben (sonst läse der Server den
+/// neu erzeugten Sync-Schlüssel mit).
+#[test]
+fn rekeyed_app_folder_is_rejected() {
+    for sign_with_own_key in [false, true] {
+        let env = env();
+        let a = env.device(64);
+        env.run(async {
+            a.open_app_root("Tasks").await.unwrap();
+            a.create(&path("manifest.json"), b"{}".to_vec())
+                .await
+                .unwrap();
+        });
+        env.fake.rekey_root_child(sign_with_own_key);
+        let uploads = env.fake.count_calls("POST", "/files");
+
+        let b = env.device(64);
+        let opened = env.run(b.open_app_root("Tasks"));
+        assert!(
+            matches!(opened, Err(CoreError::RemoteRejected(_))),
+            "{opened:?}"
+        );
+        assert!(env.run(b.read(&path("manifest.json"))).is_err());
+        assert!(env
+            .run(b.create(&path("keys/sync-key.enc"), vec![1; 37]))
+            .is_err());
+        assert_eq!(
+            env.fake.count_calls("POST", "/files"),
+            uploads,
+            "nichts hochgeladen"
+        );
+    }
+}
+
+/// Ausgetauschte Blöcke fallen über Hash und signiertes Manifest auf.
+#[test]
+fn tampered_blocks_are_rejected() {
+    let env = env();
+    let drive = env.device(16);
+    env.run(async {
+        drive.open_app_root("Tasks").await.unwrap();
+        drive
+            .create(
+                &path("devices/a.json"),
+                b"{\"name\": \"a\", \"x\": 1}".to_vec(),
+            )
+            .await
+            .unwrap();
+    });
+    env.fake.corrupt_blobs();
+    let other = env.device(16);
+    let read = env.run(other.read(&path("devices/a.json")));
+    assert!(
+        matches!(read, Err(CoreError::RemoteRejected(_))),
+        "{read:?}"
+    );
+}

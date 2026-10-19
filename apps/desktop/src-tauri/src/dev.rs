@@ -32,6 +32,7 @@ use crate::sync::SyncRunner;
 
 const REMOTE_ENV: &str = "TODO_REMOTE_DIR";
 const DELAY_ENV: &str = "TODO_REMOTE_DELAY_MS";
+#[cfg(debug_assertions)]
 const SELFTEST_ENV: &str = "TASKS_SELFTEST";
 /// Datei im Sync-Ordner, die eine abgelaufene Sitzung simuliert.
 const AUTH_REVOKED: &str = ".auth-revoked";
@@ -45,16 +46,16 @@ fn dev_env(name: &str) -> Option<String> {
 }
 
 /// Selbsttest-Suiten aus der Umgebung.
+#[cfg(debug_assertions)]
 pub fn selftest_suites() -> Option<String> {
     dev_env(SELFTEST_ENV)
 }
 
 /// Eine Zeile des Selbsttest-Berichts auf stdout (nur Debug-Builds).
+#[cfg(debug_assertions)]
 pub fn selftest_line(line: &str) {
-    if cfg!(debug_assertions) {
-        for part in line.lines() {
-            println!("SELFTEST {part}");
-        }
+    for part in line.lines() {
+        println!("SELFTEST {part}");
     }
 }
 

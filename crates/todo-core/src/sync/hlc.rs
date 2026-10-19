@@ -18,6 +18,12 @@ use crate::{
 /// die eigene HLC aber nicht vor (sonst „vergiftet" eine falsche Uhr alle Geräte).
 pub const MAX_CLOCK_DRIFT_MS: u64 = 24 * 60 * 60 * 1000;
 
+/// Absolute Obergrenze für `wall_ms` (2100-01-01 UTC). Ops darüber werden auf allen Geräten
+/// gleich verworfen: Ein einzelnes Register mit z. B. `u64::MAX` würde sonst jede spätere
+/// Änderung des Felds für immer überstimmen. Fest statt „jetzt + Drift", damit alle Geräte
+/// unabhängig von ihrer Uhr dieselbe Entscheidung treffen (Konvergenz).
+pub const MAX_WALL_MS: u64 = 4_102_444_800_000;
+
 /// Ein HLC-Zeitstempel. Eindeutig pro Op: jedes Gerät vergibt jeden Wert höchstens einmal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Hlc {

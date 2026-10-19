@@ -22,12 +22,20 @@ apps/desktop/src-tauri/target/
 *.swp
 .DS_Store
 
-# Lokale Secrets
+# Lokale Secrets (auch Ausgaben von Proton-Proben, Schlüssel, Sitzungen)
 .env
 .env.*
+*.pem
+*.key
+*.p12
+credentials.json
+*session*.json
 
 # Dev-CLI-Datenbank (todo-cli)
 todo-dev.sqlite3*
 
 # Tauri-generierte Schemas
 apps/desktop/src-tauri/gen/
+
+# Lokale Audit-Ausgaben (security-audit run-N)
+/run-*/

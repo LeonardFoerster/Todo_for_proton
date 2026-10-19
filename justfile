@@ -39,7 +39,7 @@ desktop-dev:
 
 # Desktop-App als Release-Binary bauen (ohne Pakete; Packaging kommt nach dem Prototyp)
 desktop-build:
-    cd apps/desktop && pnpm install --frozen-lockfile && pnpm tauri build --no-bundle
+    cd apps/desktop && pnpm install --frozen-lockfile && pnpm tauri build --no-bundle -- --locked
 
 # Release-Build für den aktuellen Benutzer installieren/aktualisieren (~/.local, Starter „Tasks“)
 desktop-install:
