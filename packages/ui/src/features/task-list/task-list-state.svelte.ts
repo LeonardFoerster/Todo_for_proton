@@ -39,7 +39,8 @@ export class TaskListState {
   items = $state.raw<TaskSummaryDto[]>([]);
   loaded = $state(false);
 
-  private cursor: string | null = null;
+  /** Reaktiv: `hasMore` steuert, ob die Liste beim Scrollen nachlädt (FIX-12). */
+  private cursor = $state<string | null>(null);
   private loadingMore = false;
   /**
    * Gerade abgehakt: bleiben für die Haken-Animation kurz stehen und verlassen dann die offene
