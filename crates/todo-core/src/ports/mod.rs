@@ -33,7 +33,10 @@ pub use cipher::{Cipher, KeyStore, SecretBytes};
 pub use clock::Clock;
 #[cfg(any(test, feature = "test-support"))]
 pub use clock::{FixedClock, SteppingClock};
-pub use note_repository::NoteRepository;
+pub use note_repository::{
+    check_page_limit, decode_tree_cursor, encode_tree_cursor, visible_folders, FolderItemsQuery,
+    NoteHit, NoteRepository, NoteSnippet, NoteSummary, NoteTreeItem, NOTE_SEARCH_MIN_BODY_TERM,
+};
 pub use remote_store::{
     RemoteChanges, RemoteCursor, RemoteDir, RemoteEntry, RemoteListing, RemotePath, RemoteStore,
     Revision,

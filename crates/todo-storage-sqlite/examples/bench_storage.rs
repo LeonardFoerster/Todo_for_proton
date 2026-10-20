@@ -6,6 +6,8 @@
 //!
 //! Ziele (`architecture.md` §6): erste Seite (50) der Inbox < 5 ms, einzelner Commit < 2 ms,
 //! Sammelaktionen mit 1 000 IDs < 50 ms (P0-01), Suche (50 Treffer) < 16 ms (P4-05).
+//! Notizen (`notes.md` §9, 2 000 Notizen à ~20 KB): Ordner mit 500 Einträgen < 30 ms, Notiz
+//! öffnen < 50 ms, Autosave-Commit < 10 ms, Suche p95 < 16 ms.
 
 use std::{
     sync::Arc,
@@ -18,8 +20,11 @@ use todo_core::{
         dto::{CreateTaskDto, MoveTargetDto},
         CoreApi,
     },
-    domain::{SortKey, Task, TaskList, Timestamp},
-    ports::{ChangeSet, Clock, PageRequest, SearchQuery, SmartView, TaskQuery, TaskRepository},
+    domain::{Note, NoteFolder, NoteKind, SortKey, Task, TaskList, Timestamp},
+    ports::{
+        ChangeSet, Clock, FolderItemsQuery, NoteRepository, PageRequest, SearchQuery, SmartView,
+        TaskQuery, TaskRepository, PAGE_LIMIT_MAX,
+    },
 };
 use todo_storage_sqlite::SqliteTaskRepository;
 
@@ -270,4 +275,248 @@ fn main() {
         }),
         Some(ms(50)),
     );
+
+    bench_notes();
+}
+
+const NOTES: usize = 2_000;
+const NOTE_BYTES: usize = 20 * 1024;
+
+/// Wortschatz für [`note_text`]: häufige Füllwörter vorn, dahinter 5 000 Kunstwörter aus Silben.
+fn vocabulary() -> Vec<String> {
+    const STOP: [&str; 12] = [
+        "und", "die", "der", "ist", "von", "mit", "das", "für", "auf", "nicht", "eine", "sich",
+    ];
+    const SYLLABLES: [&str; 20] = [
+        "ra", "ko", "ver", "gen", "zen", "bas", "tor", "lem", "ma", "sa", "funk", "ti", "on", "ab",
+        "lei", "tung", "inte", "gral", "ei", "wert",
+    ];
+    let mut words: Vec<String> = STOP.iter().map(|w| (*w).to_owned()).collect();
+    for i in 0..5_000usize {
+        let mut w = String::new();
+        let mut x = i;
+        for _ in 0..3 {
+            w.push_str(SYLLABLES[x % SYLLABLES.len()]);
+            x /= SYLLABLES.len();
+        }
+        words.push(format!("{w}{}", i % 7));
+    }
+    words
+}
+
+/// Pseudozufälliger Text (gleich bei jedem Lauf) mit Zipf-ähnlicher Verteilung: Füllwörter in
+/// jeder Notiz, Fachwörter selten – damit der Trigram-Index realistisch gefüllt ist.
+fn note_text(seed: usize, words: &[String]) -> String {
+    let mut out = format!("# Notiz {seed}\n\n");
+    let mut x = seed.wrapping_mul(2_654_435_761) | 1;
+    while out.len() < NOTE_BYTES {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        #[allow(
+            clippy::cast_precision_loss,
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss
+        )]
+        let index = {
+            let u = (x % 1_000_000) as f64 / 1_000_000.0;
+            ((u * u * u) * words.len() as f64) as usize
+        };
+        out.push_str(&words[index.min(words.len() - 1)]);
+        out.push(if x.is_multiple_of(11) { '\n' } else { ' ' });
+    }
+    out
+}
+
+/// Wie [`note_text`], aber nur 24 Wörter: jedes steht in jeder Notiz dutzendfach. Schlimmster
+/// Fall für den Trigram-Index (nur zur Information).
+fn uniform_text(seed: usize) -> String {
+    const WORDS: [&str; 24] = [
+        "Grenzwert",
+        "Folge",
+        "Reihe",
+        "Konvergenz",
+        "Integral",
+        "Ableitung",
+        "Matrix",
+        "Vektor",
+        "Eigenwert",
+        "Basis",
+        "Raum",
+        "Funktion",
+        "stetig",
+        "beschränkt",
+        "monoton",
+        "Beweis",
+        "Satz",
+        "Lemma",
+        "Definition",
+        "Beispiel",
+        "Aufgabe",
+        "Lösung",
+        "und",
+        "die",
+    ];
+    let mut out = String::new();
+    let mut x = seed.wrapping_mul(2_654_435_761) | 1;
+    while out.len() < NOTE_BYTES {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        out.push_str(WORDS[x % WORDS.len()]);
+        out.push(' ');
+    }
+    out
+}
+
+fn bench_notes() {
+    bench_note_store(false);
+    bench_note_store(true);
+}
+
+/// `uniform`: Korpus aus [`uniform_text`] – dann nur die Suche messen.
+fn bench_note_store(uniform: bool) {
+    let words = vocabulary();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let repo =
+        Arc::new(SqliteTaskRepository::open(dir.path().join("notes.sqlite3")).expect("open"));
+    let clock = SystemClock;
+    let ms = Duration::from_millis;
+
+    // 40 Ordner; der erste mit 500 Notizen, die übrigen 1 500 verteilt.
+    let start = Instant::now();
+    let mut folders = Vec::new();
+    let mut key = SortKey::first();
+    let mut set = ChangeSet::new();
+    for i in 0..40 {
+        let folder =
+            NoteFolder::new(None, &format!("Ordner {i}"), key.clone(), &clock).expect("folder");
+        key = SortKey::between(Some(&key), None).expect("key");
+        folders.push(folder.clone());
+        set = set.upsert_note_folder(folder);
+    }
+    block_on(repo.commit(set)).expect("folders");
+    let keys = SortKey::n_between(None, None, NOTES).expect("keys");
+    let mut notes = Vec::with_capacity(NOTES);
+    for chunk in 0..NOTES / 100 {
+        let mut set = ChangeSet::new();
+        for i in 0..100 {
+            let n = chunk * 100 + i;
+            let folder = if n < 500 { 0 } else { 1 + n % 39 };
+            let mut note = Note::new(
+                Some(folders[folder].id()),
+                NoteKind::Markdown,
+                keys[n].clone(),
+                &clock,
+            );
+            let text = if uniform {
+                uniform_text(n)
+            } else {
+                note_text(n, &words)
+            };
+            note.set_body(&text, None, &clock).expect("body");
+            notes.push(note.id());
+            set = set.upsert_note(note);
+        }
+        block_on(repo.commit(set)).expect("notes");
+    }
+    println!(
+        "\n{NOTES} Notizen à ~{} KB{} in 40 Ordnern eingefügt in {:.1?}\n",
+        NOTE_BYTES / 1024,
+        if uniform { " (24-Wörter-Korpus)" } else { "" },
+        start.elapsed()
+    );
+
+    if uniform {
+        let search = |text: &str| {
+            let query = SearchQuery {
+                text: text.into(),
+                limit: 50,
+            };
+            block_on(repo.search_notes(&query)).expect("search")
+        };
+        report(
+            "Notes-Suche, 24-Wörter-Korpus („konvergenz“)",
+            measure(RUNS / 4, || drop(search("konvergenz"))),
+            None,
+        );
+        return;
+    }
+    let full_folder = folders[0].id();
+    report(
+        "Notes: Ordner mit 500 Einträgen aufklappen",
+        measure(RUNS, || {
+            let page = block_on(repo.list_folder_items(
+                FolderItemsQuery {
+                    folder: Some(full_folder),
+                    include_trashed: false,
+                },
+                PageRequest::first(PAGE_LIMIT_MAX),
+            ))
+            .expect("items");
+            assert_eq!(page.items.len(), 500);
+        }),
+        Some(ms(30)),
+    );
+    report(
+        "Notes: Notiz öffnen (get_note, 20 KB)",
+        measure(RUNS, || {
+            drop(block_on(repo.get_note(notes[777])).expect("get"));
+        }),
+        Some(ms(50)),
+    );
+
+    let mut note = block_on(repo.get_note(notes[42]))
+        .expect("get")
+        .expect("note");
+    let mut round = 0;
+    report(
+        "Notes: Autosave-Commit (20 KB, Outbox ersetzt)",
+        measure(RUNS, || {
+            round += 1;
+            let base = note.body_rev();
+            let text = format!("{}{round}", note.body());
+            note.set_body(&text, base, &clock).expect("body");
+            block_on(repo.commit(ChangeSet::new().upsert_note(note.clone()))).expect("save");
+            note = block_on(repo.get_note(notes[42]))
+                .expect("get")
+                .expect("note");
+        }),
+        Some(ms(10)),
+    );
+    report(
+        "Notes: Autosave-Commit (20 KB, neue Revision)",
+        measure(RUNS, || {
+            round += 1;
+            // Wie nach einem Upload-Versuch: die vorige Revision ist herausgegeben.
+            block_on(repo.freeze_outbox(u64::MAX)).expect("freeze");
+            let base = note.body_rev();
+            let text = format!("{}{round}", note.body());
+            note.set_body(&text, base, &clock).expect("body");
+            block_on(repo.commit(ChangeSet::new().upsert_note(note.clone()))).expect("save");
+            note = block_on(repo.get_note(notes[42]))
+                .expect("get")
+                .expect("note");
+        }),
+        Some(ms(10)),
+    );
+
+    let search = |text: &str| {
+        let query = SearchQuery {
+            text: text.into(),
+            limit: 50,
+        };
+        block_on(repo.search_notes(&query)).expect("search")
+    };
+    for (name, text) in [
+        ("Notes-Suche: Füllwort in jeder Notiz („und“)", "und"),
+        ("Notes-Suche: Teilwort, häufig („ver“)", "ver"),
+        ("Notes-Suche: Fachwort („kogenra“)", "kogenra"),
+        ("Notes-Suche: Name („notiz 1234“)", "notiz 1234"),
+        ("Notes-Suche: zwei Wörter („und kogen“)", "und kogen"),
+        ("Notes-Suche: kurzes Wort, nur Namen („ra“)", "ra"),
+        ("Notes-Suche: kein Treffer („xyzzy“)", "xyzzy"),
+    ] {
+        report(name, measure(RUNS / 4, || drop(search(text))), Some(ms(16)));
+    }
 }

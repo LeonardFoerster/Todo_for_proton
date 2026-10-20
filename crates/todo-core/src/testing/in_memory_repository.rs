@@ -12,8 +12,9 @@ use crate::{
         TaskList, TaskListId, Timestamp,
     },
     ports::{
-        Change, ChangeSet, CommitReceipt, EntityRef, NoteRepository, Page, PageRequest, SmartView,
-        TaskQuery, TaskRepository, TaskSummary, PAGE_LIMIT_MAX,
+        check_page_limit, decode_tree_cursor, encode_tree_cursor, Change, ChangeSet, CommitReceipt,
+        EntityRef, FolderItemsQuery, NoteRepository, NoteSummary, NoteTreeItem, Page, PageRequest,
+        SmartView, TaskQuery, TaskRepository, TaskSummary, PAGE_LIMIT_MAX,
     },
     sync::{
         self, EntityState, FieldName, HlcState, Op, OpClock, OpKind, Registers, RemoteBatch,
@@ -226,6 +227,78 @@ impl NoteRepository for InMemoryTaskRepository {
 
     async fn get_note_folder(&self, id: NoteFolderId) -> CoreResult<Option<NoteFolder>> {
         Ok(self.state().folders.get(&id).cloned())
+    }
+
+    async fn list_note_folders(&self) -> CoreResult<Vec<NoteFolder>> {
+        let mut folders: Vec<NoteFolder> = self.state().folders.values().cloned().collect();
+        folders.sort_by(|a, b| (a.sort_key(), a.id()).cmp(&(b.sort_key(), b.id())));
+        Ok(folders)
+    }
+
+    async fn list_folder_items(
+        &self,
+        query: FolderItemsQuery,
+        page: PageRequest,
+    ) -> CoreResult<Page<NoteTreeItem>> {
+        check_page_limit(page.limit)?;
+        let after = page.cursor.as_deref().map(decode_tree_cursor).transpose()?;
+        let state = self.state();
+        let folders = state
+            .folders
+            .values()
+            .filter(|f| f.parent() == query.folder)
+            .cloned()
+            .map(NoteTreeItem::Folder);
+        let notes = state
+            .notes
+            .values()
+            .filter(|n| n.folder() == query.folder)
+            .map(|n| NoteTreeItem::Note(NoteSummary::from(n)));
+        let mut items: Vec<(_, NoteTreeItem)> = folders
+            .chain(notes)
+            .filter(|item| query.include_trashed || !item.is_trashed())
+            .map(|item| (item.position(), item))
+            .filter(|(pos, _)| after.as_ref().is_none_or(|a| pos > a))
+            .collect();
+        items.sort_by(|a, b| a.0.cmp(&b.0));
+        let limit = page.limit as usize;
+        let next_cursor = (items.len() > limit).then(|| encode_tree_cursor(&items[limit - 1].0));
+        Ok(Page {
+            items: items
+                .into_iter()
+                .take(limit)
+                .map(|(_, item)| item)
+                .collect(),
+            next_cursor,
+        })
+    }
+
+    async fn list_trashed_notes(&self) -> CoreResult<Vec<NoteSummary>> {
+        Ok(self
+            .state()
+            .notes
+            .values()
+            .filter(|n| n.is_trashed())
+            .map(NoteSummary::from)
+            .collect())
+    }
+
+    async fn last_note_sort_key(
+        &self,
+        folder: Option<NoteFolderId>,
+    ) -> CoreResult<Option<SortKey>> {
+        let state = self.state();
+        let notes = state
+            .notes
+            .values()
+            .filter(|n| n.folder() == folder)
+            .map(Note::sort_key);
+        let folders = state
+            .folders
+            .values()
+            .filter(|f| f.parent() == folder)
+            .map(NoteFolder::sort_key);
+        Ok(notes.chain(folders).max().cloned())
     }
 }
 
@@ -446,6 +519,22 @@ impl ReplicaStore for State {
 
     fn revisions(&mut self, note: NoteId) -> CoreResult<RevisionSet> {
         Ok(self.revisions.get(&note).cloned().unwrap_or_default())
+    }
+
+    fn revision_heads(&mut self, note: NoteId) -> CoreResult<Vec<Revision>> {
+        Ok(self
+            .revisions
+            .get(&note)
+            .map(|revs| revs.heads().into_iter().cloned().collect())
+            .unwrap_or_default())
+    }
+
+    fn revision(&mut self, note: NoteId, id: RevisionId) -> CoreResult<Option<Revision>> {
+        Ok(self
+            .revisions
+            .get(&note)
+            .and_then(|revs| revs.get(id))
+            .cloned())
     }
 
     fn put_revision(&mut self, note: NoteId, rev: &Revision) -> CoreResult<()> {

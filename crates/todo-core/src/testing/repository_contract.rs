@@ -13,7 +13,7 @@
 
 use futures::executor::block_on;
 
-pub use super::{note_sync_contract::*, sync_contract::*};
+pub use super::{note_contract::*, note_sync_contract::*, sync_contract::*};
 
 use crate::{
     domain::{Due, LocalDay, NaiveDate, SortKey, Task, TaskId, TaskList, TaskListId, Timestamp},
@@ -73,6 +73,10 @@ macro_rules! repository_contract_tests {
             inboxes_of_two_devices_merge,
             sync_cursors_and_values_roundtrip,
             entity_states_export_everything,
+            notes_and_folders_roundtrip,
+            folder_items_are_mixed_paged_and_filter_trash,
+            search_notes_by_name_and_body,
+            search_follows_edits_and_deletes,
         );
         $crate::repository_contract_tests!(@pairs $make;
             note_body_edits_coalesce_until_frozen,
@@ -150,6 +154,10 @@ pub fn run_all<R: TaskRepository>(make: impl Fn() -> R) {
     inboxes_of_two_devices_merge(make());
     sync_cursors_and_values_roundtrip(make());
     entity_states_export_everything(make());
+    notes_and_folders_roundtrip(make());
+    folder_items_are_mixed_paged_and_filter_trash(make());
+    search_notes_by_name_and_body(make());
+    search_follows_edits_and_deletes(make());
     note_body_edits_coalesce_until_frozen(&make);
     concurrent_note_edits_merge_cleanly(&make);
     conflicting_note_edits_create_one_copy(&make);

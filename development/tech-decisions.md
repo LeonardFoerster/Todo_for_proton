@@ -692,6 +692,23 @@ brauchen keine Merge-Revision; die nächste Bearbeitung nennt sie alle als Elter
   enthält) und `Flush` (sofort, wenn etwas wartet – Notiz-/Moduswechsel). Nachtrag zu ADR-022.
 - **Ports:** `NoteRepository` (Lesen) ist Supertrait von `TaskRepository`; so bleibt es bei einem Repository für
   `CoreApi`, Engine und Shells. Neue Sync-Methoden `freeze_outbox`, `revision_ops`, `prune_revisions`.
+**Nachtrag N5-04 (2026-10-20):**
+- `NoteRepository`: `list_note_folders` (alle, wenige), `list_folder_items` (Ordner und Notizen gemischt nach
+  `sort_key`, Cursor `sort_key:id`, Papierkorb nur auf Wunsch), `list_trashed_notes`, `last_note_sort_key`,
+  `search_notes` (Standard O(n), SQLite über `notes_fts`). Treffer, Rang (Name vor Inhalt, dann zuletzt geändert)
+  und Ausschnitt (±40 Zeichen, Position in UTF-16 für den Editor) berechnet der Core (`NoteHit::of`), damit alle
+  Speicher dasselbe liefern; der Index sucht nur Kandidaten.
+- **Suche nur aus Wörtern unter 3 Zeichen** sucht nur im Namen (`NOTE_SEARCH_MIN_BODY_TERM`): `LIKE` über ~40 MB
+  Inhalt dauerte 82 ms, und ein, zwei Buchstaben treffen ohnehin fast jede Notiz. Gemischte Suchen („ve konvergenz")
+  prüfen kurze Wörter weiter im Inhalt (dann nur unter den Index-Kandidaten).
+- SQLite: `notes.body` ist die **letzte Spalte** (Überlaufseiten werden für Baum, Papierkorb und Suche nicht
+  geladen: Ordner mit 500 Einträgen 2,7 → 0,3 ms); Eltern der Revisionen zusätzlich als Kanten
+  (`note_revision_parents`), damit ein Autosave nur die Köpfe statt aller Revisionstexte lädt (22 → 2 ms bei
+  200 Revisionen); die Suche rankt erst IDs und liest dann höchstens `limit` Notizen.
+- Messung (`bench_storage`, 2 000 Notizen à 20 KB, Wortschatz mit Füllwörtern): Ordner 500 Einträge 0,3 ms, Notiz
+  öffnen 0,02 ms, Autosave 1,4 ms (ersetzt) / 2,3 ms (neue Revision), Suche p95 0,1–14,5 ms. Schlimmster Fall
+  (24 Wörter, jedes in jeder Notiz dutzendfach): 19 ms, davon 13 ms FTS selbst – nur zur Information.
+- `TaskRepository` wird **nicht** in `Repository` umbenannt (optional laut Plan; rein kosmetisch, viele Stellen).
 
 ---
 

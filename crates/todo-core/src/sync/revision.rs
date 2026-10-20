@@ -137,14 +137,15 @@ impl RevisionSet {
     /// gleichlautende Köpfe zusammen, §4.4).
     #[must_use]
     pub fn parents_for_edit(&self, base: Option<RevisionId>) -> Vec<RevisionId> {
-        let Some(base) = base.filter(|b| self.revs.contains_key(b)) else {
+        // Eine unbekannte Basis (nicht geladen oder aufgeräumt) bleibt Elternteil: Sonst würde die
+        // Bearbeitung zur ersten Revision und ein späterer Merge hielte den ganzen Text für neu.
+        let Some(base) = base else {
             return Vec::new();
         };
         let heads = self.heads();
-        if !heads.iter().any(|h| h.id == base) {
+        let Some(text) = heads.iter().find(|h| h.id == base).map(|h| &h.text) else {
             return vec![base];
-        }
-        let text = &self.revs[&base].text;
+        };
         let mut parents: Vec<RevisionId> = heads
             .iter()
             .filter(|h| h.text == *text)
@@ -426,6 +427,11 @@ mod tests {
         parents.sort();
         assert_eq!(set.parents_for_edit(Some(mb.id)), parents);
         assert_eq!(set.parents_for_edit(None), Vec::<RevisionId>::new());
+        let unknown = RevisionId {
+            device: DeviceId::new(),
+            seq: 1,
+        };
+        assert_eq!(set.parents_for_edit(Some(unknown)), [unknown]);
     }
 
     #[test]

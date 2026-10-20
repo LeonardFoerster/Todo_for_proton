@@ -59,7 +59,7 @@ benachbarte Zeilen festlegen und testen.
 **Fertig wenn:** Property-Tests aus `notes.md` §4.8 (Konvergenz, merge3-Eigenschaften), `just check` + `just wasm`
 grün, Größen im Commit genannt. Commit `feat(core): note revisions and three-way merge`.
 
-### [ ] N5-03 · Sync-Format, Outbox-Zusammenfassen, Engine
+### [x] N5-03 · Sync-Format, Outbox-Zusammenfassen, Engine — 2026-10-20 · 4ddb16a
 **Lies vorher:** `sync/op.rs`, `sync/replica.rs`, `todo-sync` (Push, Scheduler, Snapshot), ADR-017, ADR-022.
 **Schritte:** `EntityRef::Note`/`NoteFolder`, neue `FieldName`-Codes, `OpKind::Revise` (alles angehängt);
 Snapshot-Format um Revisionen erweitert (Köpfe + gemeinsame Vorfahren); Outbox ersetzt eine ungepushte `Revise` derselben
@@ -67,6 +67,10 @@ Notiz; Scheduler mit eigener Höchstwartezeit für Inhalte (30 s) und Sofort-Aus
 nach `apply_remote` `ResolveNoteHeads` auslösen. Golden File `ops_v1_notes.bin`, `ops_v1.bin` unverändert.
 **Fertig wenn:** Szenario-Tests aus `notes.md` §4.8 grün; Test „unbekannte Variante → Segment übersprungen, kein
 Absturz"; `just check` grün. Commit `feat(sync): notes in the op log`.
+> Notiz: Tabellen und `ReplicaStore` für SQLite schon hier (ohne sie kompiliert der Workspace nicht), ebenso der
+> Lese-Port `NoteRepository` mit `get_note`/`get_note_folder` für die Contract-Tests. Szenarien zusätzlich als
+> Contract-Fälle mit zwei Repositories (`testing/note_sync_contract.rs`, für beide Speicher) und über die Engine
+> (`todo-sync/tests/notes.rs`). Details ADR-029, Nachtrag N5-03.
 
 ### [ ] N5-04 · SQLite: Tabellen, `NoteRepository`, FTS, Aufräumen
 **Lies vorher:** `notes.md` §3.5, §4.5, §7, Migrationen, `mapping.rs`, Repository-Contract, ADR-014, ADR-027.

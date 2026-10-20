@@ -9,8 +9,10 @@ use todo_core::{
         TaskListId,
     },
     ports::{
-        Change, ChangeSet, CommitReceipt, EntityRef, NoteRepository, Page, PageRequest,
-        SearchQuery, SmartView, TaskQuery, TaskRepository, TaskSummary, PAGE_LIMIT_MAX,
+        check_page_limit, decode_tree_cursor, encode_tree_cursor, Change, ChangeSet, CommitReceipt,
+        EntityRef, FolderItemsQuery, NoteHit, NoteRepository, NoteSummary, NoteTreeItem, Page,
+        PageRequest, SearchQuery, SmartView, TaskQuery, TaskRepository, TaskSummary,
+        PAGE_LIMIT_MAX,
     },
     sync::{self, EntityState, Op, RemoteBatch, RemoteReceipt, ReplicaStore},
     CoreError, CoreResult,
@@ -20,10 +22,11 @@ use crate::{
     connection::Database,
     error::{corrupt, storage},
     mapping::{
-        read_list, read_sort_key, read_summary, read_task, write_folder, write_list, write_note,
-        write_task, LIST_COLUMNS, TASK_COLUMNS,
+        read_folder, read_list, read_note, read_note_summary, read_sort_key, read_summary,
+        read_task, read_tree_item, write_folder, write_list, write_note, write_task,
+        FOLDER_COLUMNS, LIST_COLUMNS, NOTE_SUMMARY_COLUMNS, TASK_COLUMNS,
     },
-    query::{list_tasks_sql, search_tasks_sql, Position},
+    query::{list_tasks_sql, search_notes_sql, search_tasks_sql, Position},
     sync_store::{self, SqliteReplica},
 };
 
@@ -68,6 +71,137 @@ impl NoteRepository for SqliteTaskRepository {
     async fn get_note_folder(&self, id: NoteFolderId) -> CoreResult<Option<NoteFolder>> {
         self.db
             .call(move |conn| sync_store::read_folder_row(conn, id))
+            .await
+    }
+
+    async fn list_note_folders(&self) -> CoreResult<Vec<NoteFolder>> {
+        self.db
+            .call(|conn| {
+                let mut stmt = conn
+                    .prepare_cached(&format!(
+                        "SELECT {FOLDER_COLUMNS} FROM note_folders ORDER BY sort_key, id"
+                    ))
+                    .map_err(storage)?;
+                let mut rows = stmt.query([]).map_err(storage)?;
+                let mut folders = Vec::new();
+                while let Some(row) = rows.next().map_err(storage)? {
+                    folders.push(read_folder(row)?);
+                }
+                Ok(folders)
+            })
+            .await
+    }
+
+    async fn list_folder_items(
+        &self,
+        query: FolderItemsQuery,
+        page: PageRequest,
+    ) -> CoreResult<Page<NoteTreeItem>> {
+        check_page_limit(page.limit)?;
+        let after = page.cursor.as_deref().map(decode_tree_cursor).transpose()?;
+        let limit = page.limit as usize;
+        self.db
+            .call(move |conn| {
+                let mut stmt = conn
+                    .prepare_cached(&format!(
+                        "SELECT 0, {FOLDER_COLUMNS}, NULL, NULL, NULL FROM note_folders
+                         WHERE parent_id IS :folder AND (:all OR trashed_at IS NULL)
+                           AND (sort_key > :key OR (sort_key = :key AND id > :id))
+                         UNION ALL
+                         SELECT 1, id, folder_id, name, sort_key, created_at, trashed_at,
+                                kind, modified_at, size FROM notes
+                         WHERE folder_id IS :folder AND (:all OR trashed_at IS NULL)
+                           AND (sort_key > :key OR (sort_key = :key AND id > :id))
+                         ORDER BY 5, 2 LIMIT :limit"
+                    ))
+                    .map_err(storage)?;
+                let (key, id) = after.map_or((String::new(), String::new()), |(k, id)| {
+                    (k.as_str().to_owned(), id)
+                });
+                let mut rows = stmt
+                    .query(rusqlite::named_params! {
+                        ":folder": query.folder.map(|f| f.to_string()),
+                        ":all": query.include_trashed,
+                        ":key": key,
+                        ":id": id,
+                        ":limit": i64::try_from(limit + 1).unwrap_or(i64::MAX),
+                    })
+                    .map_err(storage)?;
+                let mut items = Vec::with_capacity(limit + 1);
+                while let Some(row) = rows.next().map_err(storage)? {
+                    let is_note: i64 = row.get(0).map_err(storage)?;
+                    items.push(read_tree_item(row, is_note == 1)?);
+                }
+                let next_cursor = (items.len() > limit).then(|| {
+                    items.truncate(limit);
+                    encode_tree_cursor(&items[limit - 1].position())
+                });
+                Ok(Page { items, next_cursor })
+            })
+            .await
+    }
+
+    async fn list_trashed_notes(&self) -> CoreResult<Vec<NoteSummary>> {
+        self.db
+            .call(|conn| {
+                let mut stmt = conn
+                    .prepare_cached(&format!(
+                        "SELECT {NOTE_SUMMARY_COLUMNS} FROM notes WHERE trashed_at IS NOT NULL
+                         ORDER BY trashed_at, id"
+                    ))
+                    .map_err(storage)?;
+                let mut rows = stmt.query([]).map_err(storage)?;
+                let mut out = Vec::new();
+                while let Some(row) = rows.next().map_err(storage)? {
+                    out.push(read_note_summary(row, 0)?);
+                }
+                Ok(out)
+            })
+            .await
+    }
+
+    async fn last_note_sort_key(
+        &self,
+        folder: Option<NoteFolderId>,
+    ) -> CoreResult<Option<SortKey>> {
+        self.db
+            .call(move |conn| {
+                let mut stmt = conn
+                    .prepare_cached(
+                        "SELECT max(sort_key) FROM (
+                             SELECT max(sort_key) AS sort_key FROM notes WHERE folder_id IS ?1
+                             UNION ALL
+                             SELECT max(sort_key) FROM note_folders WHERE parent_id IS ?1)",
+                    )
+                    .map_err(storage)?;
+                let key: Option<String> = stmt
+                    .query_row([folder.map(|f| f.to_string())], |row| row.get(0))
+                    .map_err(storage)?;
+                key.map(|k| SortKey::parse(&k).map_err(|e| corrupt("sort key", e)))
+                    .transpose()
+            })
+            .await
+    }
+
+    async fn search_notes(&self, query: &SearchQuery) -> CoreResult<Vec<NoteHit>> {
+        let terms = query.terms()?;
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
+        let (sql, params) = search_notes_sql(&terms, query.limit);
+        self.db
+            .call(move |conn| {
+                let mut stmt = conn.prepare_cached(&sql).map_err(storage)?;
+                let mut rows = stmt.query(params_from_iter(params)).map_err(storage)?;
+                let mut hits = Vec::new();
+                while let Some(row) = rows.next().map_err(storage)? {
+                    // Der Index findet Kandidaten; Treffer, Rang und Ausschnitt nach den Regeln
+                    // des Cores (gleiches Ergebnis wie ohne Index).
+                    hits.extend(NoteHit::of(&terms, &read_note(row)?));
+                }
+                hits.sort_by_key(NoteHit::rank);
+                Ok(hits)
+            })
             .await
     }
 }
@@ -430,6 +564,28 @@ mod tests {
         }
         async fn get_note_folder(&self, id: NoteFolderId) -> CoreResult<Option<NoteFolder>> {
             self.repo.get_note_folder(id).await
+        }
+        async fn list_note_folders(&self) -> CoreResult<Vec<NoteFolder>> {
+            self.repo.list_note_folders().await
+        }
+        async fn list_folder_items(
+            &self,
+            query: FolderItemsQuery,
+            page: PageRequest,
+        ) -> CoreResult<Page<NoteTreeItem>> {
+            self.repo.list_folder_items(query, page).await
+        }
+        async fn list_trashed_notes(&self) -> CoreResult<Vec<NoteSummary>> {
+            self.repo.list_trashed_notes().await
+        }
+        async fn last_note_sort_key(
+            &self,
+            folder: Option<NoteFolderId>,
+        ) -> CoreResult<Option<SortKey>> {
+            self.repo.last_note_sort_key(folder).await
+        }
+        async fn search_notes(&self, query: &SearchQuery) -> CoreResult<Vec<NoteHit>> {
+            self.repo.search_notes(query).await
         }
     }
 

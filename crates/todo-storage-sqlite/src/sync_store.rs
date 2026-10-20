@@ -497,7 +497,78 @@ impl ReplicaStore for SqliteReplica<'_> {
         Ok(revs)
     }
 
+    fn revision_heads(&mut self, note: NoteId) -> CoreResult<Vec<Revision>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT rev_device, rev_seq, hlc, parents, text FROM note_revisions r
+                 WHERE note_id = ?1 AND NOT EXISTS (
+                     SELECT 1 FROM note_revision_parents p
+                     WHERE p.note_id = r.note_id AND p.parent_device = r.rev_device
+                       AND p.parent_seq = r.rev_seq)",
+            )
+            .map_err(storage)?;
+        let mut rows = stmt.query([note.to_string()]).map_err(storage)?;
+        let mut heads = Vec::new();
+        while let Some(row) = rows.next().map_err(storage)? {
+            heads.push(read_revision(row, 0)?);
+        }
+        heads.sort_by_key(|r| r.hlc);
+        Ok(heads)
+    }
+
+    fn revision(&mut self, note: NoteId, id: RevisionId) -> CoreResult<Option<Revision>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT rev_device, rev_seq, hlc, parents, text FROM note_revisions
+                 WHERE note_id = ?1 AND rev_device = ?2 AND rev_seq = ?3",
+            )
+            .map_err(storage)?;
+        let mut rows = stmt
+            .query(rusqlite::params![
+                note.to_string(),
+                id.device.to_string(),
+                sql_seq(id.seq)
+            ])
+            .map_err(storage)?;
+        rows.next()
+            .map_err(storage)?
+            .map(|row| read_revision(row, 0))
+            .transpose()
+    }
+
     fn put_revision(&mut self, note: NoteId, rev: &Revision) -> CoreResult<()> {
+        let (note_id, device, seq) = (
+            note.to_string(),
+            rev.id.device.to_string(),
+            sql_seq(rev.id.seq),
+        );
+        self.conn
+            .prepare_cached(
+                "DELETE FROM note_revision_parents
+                 WHERE note_id = ?1 AND rev_device = ?2 AND rev_seq = ?3",
+            )
+            .and_then(|mut stmt| stmt.execute(rusqlite::params![note_id, device, seq]))
+            .map_err(storage)?;
+        let mut edge = self
+            .conn
+            .prepare_cached(
+                "INSERT OR IGNORE INTO note_revision_parents
+                 (note_id, parent_device, parent_seq, rev_device, rev_seq)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            )
+            .map_err(storage)?;
+        for parent in &rev.parents {
+            edge.execute(rusqlite::params![
+                note_id,
+                parent.device.to_string(),
+                sql_seq(parent.seq),
+                device,
+                seq
+            ])
+            .map_err(storage)?;
+        }
         let parents: Vec<OpId> = rev.parents.iter().map(|p| (*p).into()).collect();
         let parents = postcard::to_allocvec(&parents).expect("serializing to a Vec cannot fail");
         self.conn
@@ -524,26 +595,30 @@ impl ReplicaStore for SqliteReplica<'_> {
     fn remove_revisions(&mut self, note: NoteId, ids: Option<&[RevisionId]>) -> CoreResult<()> {
         match ids {
             None => {
-                self.conn
-                    .prepare_cached("DELETE FROM note_revisions WHERE note_id = ?1")
-                    .and_then(|mut stmt| stmt.execute([note.to_string()]))
-                    .map_err(storage)?;
+                for table in ["note_revisions", "note_revision_parents"] {
+                    self.conn
+                        .prepare_cached(&format!("DELETE FROM {table} WHERE note_id = ?1"))
+                        .and_then(|mut stmt| stmt.execute([note.to_string()]))
+                        .map_err(storage)?;
+                }
             }
             Some(ids) => {
-                let mut stmt = self
-                    .conn
-                    .prepare_cached(
-                        "DELETE FROM note_revisions
-                         WHERE note_id = ?1 AND rev_device = ?2 AND rev_seq = ?3",
-                    )
-                    .map_err(storage)?;
-                for id in ids {
-                    stmt.execute(rusqlite::params![
-                        note.to_string(),
-                        id.device.to_string(),
-                        sql_seq(id.seq)
-                    ])
-                    .map_err(storage)?;
+                for table in ["note_revisions", "note_revision_parents"] {
+                    let mut stmt = self
+                        .conn
+                        .prepare_cached(&format!(
+                            "DELETE FROM {table}
+                             WHERE note_id = ?1 AND rev_device = ?2 AND rev_seq = ?3"
+                        ))
+                        .map_err(storage)?;
+                    for id in ids {
+                        stmt.execute(rusqlite::params![
+                            note.to_string(),
+                            id.device.to_string(),
+                            sql_seq(id.seq)
+                        ])
+                        .map_err(storage)?;
+                    }
                 }
             }
         }

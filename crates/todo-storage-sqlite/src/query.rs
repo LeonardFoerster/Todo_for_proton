@@ -235,6 +235,53 @@ pub(crate) fn search_tasks_sql(terms: &[String], limit: u32) -> (String, Vec<Val
     (sql, params)
 }
 
+/// Notizen, die nicht im wirksamen Papierkorb liegen (selbst oder über einen Ordner).
+const VISIBLE_NOTES: &str = "trashed_at IS NULL AND (folder_id IS NULL OR folder_id NOT IN (
+        WITH RECURSIVE gone (id) AS (
+            SELECT id FROM note_folders WHERE trashed_at IS NOT NULL
+            UNION SELECT f.id FROM note_folders f JOIN gone ON f.parent_id = gone.id)
+        SELECT id FROM gone))";
+
+/// Suche über Name und Inhalt der Notizen (gleiche Regeln wie [`search_tasks_sql`]). Liefert
+/// [`NOTE_COLUMNS`](crate::mapping::NOTE_COLUMNS); Ausschnitte berechnet der Core.
+pub(crate) fn search_notes_sql(terms: &[String], limit: u32) -> (String, Vec<Value>) {
+    let (long, short): (Vec<&String>, Vec<&String>) =
+        terms.iter().partition(|t| t.chars().count() >= TRIGRAM);
+    let mut conditions: Vec<String> = vec![VISIBLE_NOTES.into()];
+    let mut params: Vec<Value> = Vec::new();
+    if !long.is_empty() {
+        conditions.push("rowid IN (SELECT rowid FROM notes_fts WHERE notes_fts MATCH ?)".into());
+        let all: Vec<String> = long.iter().map(|t| fts_string(t)).collect();
+        params.push(Value::Text(all.join(" ")));
+    }
+    for term in &short {
+        if long.is_empty() {
+            // Nur kurze Wörter: nur im Namen (NOTE_SEARCH_MIN_BODY_TERM).
+            conditions.push(r"name LIKE ? ESCAPE '\'".into());
+        } else {
+            conditions.push(r"(name LIKE ? ESCAPE '\' OR body LIKE ? ESCAPE '\')".into());
+            params.push(Value::Text(like_pattern(term)));
+        }
+        params.push(Value::Text(like_pattern(term)));
+    }
+    let mut in_name: Vec<String> = Vec::new();
+    for term in terms {
+        in_name.push(r"name LIKE ? ESCAPE '\'".into());
+        params.push(Value::Text(like_pattern(term)));
+    }
+    params.push(Value::Integer(i64::from(limit)));
+    // Erst nur IDs ranken (ohne die großen Inhalte durch den Sortierer zu schieben), dann die
+    // höchstens `limit` Treffer vollständig lesen.
+    let sql = format!(
+        "SELECT {} FROM notes WHERE rowid IN (
+             SELECT rowid FROM notes WHERE {} ORDER BY NOT ({}), modified_at DESC, id LIMIT ?)",
+        crate::mapping::NOTE_COLUMNS,
+        conditions.join(" AND "),
+        in_name.join(" OR "),
+    );
+    (sql, params)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -29,8 +29,9 @@ use crate::{
         TaskListId, TaskParts,
     },
     ports::{
-        ChangeSet, Clock, CommitReceipt, EntityRef, MaybeSend, MaybeSync, NoteRepository, Page,
-        PageRequest, SearchQuery, TaskQuery, TaskRepository, TaskSummary,
+        ChangeSet, Clock, CommitReceipt, EntityRef, FolderItemsQuery, MaybeSend, MaybeSync,
+        NoteHit, NoteRepository, NoteSummary, NoteTreeItem, Page, PageRequest, SearchQuery,
+        TaskQuery, TaskRepository, TaskSummary,
     },
     sync::{EntityState, Op, RemoteBatch, RemoteReceipt},
     CoreError, CoreResult,
@@ -440,6 +441,33 @@ impl NoteRepository for NotifyingRepository {
 
     async fn get_note_folder(&self, id: NoteFolderId) -> CoreResult<Option<NoteFolder>> {
         self.inner.get_note_folder(id).await
+    }
+
+    async fn list_note_folders(&self) -> CoreResult<Vec<NoteFolder>> {
+        self.inner.list_note_folders().await
+    }
+
+    async fn list_folder_items(
+        &self,
+        query: FolderItemsQuery,
+        page: PageRequest,
+    ) -> CoreResult<Page<NoteTreeItem>> {
+        self.inner.list_folder_items(query, page).await
+    }
+
+    async fn list_trashed_notes(&self) -> CoreResult<Vec<NoteSummary>> {
+        self.inner.list_trashed_notes().await
+    }
+
+    async fn last_note_sort_key(
+        &self,
+        folder: Option<NoteFolderId>,
+    ) -> CoreResult<Option<SortKey>> {
+        self.inner.last_note_sort_key(folder).await
+    }
+
+    async fn search_notes(&self, query: &SearchQuery) -> CoreResult<Vec<NoteHit>> {
+        self.inner.search_notes(query).await
     }
 }
 

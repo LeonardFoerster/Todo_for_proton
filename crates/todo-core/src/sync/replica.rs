@@ -121,11 +121,22 @@ pub trait ReplicaStore {
 
     // --- Notizen (ADR-029) ---
 
-    /// Gespeicherte Revisionen einer Notiz.
+    /// Alle gespeicherten Revisionen einer Notiz (mit Texten – nur für das Zusammenlegen).
     ///
     /// # Errors
     /// Speicherfehler.
     fn revisions(&mut self, note: NoteId) -> CoreResult<RevisionSet>;
+    /// Nur die Köpfe (Revisionen, die keine andere gespeicherte als Elternteil nennt). Der
+    /// häufige Fall – ein Kopf – kommt so ohne die Texte älterer Revisionen aus.
+    ///
+    /// # Errors
+    /// Speicherfehler.
+    fn revision_heads(&mut self, note: NoteId) -> CoreResult<Vec<Revision>>;
+    /// Eine einzelne Revision.
+    ///
+    /// # Errors
+    /// Speicherfehler.
+    fn revision(&mut self, note: NoteId, id: RevisionId) -> CoreResult<Option<Revision>>;
     /// Legt eine Revision ab oder ersetzt die mit gleicher ID.
     ///
     /// # Errors
@@ -322,14 +333,18 @@ fn record_body<S: ReplicaStore + ?Sized>(
 ) -> CoreResult<Note> {
     let id = note.id();
     let entity = EntityRef::Note(id);
-    let mut revs = store.revisions(id)?;
+    let mut revs = load_revisions(store, id)?;
     let current = revs.resolve();
     // Unverändert gegenüber der eigenen Basis (z. B. Umbenennen, während eine Remote-Revision
     // eintraf): keine Revision, sonst würde der alte Stand neu geschrieben.
-    let unedited = note
-        .body_rev()
-        .and_then(|base| revs.get(base))
-        .is_some_and(|base| base.text == note.body());
+    let base_text = match note.body_rev() {
+        Some(base) => match revs.get(base) {
+            Some(rev) => Some(rev.text.clone()),
+            None => store.revision(id, base)?.map(|rev| rev.text),
+        },
+        None => None,
+    };
+    let unedited = base_text.is_some_and(|text| text == note.body());
     if note.body() != current.text && !unedited {
         let parents = revs.parents_for_edit(note.body_rev());
         let replaceable = store.replaceable_op(entity, None)?.filter(|op| {
@@ -383,10 +398,13 @@ fn settle<S: ReplicaStore + ?Sized>(
     note: &Note,
     revs: &mut RevisionSet,
 ) -> CoreResult<Resolution> {
-    let resolution = revs.resolve();
+    let mut resolution = revs.resolve();
     if !resolution.needs_merge {
         return Ok(resolution);
     }
+    // Verschiedene Köpfe: für die Merge-Basis alle Revisionen laden (selten).
+    *revs = store.revisions(note.id())?;
+    resolution = revs.resolve();
     let op = booking.clock.stamp(
         booking.now,
         EntityRef::Note(note.id()),
@@ -449,6 +467,17 @@ fn conflict_copy_name(name: &NoteName, loser: &ConflictLoser) -> String {
     let keep = NOTE_NAME_MAX_CHARS.saturating_sub(suffix.chars().count());
     let base: String = name.as_str().chars().take(keep).collect();
     format!("{}{suffix}", base.trim_end())
+}
+
+/// Revisionen für die Auflösung: nur die Köpfe, solange sie denselben Text haben (ein Kopf ist
+/// der Normalfall); sonst alle.
+fn load_revisions<S: ReplicaStore + ?Sized>(store: &mut S, id: NoteId) -> CoreResult<RevisionSet> {
+    let heads = store.revision_heads(id)?;
+    if heads.windows(2).all(|w| w[0].text == w[1].text) {
+        Ok(RevisionSet::from_revisions(heads))
+    } else {
+        store.revisions(id)
+    }
 }
 
 /// Die `Revise`-Op einer gespeicherten Revision (Snapshot-Export).
@@ -596,9 +625,9 @@ pub fn apply_remote<S: ReplicaStore + ?Sized>(
                 .iter()
                 .any(|op| matches!(op.kind, OpKind::Revise { .. }))
         {
-            let mut known = store.revisions(id)?;
             for rev in ops.iter().filter_map(revision_of) {
-                if known.insert(rev.clone()) {
+                let known = store.revision(id, rev.id)?;
+                if known.is_none_or(|k| k.hlc < rev.hlc) {
                     store.put_revision(id, &rev)?;
                     revs_added = true;
                 }
@@ -759,7 +788,7 @@ fn rematerialize_note<S: ReplicaStore + ?Sized>(
         Some(EntityState::Live(registers)) => match materialize_note(id, registers) {
             Some(mut parts) => {
                 parts.folder = placed_folder(store, parts.folder)?;
-                let mut revs = store.revisions(id)?;
+                let mut revs = load_revisions(store, id)?;
                 let skeleton = Note::from_parts(parts.clone())?;
                 let resolution = settle(store, booking, &skeleton, &mut revs)?;
                 let newest_head = resolution

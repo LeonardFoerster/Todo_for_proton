@@ -9,7 +9,7 @@ use todo_core::{
         NoteParts, Priority, RevisionId, SortKey, TagId, Task, TaskId, TaskList, TaskListId,
         TaskListParts, TaskParts, TaskStatus, Timestamp,
     },
-    ports::TaskSummary,
+    ports::{NoteSummary, NoteTreeItem, TaskSummary},
     CoreResult,
 };
 
@@ -28,6 +28,10 @@ pub(crate) const NOTE_COLUMNS: &str = "id, folder_id, name, auto_name, kind, bod
      sort_key, created_at, modified_at, trashed_at";
 
 pub(crate) const FOLDER_COLUMNS: &str = "id, parent_id, name, sort_key, created_at, trashed_at";
+
+/// Spalten für [`NoteSummary`] – ohne Inhalt.
+pub(crate) const NOTE_SUMMARY_COLUMNS: &str =
+    "id, folder_id, name, sort_key, created_at, trashed_at, kind, modified_at, size";
 
 const UPSERT_NOTE: &str = "\
     INSERT INTO notes (id, folder_id, name, auto_name, kind, body, body_rev, size, sort_key,
@@ -184,6 +188,46 @@ pub(crate) fn read_folder(row: &Row<'_>) -> CoreResult<NoteFolder> {
         trashed_at: get::<Option<i64>>(row, 5)?.map(Timestamp::from_millis),
     };
     NoteFolder::from_parts(parts).map_err(|e| corrupt("note folder", e))
+}
+
+/// Liest eine Zeile mit [`NOTE_SUMMARY_COLUMNS`] ab Spalte `at`.
+pub(crate) fn read_note_summary(row: &Row<'_>, at: usize) -> CoreResult<NoteSummary> {
+    Ok(NoteSummary {
+        id: note_id(&get::<String>(row, at)?)?,
+        folder: get::<Option<String>>(row, at + 1)?
+            .as_deref()
+            .map(folder_id)
+            .transpose()?,
+        name: get(row, at + 2)?,
+        sort_key: sort_key(&get::<String>(row, at + 3)?)?,
+        created_at: Timestamp::from_millis(get(row, at + 4)?),
+        trashed_at: get::<Option<i64>>(row, at + 5)?.map(Timestamp::from_millis),
+        kind: decode_kind(get(row, at + 6)?)?,
+        modified_at: Timestamp::from_millis(get(row, at + 7)?),
+        size: u64::try_from(get::<i64>(row, at + 8)?).map_err(|e| corrupt("note size", e))?,
+    })
+}
+
+/// Eintrag der Baumseite ab Spalte 1: Ordner ([`FOLDER_COLUMNS`]) bzw. Notiz
+/// ([`NOTE_SUMMARY_COLUMNS`] – die ersten sechs Spalten liegen gleich).
+pub(crate) fn read_tree_item(row: &Row<'_>, is_note: bool) -> CoreResult<NoteTreeItem> {
+    if is_note {
+        return read_note_summary(row, 1).map(NoteTreeItem::Note);
+    }
+    let parts = NoteFolderParts {
+        id: folder_id(&get::<String>(row, 1)?)?,
+        parent: get::<Option<String>>(row, 2)?
+            .as_deref()
+            .map(folder_id)
+            .transpose()?,
+        name: get(row, 3)?,
+        sort_key: sort_key(&get::<String>(row, 4)?)?,
+        created_at: Timestamp::from_millis(get(row, 5)?),
+        trashed_at: get::<Option<i64>>(row, 6)?.map(Timestamp::from_millis),
+    };
+    NoteFolder::from_parts(parts)
+        .map(NoteTreeItem::Folder)
+        .map_err(|e| corrupt("note folder", e))
 }
 
 pub(crate) fn note_id(s: &str) -> CoreResult<NoteId> {
