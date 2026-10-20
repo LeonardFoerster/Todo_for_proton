@@ -51,6 +51,7 @@ const TEXT: [string, string][] = [
   ["color-danger", "color-bg-subtle"],
   ["color-danger", "color-bg-selected"],
   ["color-danger", "color-bg-hover"],
+  ["color-danger", "color-danger-subtle"],
   ["color-on-accent", "color-danger-fill"],
   ["color-on-accent", "color-danger-fill-hover"],
   ["color-warning", "color-bg"],

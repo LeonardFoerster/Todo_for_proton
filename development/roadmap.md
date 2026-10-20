@@ -283,7 +283,8 @@ den Rand – wirkt wie ein Debug-Rahmen.
 **Fertig wenn:**
 - Kontrasttest grün; Screenshot dunkel mit Tastatur-Cursor ohne eckigen Rahmen; Selbsttest Fokus.
 
-### [ ] P5-05 · Kopfzeile mit Kontext, Suche sichtbar
+### [x] P5-05 · Kopfzeile mit Kontext, Suche sichtbar — 2026-10-21 · b48f62b
+> Notiz: Kopfzeile 80 px (Titel + Unterzeile), Unterzeile aus `lib/subtitle.ts` („Nichts offen“ bei 0). Suche als Feld unter der Brand-Zeile (eingeklappt Icon). Einstellungen in der Sync-Fußzeile – damit auch im Modus „Notes“ erreichbar (vorher nur über die Palette); „Anmelden“ dort ohne Icon, damit „Nur lokal“ nicht abgeschnitten wird.
 **Lies vorher:** `App.svelte` (`.pane-header`, `.header-actions`, `openPalette`, `openSettings`),
 `features/sidebar/Sidebar.svelte`, `SyncFooter.svelte`, `lib/lists.svelte.ts` (`counts`).
 

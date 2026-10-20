@@ -51,7 +51,7 @@ describe("Heute: Überfällig + Heute", () => {
     expect(todayRow.querySelector(".due")).toBeNull();
     // Seitenleiste: 3 in „Heute“, davon 2 überfällig.
     const nav = screen.getByRole("navigation", { name: "Navigation" });
-    await waitFor(() => expect(within(nav).getByRole("link", { name: /^Heute/ }).textContent).toMatch(/überfällig:\s2\s*, gesamt:\s3/));
+    await waitFor(() => expect(within(nav).getByRole("link", { name: /^Heute/ }).textContent).toMatch(/3, davon 2 überfällig/));
   });
 
   it("moves all overdue to today in one call, with undo", async () => {
