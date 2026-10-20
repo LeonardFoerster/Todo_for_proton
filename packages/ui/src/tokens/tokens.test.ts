@@ -70,6 +70,8 @@ const CONTROLS: [string, string][] = [
   ["color-focus-outline", "color-bg-raised"],
   ["color-focus-outline", "color-bg-hover"],
   ["color-focus-outline", "color-bg-selected"],
+  // Cursor-Balken auf der Auswahlfläche (Zeile, Karte – P5-04).
+  ["color-accent", "color-bg-selected"],
 ];
 
 describe.each([

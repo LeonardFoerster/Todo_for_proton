@@ -9,6 +9,11 @@ const params = new URLSearchParams(location.search);
 // Für Screenshots: ?theme=dark|light, ?collapsed=1
 const theme = params.get("theme");
 if (theme === "dark" || theme === "light") setThemePreference(theme);
+// ?layout=board|list: Darstellung (P5-Screenshots); ?mode=notes|tasks: Modus.
+for (const [param, key] of [["layout", "tasks.layout"], ["mode", "tasks.mode"]]) {
+  const value = params.get(param);
+  if (value) localStorage.setItem(key, value);
+}
 if (params.has("collapsed")) localStorage.setItem("tasks.sidebar-collapsed", params.get("collapsed") === "1" ? "1" : "0");
 const client = new FakeCoreClient({ latencyMs: Number(params.get("latency") ?? 0), loginPolls: Number(params.get("polls") ?? 1) });
 if (params.get("seed") === "0") await client.ensureInbox();

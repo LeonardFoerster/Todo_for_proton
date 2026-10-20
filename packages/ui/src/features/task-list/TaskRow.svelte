@@ -173,10 +173,12 @@
     background: var(--color-bg-selected);
     opacity: 0.6;
   }
+  /* Tastatur-Umriss folgt der Rundung der Zeile (P5-04), nie eckig bis an den Rand. */
   .row:focus-visible,
   :global([data-input="keyboard"]) .row:focus {
     outline: 2px solid var(--color-focus-outline);
     outline-offset: -2px;
+    border-radius: var(--radius-md);
   }
   :global([data-input="pointer"]) .row:focus:not(:focus-visible) {
     outline: none;

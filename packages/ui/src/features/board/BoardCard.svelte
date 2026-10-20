@@ -65,6 +65,7 @@
     padding: 0 var(--space-2) var(--space-2);
   }
   .card {
+    position: relative;
     display: flex;
     align-items: flex-start;
     gap: var(--space-2);
@@ -82,9 +83,20 @@
   .card:hover {
     border-color: var(--color-border-strong);
   }
+  /* Cursor wie in der Liste (P5-04): Auswahlfläche + Akzentbalken links, kein Akzentrahmen. */
   .card.cursor {
-    border-color: var(--color-accent);
+    border-color: transparent;
     background: var(--color-bg-selected);
+  }
+  .card.cursor::before {
+    content: "";
+    position: absolute;
+    left: -1px;
+    top: 10px;
+    bottom: 10px;
+    width: 3px;
+    border-radius: 0 2px 2px 0;
+    background: var(--color-accent);
   }
   .card.dragging {
     opacity: 0.5;
@@ -92,7 +104,7 @@
   .card:focus-visible,
   :global([data-input="keyboard"]) .card:focus {
     outline: 2px solid var(--color-focus-outline);
-    outline-offset: 1px;
+    outline-offset: -1px;
   }
   :global([data-input="pointer"]) .card:focus:not(:focus-visible) {
     outline: none;

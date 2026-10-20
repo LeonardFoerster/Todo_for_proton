@@ -249,7 +249,8 @@ echten WebView nur per Selbsttest (`apps/desktop/src/selftest.ts`). Nach jeder A
 **Fertig wenn:**
 - Vitest grün (inkl. Drag-Tests `sort-delete`, `bulk-actions`); Screenshot bei 1440 px zeigt die Spalte.
 
-### [ ] P5-03 · Priorität, Überfällig, Meta-Zeile
+### [x] P5-03 · Priorität, Überfällig, Meta-Zeile — 2026-10-21 · f4304d1
+> Notiz: Notiz-Icon `sticky-note` statt `notebook-text` (Notebook-Icons stehen schon für den Modus „Notes“). Statt `meta.css` eine kleine Komponente `TaskMeta.svelte` für Zeile und Karte; `priority.ts` mit `priorityLabel`/`priorityInLabel`. Prioritätsring zusätzlich zart gefüllt.
 **Lies vorher:** `TaskRow.svelte` (Meta, `priorityLabel`), `features/board/BoardCard.svelte`,
 `components/Checkbox.svelte` (`tone`), `due-views.test.ts`.
 
