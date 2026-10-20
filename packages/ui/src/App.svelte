@@ -296,6 +296,19 @@
     showPalette = true;
   }
 
+  /** Notiz aus der Suche: in den Modus „Notes", öffnen, Cursor auf den Treffer (`notes.md` §7). */
+  async function openNote(id: string, hit: { offset: number; length: number } | null) {
+    await switchMode("notes");
+    if (!notes) return;
+    const note = await client.notes.get(id).catch(() => null);
+    if (!note) return;
+    await notes.reveal(note.folderId);
+    notes.select = hit ? { id, start: hit.offset, end: hit.offset + hit.length } : null;
+    notes.open(id);
+    notes.cursor = `n:${id}`;
+    notes.focusEditor();
+  }
+
   function openFromPalette(id: string) {
     selectedId = id;
     openId = id;
@@ -1019,6 +1032,8 @@
       newTaskText = text;
       showNewTask = true;
     }}
+    mode={appMode.mode}
+    onopennote={(id, hit) => void openNote(id, hit)}
     onclose={() => (showPalette = false)}
   />
 {/if}

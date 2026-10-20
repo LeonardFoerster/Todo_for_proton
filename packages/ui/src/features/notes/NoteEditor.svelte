@@ -101,15 +101,32 @@
       if (textarea) {
         textarea.value = loaded.body;
         const view = readNoteView(id);
-        const end = Math.min(view.end ?? 0, loaded.body.length);
-        textarea.setSelectionRange(Math.min(view.start ?? 0, end), end);
-        textarea.scrollTop = view.scroll ?? 0;
-        if (view.preview && loaded.kind === "markdown") showPreview(true);
+        const jump = notes.select?.id === id ? notes.select : null;
+        notes.select = null;
+        if (jump) {
+          // Suchtreffer: auswählen und in die Mitte holen (Quelltext, nicht Vorschau).
+          const end = Math.min(jump.end, loaded.body.length);
+          textarea.setSelectionRange(Math.min(jump.start, end), end);
+          scrollToCaret();
+        } else {
+          const end = Math.min(view.end ?? 0, loaded.body.length);
+          textarea.setSelectionRange(Math.min(view.start ?? 0, end), end);
+          textarea.scrollTop = view.scroll ?? 0;
+          if (view.preview && loaded.kind === "markdown") void showPreview(true);
+        }
       }
       updateStats();
     } catch {
       missing = true;
     }
+  }
+
+  /** Cursorzeile ungefähr mittig zeigen (Zeilenanteil; `<textarea>` hat keine Zeilenmaße). */
+  function scrollToCaret() {
+    if (!textarea) return;
+    const lines = textarea.value.split("\n").length;
+    const line = textarea.value.slice(0, textarea.selectionStart).split("\n").length - 1;
+    textarea.scrollTop = Math.max(0, (line / Math.max(1, lines)) * textarea.scrollHeight - textarea.clientHeight / 2);
   }
 
   function rememberView() {
@@ -128,6 +145,16 @@
       if (preview) showPreview(false);
       textarea.focus();
     }
+  });
+
+  // Sprung zum Suchtreffer, wenn die Notiz schon offen war (sonst erledigt das `load`).
+  $effect(() => {
+    const jump = notes.select;
+    if (!jump || jump.id !== id || !textarea || !note) return;
+    notes.select = null;
+    if (preview) void showPreview(false);
+    textarea.setSelectionRange(jump.start, Math.min(jump.end, textarea.value.length));
+    scrollToCaret();
   });
 
   // `.txt` hat keine Vorschau (Typ gewechselt).

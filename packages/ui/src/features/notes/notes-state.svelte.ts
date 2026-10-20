@@ -54,6 +54,8 @@ export class NotesState {
   fresh = $state<string | null>(null);
   /** Zählt Bitten, den Editor zu fokussieren (Enter im Baum, neue Notiz). */
   editorFocus = $state(0);
+  /** Auswahl, die der Editor beim Öffnen dieser Notiz setzt (Sprung zum Suchtreffer). */
+  select = $state<{ id: string; start: number; end: number } | null>(null);
   /** Zen-Modus: Seitenleiste aus, Statuszeile nur bei Bewegung (`notes.md` §6.1). */
   zen = $state(readZen());
   readonly rows: TreeRow[] = $derived(flatten(this.children, this.expanded));

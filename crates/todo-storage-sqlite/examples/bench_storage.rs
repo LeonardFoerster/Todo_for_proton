@@ -519,4 +519,13 @@ fn bench_note_store(uniform: bool) {
     ] {
         report(name, measure(RUNS / 4, || drop(search(text))), Some(ms(16)));
     }
+    // Wie die Palette (N5-10): über die Fassade, mit Ordnerpfad je Treffer.
+    let api = CoreApi::new(repo.clone(), Arc::new(SystemClock));
+    report(
+        "CoreApi::search_notes mit Pfad („und kogen“)",
+        measure(RUNS / 4, || {
+            drop(block_on(api.search_notes("und kogen".into(), 50)).expect("search"));
+        }),
+        Some(ms(16)),
+    );
 }

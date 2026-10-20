@@ -98,7 +98,7 @@ describe("CommandPalette", () => {
     const { user } = await setup();
     const { dialog } = await openPalette(user);
     await user.keyboard("Zahnarzt");
-    await within(dialog).findByText(/Keine Task mit „Zahnarzt“/);
+    await within(dialog).findByText(/Keine Task oder Notiz mit „Zahnarzt“/);
     await user.keyboard("{Enter}");
     const newTask = await screen.findByRole("dialog", { name: "Neue Task" });
     expect((within(newTask).getByRole("textbox", { name: "Neue Task" }) as HTMLInputElement).value).toBe("Zahnarzt");

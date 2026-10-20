@@ -126,7 +126,7 @@ Interaktion < 16 ms (p95 im Selbsttest), `just check` grün. Commit `feat(ui): n
 > Schließen: Die Shell hält `CloseRequested` an, sendet `app://close-requested`, die UI speichert und meldet
 > `close_ready` (sonst schließt das Fenster nach 1,5 s). `Strg+Alt+Ziffer` über `KeyboardEvent.code` (AltGr).
 
-### [ ] N5-09 · UI: Markdown-Vorschau
+### [x] N5-09 · UI: Markdown-Vorschau — 2026-10-20 · 206e4fe
 **Lies vorher:** `notes.md` §6.5.
 **Schritte:** `markdown/render.ts` (Umfang laut §6.5, DOM statt `innerHTML`), anklickbare Checklisten,
 Links extern über die Shell, Scroll-Abgleich, `Strg+E`.
@@ -142,6 +142,8 @@ gemessen, `just check` grün. Commit `feat(ui): markdown preview`.
 **Schritte:** Palette fragt `searchTasks` und `searchNotes` parallel ab, Gruppen, Ausschnitt, Öffnen im Notes-Modus
 mit Sprung zum Treffer.
 **Fertig wenn:** Vitest, Messung p95 bei 2 000 Notizen, `just check` grün. Commit `feat(ui): search notes`.
+> Notiz: Messung `bench_storage` (2 000 Notizen à 20 KB): `CoreApi::search_notes` mit Pfad p95 8 ms, Einzelsuchen
+> p95 0,1–14,8 ms. Ohne Treffer legt Enter nur im Modus „Tasks" eine neue Task an.
 
 ### [ ] N5-11 · Ordner-Import (Desktop)
 **Lies vorher:** `notes.md` §8.
