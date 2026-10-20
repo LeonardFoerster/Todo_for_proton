@@ -214,6 +214,7 @@
   .facts {
     display: flex;
     gap: var(--space-1);
+    font-variant-numeric: tabular-nums;
   }
   .warn {
     color: var(--color-warning);

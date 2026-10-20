@@ -712,6 +712,25 @@ brauchen keine Merge-Revision; die nächste Bearbeitung nennt sie alle als Elter
 
 ---
 
+## ADR-030 · Schrift Inter mitgeliefert (P5-01)
+
+**Status:** akzeptiert (2026-10-21, P5-01)
+**Kontext:** `--font-sans` begann mit `system-ui`; auf Linux ist das je nach Distribution Noto Sans, Cantarell oder
+DejaVu. Die App hatte damit keine eigene Typografie, Ziffernbreiten und Laufweiten schwankten zwischen Systemen.
+`ui-guidelines.md` §7 erlaubt **eine** variable WOFF2 im Bundle (offline).
+**Entscheidung:**
+1. Inter Variable 5.3 (Fontsource-Paket `@fontsource-variable/inter`, einmalig kopiert, **keine** npm-Abhängigkeit),
+   nur Latin-Subset und Achse `wght`: `packages/ui/src/assets/fonts/inter-latin-wght-normal.woff2`, 48 KB, Lizenz
+   SIL OFL 1.1 (`OFL.txt` daneben). Zeichen außerhalb des `unicode-range` fallen auf die Systemschrift zurück.
+2. `@font-face` in `tokens.css` mit `font-display: swap`; `--font-sans` beginnt mit „Inter Variable", danach der
+   bisherige System-Stack. `--font-mono` bleibt System.
+3. Ziffern bleiben proportional; `tabular-nums` nur gezielt (Zähler, Daten, Uhrzeiten, Statuszeilen).
+**Konsequenzen:** Release-Binary +48 KB (22 060 040 → 22 109 224 B). Messung `MODE=tasks tools/measure-desktop.sh`
+(7 Läufe): Start bis erster Paint 338 → 347 ms Median (Ziel < 400 ms), PSS 254 → 251–257 MB (Streuung wie vorher),
+Leerlauf-CPU 0 %. Für die Web-App kommt die Datei als eigenes Asset hinzu (zählt nicht zum JS-Budget).
+
+---
+
 ## Spikes
 
 | ID | Frage | Ergebnis entscheidet | Stand |

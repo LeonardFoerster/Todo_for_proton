@@ -371,6 +371,7 @@
     background: var(--color-bg);
     color: var(--color-text);
     font: inherit;
+    font-variant-numeric: tabular-nums;
   }
   .field:focus {
     outline: none;
@@ -463,5 +464,6 @@
     border-top: 1px solid var(--color-border);
     color: var(--color-text-muted);
     font-size: var(--text-xs);
+    font-variant-numeric: tabular-nums;
   }
 </style>
