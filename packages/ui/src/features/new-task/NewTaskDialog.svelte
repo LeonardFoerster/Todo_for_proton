@@ -13,9 +13,10 @@
   import Menu, { type MenuItem } from "../../components/Menu.svelte";
   import Textarea from "../../components/Textarea.svelte";
   import { toasts } from "../../components/toasts.svelte";
-  import { CalendarDays, Check, Flag, Pencil, Plus, X } from "../../icons";
+  import { CalendarDays, Check, Flag, Pencil, Plus } from "../../icons";
   import { useCoreClient } from "../../lib/context";
-  import { dueFromInputs, dueLabel, dueToInputDate, dueToInputTime, keepTime, todayPlus } from "../../lib/format-date";
+  import { dueLabel } from "../../lib/format-date";
+  import DuePicker from "../due/DuePicker.svelte";
   import type { ListsState } from "../../lib/lists.svelte";
   import { readFlag, writeFlag } from "../../lib/preferences";
   import ListPicker from "../lists/ListPicker.svelte";
@@ -124,9 +125,10 @@
     manualDue = next;
   }
 
-  /** Schnellwahl: setzen und zurück in den Titel (der Button kann dabei verschwinden). */
+  /** Wahl im `DuePicker` (Uhrzeit bleibt dort): setzen, zuklappen, zurück in den Titel. */
   function pickDue(next: DueDto | null) {
-    setDue(keepTime(next, due));
+    setDue(next);
+    dueOpen = false;
     input?.focus();
   }
 
@@ -251,29 +253,7 @@
 
     {#if dueOpen}
       <div class="due-panel" id="new-task-due">
-        <input
-          type="date"
-          class="field"
-          aria-label="Fällig am"
-          value={dueToInputDate(due)}
-          onchange={(e) => setDue(dueFromInputs(e.currentTarget.value, dueToInputTime(due)))}
-        />
-        <input
-          type="time"
-          class="field"
-          aria-label="Uhrzeit"
-          disabled={!due}
-          value={dueToInputTime(due)}
-          onchange={(e) => setDue(dueFromInputs(dueToInputDate(due), e.currentTarget.value))}
-        />
-        <button type="button" class="chip" onclick={() => pickDue(todayPlus(0))}>Heute</button>
-        <button type="button" class="chip" onclick={() => pickDue(todayPlus(1))}>Morgen</button>
-        <button type="button" class="chip" onclick={() => pickDue(todayPlus(7))}>In einer Woche</button>
-        {#if due}
-          <button type="button" class="chip ghost" onclick={() => pickDue(null)}>
-            <X size={14} strokeWidth={1.75} aria-hidden="true" />Entfernen
-          </button>
-        {/if}
+        <DuePicker value={due} onchange={pickDue} />
       </div>
     {/if}
 
@@ -385,12 +365,17 @@
     border-radius: 4px;
     background: var(--color-bg-hover);
   }
-  .chips,
-  .due-panel {
+  .chips {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2);
+  }
+  .due-panel {
+    max-width: 296px;
+    padding: var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
   }
   .chip {
     display: inline-flex;
@@ -438,23 +423,6 @@
   }
   .chip.prio-low :global(svg) {
     color: var(--color-accent);
-  }
-  .field {
-    height: var(--control-height);
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border-strong);
-    border-radius: var(--radius-md);
-    background: var(--color-bg);
-    color: var(--color-text);
-    font: inherit;
-  }
-  .field:focus {
-    outline: none;
-    border-color: var(--color-accent);
-    box-shadow: 0 0 0 3px var(--color-focus-ring);
-  }
-  .field:disabled {
-    opacity: 0.5;
   }
   footer {
     display: flex;

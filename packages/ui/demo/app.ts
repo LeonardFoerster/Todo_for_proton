@@ -22,6 +22,8 @@ mount(App, { target: document.getElementById("app")!, props: { client } });
 
 // ?open=1: erste Task öffnen (Detail-Panel), ?type=Text: Quick-Add vorbelegen (Screenshots).
 if (params.has("open")) setTimeout(() => document.querySelector<HTMLElement>('[role="option"]')?.click(), 300);
+// ?due=1 (mit ?open=1): Fälligkeits-Popover im Detail öffnen (P5-08).
+if (params.has("due")) setTimeout(() => document.querySelector<HTMLElement>("#detail-due")?.click(), 600);
 const typed = params.get("type");
 if (typed) {
   setTimeout(() => {

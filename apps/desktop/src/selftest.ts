@@ -273,7 +273,7 @@ const p708b: Step[] = [
       await until("Notiz", () => notes.value === "Überlebt den Neustart");
       const high = await until("Priorität", () => byRole("radio", "Hoch"));
       if (high.getAttribute("aria-checked") !== "true") throw new Error("Priorität nicht hoch");
-      const due = await until("Datum", () => document.querySelector<HTMLInputElement>("#detail-due")?.value);
+      const due = await until("Datum", () => document.querySelector<HTMLElement>("#detail-due")?.dataset.value);
       const tomorrow = new Date(Date.now() + 86_400_000);
       const expected = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
       if (due !== expected) throw new Error(`Fällig ${due}, erwartet ${expected}`);
@@ -1683,9 +1683,13 @@ const p4due: Step[] = [
       key(input, "Enter");
       await newTaskClosed();
       await openTask(/^Termin/);
-      const date = await until("Datumsfeld", () => document.querySelector<HTMLInputElement>("#detail-due"));
-      date.value = "2030-01-15";
-      date.dispatchEvent(new Event("change", { bubbles: true }));
+      // P5-08: Fälligkeitsfeld öffnet den Wähler; Text wie in der Titelzeile, Enter übernimmt.
+      (await until("Fälligkeitsfeld", () => document.querySelector<HTMLElement>("#detail-due"))).click();
+      const text = await field("Fällig am");
+      await until("Fokus im Wähler", () => document.activeElement === text);
+      type(text, "15.01.2030");
+      key(text, "Enter");
+      await until("Wähler zu", () => !document.querySelector('[role="dialog"][aria-label="Fälligkeit wählen"]'));
       const all = await client.listTasks({ view: { kind: "all" } }, { limit: 50 });
       const id = all.items.find((t) => t.title === "Termin")?.id;
       if (!id) throw new Error("nicht angelegt");
@@ -1700,8 +1704,8 @@ const p4due: Step[] = [
       await click("button", "Schließen");
       location.hash = "#/all";
       await openTask(/^Termin/);
-      const time = await field("Uhrzeit");
-      await until("Uhrzeit im Feld", () => time.value === "14:00");
+      const dueField = await until("Fälligkeitsfeld", () => document.querySelector<HTMLElement>("#detail-due"));
+      await until("Uhrzeit im Feld", () => dueField.dataset.time === "14:00");
       return `${at.toLocaleString("de-DE")}`;
     },
   ],

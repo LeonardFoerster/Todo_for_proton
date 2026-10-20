@@ -199,7 +199,7 @@ Theme-Regeln:
 | `Dialog` | nur für destruktive Bestätigungen und Einstellungen; Esc schließt |
 | `Toaster` (+ `toasts.svelte.ts`) | unten links, 4 s, „Rückgängig"-Aktion bei Löschen/Abhaken/Verschieben – bei Sammelaktionen eine Meldung für die ganze Auswahl („3 Tasks gelöscht") |
 | `VirtualList` | eigene, kleine Implementierung (feste Zeilenhöhe → trivial und schnell) |
-| `DatePicker` | nach dem Prototyp: schlank, eigene Umsetzung + natürliche Eingabe („morgen", „fr 14:00"); Prototyp: natives `<input type=date>` |
+| `DuePicker` / `DueField` (P5-08) | eigene Umsetzung statt `<input type=date/time>`: Texteingabe „Fällig am" mit demselben Parser wie „Neue Task" (`parseDue`: „morgen", „fr 14:00", „24.10."; Vorschau darunter, Fehler als `alert`), Schnellwahl (Heute, Morgen, Nächster Montag, In einer Woche), Monatsraster (Montag zuerst, `role="grid"`, Pfeile/Pos1/Ende/Bild↑↓, gewählter Tag gefüllt, heute mit Punkt), Uhrzeit als Text („14:00", leer = ganztägig), „Entfernen". Ein reiner Tag behält die Uhrzeit. `DueField` im Detail: Button mit Fälligkeit im Ton der Zeile → Popover (Esc, Klick daneben, Tab bleibt drin). Im Fenster „Neue Task" klappt der Chip „Fällig" den Wähler auf; „Datum wählen…" (`D`) zeigt ihn im Dialog |
 | `NewTaskDialog` (Fenster „Neue Task") | Öffnet über „+ Neue Task" (Seitenleiste, leere Ansicht), `N`, `Strg+N`; modaler Dialog in der App (kein OS-Fenster). Titelzeile mit Erkennung (Tag, Wochentag, `24.10.`, `14:00`, `!1`–`!3`, `@liste`; `parseNewTask`), Hinweiszeile („Titel: …" bzw. Syntax), Chips Fällig/Priorität/Liste/Notiz (von Hand gesetzt gilt vor dem Text), optionale Notiz, „Weitere anlegen". Vorauswahl Liste/Fälligkeit wie die Ansicht. `Enter` bzw. `Strg+Enter` legt an (ein `createTask`), `Esc` schließt (P3-03) |
 
 Icons: **Lucide** (ISC-Lizenz), einzeln als SVG importiert (Tree-Shaking), 16 px in Listen, 20 px in Toolbars,
@@ -324,4 +324,4 @@ Abschlusskritik (`frontend-design`): Signatur (runder Haken) bleibt das einzige 
 heißen gleich („Erledigt“ → „erledigt“, „Löschen“ → „gelöscht“). **Leere Ansichten boten keine Aktion → Button
 „Neue Task“ (außer in „Erledigt“)** – behoben.
 
-Offen (bewusst): kein eigenes DatePicker-Popover (Prototyp: natives `<input type=date>`), Tags/Subtasks/Suche (nach dem Prototyp).
+Offen (bewusst): Tags/Subtasks (nach dem Prototyp). Eigenes Datumsfeld seit P5-08 (`DuePicker`), Suche seit P4-05.

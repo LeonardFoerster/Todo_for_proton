@@ -312,7 +312,8 @@ den Rand – wirkt wie ein Debug-Rahmen.
 **Fertig wenn:**
 - Vitest (Zähler mit/ohne Überfällige, zugänglicher Name) und Kontrasttest grün.
 
-### [ ] P5-07 · Detail-Panel aufräumen
+### [x] P5-07 · Detail-Panel aufräumen — 2026-10-21 · 03d4f6c
+> Notiz: Zusätzlich: Prioritäts-Umschalter zeigt Ringe statt Fähnchen (gleiche Form wie in der Liste).
 **Lies vorher:** `features/task-detail/TaskDetail.svelte`.
 
 **Schritte:**
