@@ -214,3 +214,22 @@ Gefühl, Optik und Bedienbarkeit. Live über Proton zusätzlich B-Schritte mit e
 | 10 | `⋯` → „Ordner importieren…" mit einem Ordner voller `.md`-Dateien | Portal-Dialog; Ergebnis „… Notizen in … Ordnern importiert, … übersprungen" mit Gründen; Baum zeigt den Ordner | |
 | 11 | Zwei Profile (`TODO_DATA_DIR`) mit Sync: dieselbe Notiz offline in verschiedenen bzw. derselben Zeile ändern | Verschiedene Zeilen: beide Änderungen da; dieselbe Zeile: Hinweis „Konflikt – Kopie … angelegt", nichts verloren | |
 | 12 | Während des Tippens schließen (Fenster-X) | Nach Neustart ist der letzte Buchstabe da | |
+
+
+## F · Feinschliff der Oberfläche (P5-10) – Sichtprüfung durch den User am Desktop: **offen**
+
+Installierte App nach P5. Automatisch geprüft: Vitest (Zeilenname mit Priorität, Suche öffnet die Palette, Zähler,
+`DuePicker`-Raster per Tastatur, schmale Ansicht), Kontraste (`tokens.test.ts`), Selbsttest in der WebView (`base`,
+`p3new`, `p4due`, `p4today`, `p4keys`, `p708a/b`), Messung `tools/measure-desktop.sh` (`roadmap.md` P5-10). Hier geht es
+um den Eindruck – siehe `ui-guidelines.md` §9.
+
+| # | Schritt | Erwartung | Ergebnis |
+|---|---|---|---|
+| 1 | Eingang, breites Fenster, hell und dunkel | Inter als Schrift; Liste als ruhige Spalte ohne Linien; Titel mit „n offen" darunter | |
+| 2 | Task mit hoher Priorität und überfälligem Datum | Priorität nur am (zart gefüllten) Ring, Tooltip am Haken; nur das Datum rot | |
+| 3 | Mit `↑/↓` durch die Liste, dann klicken | Cursor gerundet mit Balken; kein eckiger Rahmen bis an den Rand | |
+| 4 | „Heute" | Unterzeile mit Datum, offen, überfällig; Seitenleiste: eine Zahl, rot hinterlegt bei Überfälligen | |
+| 5 | Suchfeld oben links; Zahnrad unten links (auch im Modus „Notes") | Palette bzw. Einstellungen öffnen sich | |
+| 6 | Detail: Fälligkeit anklicken – „fr 14:00", ein Tag im Raster, Pfeiltasten/Bild↓, Uhrzeit leeren, Entfernen | Popover unter dem Feld; Uhrzeit bleibt beim Tageswechsel; `Esc` schließt nur das Popover | |
+| 7 | Lange Notiz im Detail | Feld wächst mit, kein Griff; „Erstellt · Geändert" direkt darunter | |
+| 8 | Fenster schmaler als 700 px | 44-px-Zeilen, runder Button „Neue Task" unten rechts, `⋯` mit Darstellung/Auswählen/Listenaktionen | |

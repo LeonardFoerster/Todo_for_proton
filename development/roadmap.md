@@ -6,7 +6,7 @@ Etappen aus `roadmap-next.md` eingeschoben werden. Erledigte Phasen werden entfe
 anderen Dokumenten beziehen sich auf diese Archivdatei. Die abgeschlossenen Zwischenphasen P0–P3 (Mehrfachauswahl,
 Upload ≤ 5 s, Listen & Kanban, Fenster „Neue Task") liegen in `archive/roadmap-interim.md`.
 
-**Reihenfolge:** Erst die offenen Phasen hier (P5), danach weiter mit `roadmap-next.md` (N0-01).
+**Reihenfolge:** Erst die offenen Phasen hier (P5 umgesetzt, Sichtprüfung offen), danach weiter mit `roadmap-next.md` (N0-01).
 
 ## Wie diese Liste benutzt wird
 
@@ -28,7 +28,7 @@ Upload ≤ 5 s, Listen & Kanban, Fenster „Neue Task") liegen in `archive/roadm
 | ~~P0–P2~~ | Mehrfachauswahl · Upload ≤ 5 s · Listen & Kanban – **abgeschlossen** 2026-10-18 | → `archive/roadmap-interim.md` |
 | ~~P3~~ | Kanban: Umschalt + Mausrad · Fenster „Neue Task" – **abgeschlossen** 2026-10-18 | → `archive/roadmap-interim.md` |
 | P4 | Bedienung: Uhrzeit im Detail · Heute/Überfällig · Geplant nach Tagen · Fälligkeit per Kürzel · Suche & Befehlspalette · Erledigt nach Tagen – **umgesetzt** 2026-10-19 (P4-01–06); P4-07 wartet auf den User | UX-Review 2026-10-19; die häufigsten Handgriffe (finden, verschieben, Woche überblicken) vor der Web-Etappe |
-| P5 | Feinschliff der Oberfläche: Schrift · Lesespalte · Priorität/Überfällig · Cursor · Kopfzeile & Suche · Zähler · Detail · eigenes Datumsfeld · Touch | Design-Review 2026-10-21; vor der Web-Etappe, damit Web und Android das neue Bild erben |
+| P5 | Feinschliff der Oberfläche: Schrift · Lesespalte · Priorität/Überfällig · Cursor · Kopfzeile & Suche · Zähler · Detail · eigenes Datumsfeld · Touch – **umgesetzt** 2026-10-21; Sichtprüfung durch den User offen (`prototype-acceptance.md` F) | Design-Review 2026-10-21; vor der Web-Etappe, damit Web und Android das neue Bild erben |
 
 ## P4 · Bedienung: schneller finden, verschieben, überblicken
 
@@ -342,7 +342,8 @@ den Rand – wirkt wie ein Debug-Rahmen.
 - Vitest: Raster per Tastatur, Text „fr 14:00", Uhrzeit bleibt beim Tageswechsel, Entfernen.
 - Selbsttest in der WebView; „DatePicker" in `ui-guidelines.md` §4/§8 nicht mehr offen.
 
-### [ ] P5-09 · Schmale Ansicht und Touch
+### [x] P5-09 · Schmale Ansicht und Touch — 2026-10-21 · 1ca2a26
+> Notiz: `lib/density.svelte.ts` (`rowHeight`, `narrow`); Menü „Ansicht und Aktionen“ statt Icon-Reihe, Listen-/Erledigt-Aktionen als Einträge darin; 80 px Platz unter der Liste; Toasts schmal über dem Button. Notes-Baum bleibt bei 32 px. Vitest `density.test.ts`, `shell/narrow.test.ts`.
 **Lies vorher:** `TaskList.svelte` (`const ROW`, Drag-Rechnung), `components/VirtualList.svelte`, `App.svelte`
 (Breakpoints `max-width: 699px`), `components/Menu.svelte`.
 

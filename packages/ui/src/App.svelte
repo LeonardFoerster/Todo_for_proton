@@ -123,11 +123,11 @@
 
   const route = $derived(router.route);
   const title = $derived(routeTitle(route, lists.lists));
-  /** Unterzeile im Kopf (P5-05): Datum in „Heute“, Zahlen nur, wo sie ohne neuen Core-Aufruf bekannt sind. */
-  const subtitle = $derived(viewSubtitle(route, lists.counts));
   /** Das Board zeigt alle Listen; umschaltbar in Eingang, Listen und „Alle Tasks“. */
   const boardCapable = $derived(route.view === "inbox" || route.view === "list" || route.view === "all");
   const showBoard = $derived(boardCapable && layout === "board");
+  /** Unterzeile im Kopf (P5-05): Datum in „Heute“, Zahlen nur, wo sie ohne neuen Core-Aufruf bekannt sind; im Board (alle Listen) keine. */
+  const subtitle = $derived(showBoard ? "" : viewSubtitle(route, lists.counts));
 
   function setLayout(next: "list" | "board") {
     if (next === layout) return;

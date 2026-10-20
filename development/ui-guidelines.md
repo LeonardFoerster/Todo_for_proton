@@ -38,8 +38,21 @@ ohne Protons Code, Assets oder Marke zu übernehmen.
 
 - Breakpoints: ≥ 1100 px drei Spalten · 700–1100 px Detail als Overlay-Panel · < 700 px Ein-Spalten-Navigation
   (vorbereitet für Android).
-- Zeilenhöhe Listen: **36 px kompakt** (Standard Desktop), 44 px komfortabel (Option; Standard auf Touch).
+- Zeilenhöhe Listen: **36 px kompakt** (Standard Desktop), **44 px komfortabel** bei Touch oder Fenster < 700 px
+  (P5-09: `@media (pointer: coarse), (max-width: 699px)` in `tokens.css`, dieselbe Query in `lib/density.svelte.ts`
+  für die virtuelle Liste).
 - Sidebar einklappbar (Icon-only, 56 px).
+- **Lesespalte (P5-02):** Kopfzeile und Liste teilen eine zentrierte Spalte von höchstens `--content-max` (820 px);
+  Zeilen ohne Trennlinien, Hover/Auswahl/Cursor als gerundete Fläche mit 8 px Einzug, Akzentbalken innerhalb der
+  Rundung. Das Board bleibt bei voller Breite.
+- **Kopfzeile (P5-05):** Titel 24 px (`--text-2xl`) mit gedämpfter Unterzeile – „Heute": „Mittwoch, 21. Oktober ·
+  3 offen · 1 überfällig", Eingang „4 offen", sonst leer (Zählen ohne neuen Core-Aufruf; im Board keine). Rechts nur
+  Darstellung, Auswählen und Listen-/Erledigt-Aktionen; Einstellungen in der Sync-Fußzeile (beide Modi),
+  Tastaturkürzel über `?` und Palette.
+- **Suche (P5-05):** Feld „Suchen … Strg K" unter der Brand-Zeile der Seitenleiste (beide Modi; eingeklappt Icon),
+  öffnet die Befehlspalette.
+- **Schmal < 700 px (P5-09):** runder Button „Neue Task" (56 px) unten rechts, Toasts darüber; die Kopfzeilen-Icons
+  wandern in ein Menü „Ansicht und Aktionen" (`⋯`); unter der letzten Zeile 80 px Platz für den Button.
 - **Kanban-Board (P2):** Umschalter „Liste | Kanban" in der Kopfzeile links neben „Auswählen" (nur Eingang, Listen,
   „Alle Tasks"; gemerkt pro Gerät in `localStorage` `tasks.layout`). Das Board zeigt **alle** Listen als Spalten
   nebeneinander (280 px, Abstand 12 px, Eingang zuerst, horizontal scrollend), darin die offenen Tasks als Karten
@@ -162,6 +175,10 @@ Als CSS Custom Properties in `packages/ui/src/tokens/tokens.css`. Komponenten nu
 }
 ```
 
+**P5 (2026-10-21):** Schrift „Inter Variable" (Latin-Subset, Achse `wght`, 48 KB WOFF2 im Bundle, OFL; ADR-030) vor
+dem System-Stack; `--text-2xl: 24px` (Ansichtstitel); `--content-max: 820px` und `--content-inset` (Rand der
+Lesespalte); `--row-height` 44 px bei Touch/schmal. `tabular-nums` gezielt für Zähler, Daten, Uhrzeiten, Statuszeilen.
+
 Umsetzung (P7-05, `packages/ui/src/tokens/tokens.css`) – Abweichungen nur für Kontrast, automatisch geprüft
 (`tokens.test.ts`, Text ≥ 4.5:1, Bedienelemente ≥ 3:1, beide Themes):
 - Hell: `--color-text-muted` `#65646f` (statt `#6c6b78`, 4.4:1 auf Hover), `--color-warning` `#a35f00` (statt `#c77700`,
@@ -186,7 +203,7 @@ Theme-Regeln:
 | `Button` | Varianten `primary` (Akzent, gefüllt), `secondary` (Rahmen), `ghost`, `danger`; Höhe 32 px (36 px groß) |
 | `IconButton` | 28/32 px, immer mit `aria-label` + Tooltip |
 | Tooltips (`Tooltips.svelte`) | als `popover` gezeigt (oberste Ebene, auch über modalen Dialogen); per `data-tooltip` (+ `data-tooltip-side` bottom/top/right/left) an jedem Element; **eine** fest positionierte Schicht in `App` statt CSS-`::after` – nie von `overflow` abgeschnitten (eingeklappte Seitenleiste), am Fensterrand im Bild gehalten; 450 ms Verzögerung bei Hover, sofort bei Tastaturfokus; `aria-hidden` (Name kommt aus `aria-label`) |
-| `Checkbox` (Task) | rund (Proton-artig), Hover zeigt Haken angedeutet, Abhaken animiert ≤ 160 ms; danach (250 ms, bei `prefers-reduced-motion` sofort) verlässt die Zeile jede offene Ansicht – erledigte Tasks stehen nur unter „Erledigt", Rückgängig im Toast (P1-01). Der Cursor springt auf die nächste Zeile |
+| `Checkbox` (Task) | rund (Proton-artig); **die Priorität steht nur im Ring** (hoch rot, mittel orange, niedrig violett, zart gefüllt; Tooltip und Ende des Zeilennamens nennen sie – kein Fähnchen mehr, P5-03). Hover zeigt Haken angedeutet, Abhaken animiert ≤ 160 ms; danach (250 ms, bei `prefers-reduced-motion` sofort) verlässt die Zeile jede offene Ansicht – erledigte Tasks stehen nur unter „Erledigt", Rückgängig im Toast (P1-01). Der Cursor springt auf die nächste Zeile |
 | Abschnitte (P4, `GroupHeading`) | „Heute": **Überfällig · n** (rot, älteste zuerst, Aktion „Alle auf heute" – ein `set_dues`, Uhrzeit bleibt, Rückgängig) über **Heute · n**; ohne Überfällige keine Überschrift. „Geplant": Morgen, Einzeltage („Mi, 21. Okt.") bis 6 Tage, „Später in diesem Monat", Monate (fremdes Jahr mit Jahreszahl). Überschrift = Zeilenhöhe in der virtuellen Liste, `role="presentation"`, nicht fokussierbar (↑/↓ überspringen). Zeilen unter einem Tagesabschnitt zeigen nur die Uhrzeit. Seitenleiste „Heute": Zahl der Überfälligen rot vor dem Zähler. „Erledigt" (P4-06): Heute, Gestern, Wochentage dieser Woche, Letzte Woche, Monate; „⋯" → „Erledigte älter als 30 Tage löschen…" (Bestätigung, Rückgängig) |
 | Befehlspalette (P4-05, `CommandPalette`, lazy) | Modal oben (12 vh), Eingabe als `combobox` + `aria-activedescendant`, Ergebnisse als `listbox` mit Gruppen „Tasks" (Core-Suche, 100 ms entprellt, ≤ 50, Treffer im Titel `<mark>`, sonst „in Notiz"; Fälligkeit, Liste), „Notizen" (N5-10: parallel zur Task-Suche, Name mit `<mark>`, bei Inhaltstreffern der Ausschnitt ±40 Zeichen darunter, rechts der Ordnerpfad; im Modus „Notes" vor „Tasks"; Enter wechselt in den Modus „Notes", öffnet die Notiz und markiert den Treffer im Quelltext), „Listen", „Befehle" (Registry-Einträge mit `palette`, z. B. „Gehe zu Heute", „Neue Liste…"). Ohne Text: „Zuletzt geöffnet" (Sitzung) + Befehle. Kein Treffer: Enter öffnet „Neue Task" mit dem Text. `↑/↓`, `Enter`, `Esc` |
 | `ListPicker` (P2) | Rundlicher Button „Liste ▾" mit Icon (Eingang/`#`), Menü aller Listen (Eingang zuerst, aktuelle mit Häkchen) + „Neue Liste…" (Dialog, wählt die neue sofort). Im Fenster „Neue Task" (Vorauswahl = Liste der Ansicht, `Alt+L`) und im Detail-Panel |
@@ -194,10 +211,12 @@ Theme-Regeln:
 | Board (P2) | `Board` → `BoardColumn` (Kopf: Name, Zahl offener Tasks, „⋯"; Kopf ist Griff zum Umsortieren) → `BoardCard` (runder Haken, Titel einzeilig, Meta-Zeile). Ziehen einer Karte nach 4 px mit Vorschau am Zeiger und Einfügelinie; Spalten ziehen mit senkrechter Linie. Spalten `listbox`, Karten `option` (`aria-selected` = Cursor), Live-Region meldet Verschiebungen |
 | `SelectBox` (Auswahl, P0) | **eckig** (16 px, Radius 3 px) – bewusst anders als der runde Erledigt-Haken; ausgewählt = Akzentfläche mit Häkchen, Tri-State „–" für „Alle auswählen"; in Zeilen nur dekorativ (die Zeile trägt `aria-selected`), in der Aktionsleiste ein `role="checkbox"` |
 | `SelectionBar` (Aktionsleiste, P0) | ersetzt im Auswahlmodus die Kopfzeilen-Aktionen (gleiche Höhe, keine zweite Zeile): Tri-State „Alle auswählen" · Zähler „3 ausgewählt" (Live-Region) · Erledigt · Wieder öffnen · Verschieben nach… (Menü, Eingang zuerst, aktuelle Liste deaktiviert) · Löschen · „Fertig". Aktionen bei leerer Auswahl deaktiviert; Erledigt/Wieder öffnen je nach offenen/erledigten in der Auswahl |
+| `TaskMeta` (P5-03) | Meta-Angaben in Zeile und Board-Karte, gleiche Reihenfolge: `#Liste` (nur Sammelansichten) · Fälligkeit (rot nur überfällig, Akzent heute) · Notiz-Icon (`sticky-note`) |
+| Zähler der Seitenleiste (P5-06) | eine Zahl je Eintrag; mit Überfälligen als rote Pille (`--color-danger-subtle`), Aufteilung im Tooltip und im Namen („3, davon 1 überfällig") |
 | `TextInput`, `Textarea` | 32 px, Rahmen `--color-border`, Fokus: Akzent-Rahmen + Focus-Ring |
 | `Menu` / Kontextmenü | Popover mit `--shadow-popover`, Tastaturnavigation, Shortcuts rechtsbündig gedimmt |
 | `Dialog` | nur für destruktive Bestätigungen und Einstellungen; Esc schließt |
-| `Toaster` (+ `toasts.svelte.ts`) | unten links, 4 s, „Rückgängig"-Aktion bei Löschen/Abhaken/Verschieben – bei Sammelaktionen eine Meldung für die ganze Auswahl („3 Tasks gelöscht") |
+| `Toaster` (+ `toasts.svelte.ts`) | unten links (schmal über dem runden Button „Neue Task"), 4 s, „Rückgängig"-Aktion bei Löschen/Abhaken/Verschieben – bei Sammelaktionen eine Meldung für die ganze Auswahl („3 Tasks gelöscht") |
 | `VirtualList` | eigene, kleine Implementierung (feste Zeilenhöhe → trivial und schnell) |
 | `DuePicker` / `DueField` (P5-08) | eigene Umsetzung statt `<input type=date/time>`: Texteingabe „Fällig am" mit demselben Parser wie „Neue Task" (`parseDue`: „morgen", „fr 14:00", „24.10."; Vorschau darunter, Fehler als `alert`), Schnellwahl (Heute, Morgen, Nächster Montag, In einer Woche), Monatsraster (Montag zuerst, `role="grid"`, Pfeile/Pos1/Ende/Bild↑↓, gewählter Tag gefüllt, heute mit Punkt), Uhrzeit als Text („14:00", leer = ganztägig), „Entfernen". Ein reiner Tag behält die Uhrzeit. `DueField` im Detail: Button mit Fälligkeit im Ton der Zeile → Popover (Esc, Klick daneben, Tab bleibt drin). Im Fenster „Neue Task" klappt der Chip „Fällig" den Wähler auf; „Datum wählen…" (`D`) zeigt ihn im Dialog |
 | `NewTaskDialog` (Fenster „Neue Task") | Öffnet über „+ Neue Task" (Seitenleiste, leere Ansicht), `N`, `Strg+N`; modaler Dialog in der App (kein OS-Fenster). Titelzeile mit Erkennung (Tag, Wochentag, `24.10.`, `14:00`, `!1`–`!3`, `@liste`; `parseNewTask`), Hinweiszeile („Titel: …" bzw. Syntax), Chips Fällig/Priorität/Liste/Notiz (von Hand gesetzt gilt vor dem Text), optionale Notiz, „Weitere anlegen". Vorauswahl Liste/Fälligkeit wie die Ansicht. `Enter` bzw. `Strg+Enter` legt an (ein `createTask`), `Esc` schließt (P3-03) |
@@ -325,3 +344,23 @@ heißen gleich („Erledigt“ → „erledigt“, „Löschen“ → „gelösc
 „Neue Task“ (außer in „Erledigt“)** – behoben.
 
 Offen (bewusst): Tags/Subtasks (nach dem Prototyp). Eigenes Datumsfeld seit P5-08 (`DuePicker`), Suche seit P4-05.
+
+## 9. Design-Review P5 (2026-10-21)
+
+Sichtung per Screenshot (Demo `app.html`, headless Chrome, 1440/1000/420 px, hell/dunkel; Parameter neu: `?layout=board`,
+`?mode=notes`, `?due=1` mit `?open=1`) und Selbsttest in der WebView (`base`, `p3new`, `p4due`, `p4today`, `p4keys`,
+`p708a/b`).
+
+| Bereich | Befund | Status |
+|---|---|---|
+| Typografie | `system-ui` je nach Distribution anders, keine eigene Handschrift | ✔ Inter mitgeliefert (ADR-030), Titel 24 px |
+| Lesbarkeit | Zeilen über die volle Breite (Titel links, Datum ~1 000 px weiter rechts), Trennlinien unter jeder Zeile | ✔ Lesespalte 820 px, Flächen statt Linien |
+| Farbe/Bedeutung | Priorität doppelt (Ring + Fähnchen), Rot zugleich „hoch" und „überfällig" | ✔ Priorität nur im Ring, rote Schrift nur überfällig |
+| Fokus | Cursor im Dunkelmodus als eckiger 2-px-Rahmen bis an den Rand | ✔ gerundet; Karte mit Fläche + Balken |
+| Navigation | fünf gleichrangige Icons, Suche unsichtbar | ✔ Suchfeld in der Seitenleiste, Einstellungen in der Fußzeile (jetzt auch im Modus „Notes") |
+| Zähler | „1 3" bei Heute mehrdeutig | ✔ eine Zahl, Pille bei Überfälligen |
+| Detail | native Datumsfelder, doppelte Datumsanzeige, Notizfeld mit Griff, Fuß unten angeheftet | ✔ `DueField`/`DuePicker`, Notiz wächst mit, Fuß unter dem Inhalt |
+| Touch/schmal | 36-px-Zeilen, „Neue Task" nur über die Schublade | ✔ 44 px, runder Button, Menü statt Icon-Reihe |
+
+Bewusst nicht in P5 (mit dem User geklärt): Eingabezeile in der Liste (P4-07 bleibt offen), Listenfarben,
+Notiz-Vorschau in der Zeile (bräuchte DTO-Änderung und variable Zeilenhöhe).
