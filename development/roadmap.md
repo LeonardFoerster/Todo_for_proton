@@ -267,7 +267,8 @@ Datum rot. Der Notiz-Hinweis „≡" (CSS) sieht aus wie ein Ziehgriff.
 **Fertig wenn:**
 - Vitest: `aria-label` mit Priorität; `due-views.test.ts` grün.
 
-### [ ] P5-04 · Cursor und Fokus
+### [x] P5-04 · Cursor und Fokus — 2026-10-21 · 782a62c
+> Notiz: Zeile: Umriss mit `border-radius`, Balken innerhalb der Rundung (P5-02). Karte: Fläche + Balken, Umriss innen (`outline-offset: -1px`). Demo kann `?layout=board` und `?mode=notes` für Screenshots.
 **Lies vorher:** `TaskRow.svelte` (`.selected`, `::before`, Fokus-Regeln), `BoardCard.svelte`, `tokens.test.ts`.
 
 **Befund:** Im Dunkelmodus liegen auf der Cursor-Zeile Auswahlfläche, Akzentbalken und ein eckiger 2-px-Umriss bis an

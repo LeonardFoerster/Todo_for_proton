@@ -18,12 +18,10 @@
     CircleCheck,
     Ellipsis,
     FolderInput,
-    Keyboard,
     List,
     ListChecks,
     PanelLeft,
     Pencil,
-    Settings,
     SquareKanban,
     Trash,
     Undo,
@@ -48,6 +46,7 @@
   import type * as NotesChunk from "./features/notes/index";
   import { SyncState } from "./lib/sync.svelte";
   import { todayPlus } from "./lib/format-date";
+  import { viewSubtitle } from "./lib/subtitle";
   import { routeListId, routeTitle } from "./lib/views";
   import { completedBefore, deleteManyWithUndo } from "./lib/task-actions";
   import CleanupCompletedDialog from "./features/task-list/CleanupCompletedDialog.svelte";
@@ -120,6 +119,8 @@
 
   const route = $derived(router.route);
   const title = $derived(routeTitle(route, lists.lists));
+  /** Unterzeile im Kopf (P5-05): Datum in „Heute“, Zahlen nur, wo sie ohne neuen Core-Aufruf bekannt sind. */
+  const subtitle = $derived(viewSubtitle(route, lists.counts));
   /** Das Board zeigt alle Listen; umschaltbar in Eingang, Listen und „Alle Tasks“. */
   const boardCapable = $derived(route.view === "inbox" || route.view === "list" || route.view === "all");
   const showBoard = $derived(boardCapable && layout === "board");
@@ -833,6 +834,8 @@
       onnavigate={() => (drawerOpen = false)}
       onlogin={() => void openSettings()}
       onsync={() => void openSettings()}
+      onsettings={() => void openSettings()}
+      onsearch={() => void openPalette()}
       mode={appMode.mode}
       onswitchmode={() => void switchMode(appMode.mode === "tasks" ? "notes" : "tasks")}
     >
@@ -869,7 +872,10 @@
       <span class="menu">
         <IconButton label="Navigation öffnen" icon={PanelLeft} onclick={() => (drawerOpen = true)} />
       </span>
-      <h1 id="view-title">{title}</h1>
+      <div class="titles">
+        <h1 id="view-title">{title}</h1>
+        {#if subtitle}<p class="subtitle">{subtitle}</p>{/if}
+      </div>
       {#if selection?.active && taskList}
         {@const flags = taskList.selectionFlags()}
         <SelectionBar
@@ -962,8 +968,6 @@
               }}
             />
           {/if}
-          <IconButton label="Tastaturkürzel" shortcut="?" icon={Keyboard} onclick={() => (showShortcuts = true)} />
-          <IconButton label="Einstellungen" icon={Settings} onclick={() => void openSettings()} />
         </span>
       {/if}
     </header>
@@ -1184,7 +1188,7 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    height: 56px;
+    height: 80px;
     /* Gleiche Kanten wie die Zeilen der Lesespalte (Einzug 8 px + Innenabstand der Zeile). */
     padding: 0 calc(var(--content-inset) + var(--space-6)) 0 calc(var(--content-inset) + var(--space-8));
     flex: none;
@@ -1209,9 +1213,25 @@
     gap: var(--space-1);
     margin-left: auto;
   }
+  .titles {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+  }
+  .subtitle {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   h1 {
     margin: 0;
-    font-size: var(--text-xl);
+    font-size: var(--text-2xl);
+    line-height: 1.25;
     font-weight: var(--weight-semibold);
     letter-spacing: -0.01em;
     overflow: hidden;

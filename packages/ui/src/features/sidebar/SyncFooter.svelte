@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { SyncStatusDto } from "@tasks/core-client";
-  import { Cloud, CloudOff, LogIn, RefreshCw, type IconComponent } from "../../icons";
+  import IconButton from "../../components/IconButton.svelte";
+  import { Cloud, CloudOff, LogIn, RefreshCw, Settings, type IconComponent } from "../../icons";
 
   interface Props {
     status: SyncStatusDto;
@@ -8,9 +9,11 @@
     collapsed?: boolean;
     onlogin?: () => void;
     onsync?: () => void;
+    /** Einstellungen (P5-05: aus der Kopfzeile hierher, gilt in beiden Modi). */
+    onsettings?: () => void;
   }
 
-  let { status, account, collapsed = false, onlogin, onsync }: Props = $props();
+  let { status, account, collapsed = false, onlogin, onsync, onsettings }: Props = $props();
 
   const pending = $derived(status.pendingOps);
   const view = $derived.by((): { icon: IconComponent; text: string; long?: string; tone: "muted" | "ok" | "warn" | "busy" } => {
@@ -69,8 +72,11 @@
   </button>
   {#if needsLogin && !collapsed && onlogin}
     <button type="button" class="login" onclick={onlogin}>
-      <LogIn size={14} strokeWidth={1.75} aria-hidden="true" />Anmelden
+      {#if !onsettings}<LogIn size={14} strokeWidth={1.75} aria-hidden="true" />{/if}Anmelden
     </button>
+  {/if}
+  {#if onsettings}
+    <IconButton label="Einstellungen" icon={Settings} size={28} tooltipSide={collapsed ? "right" : "top"} onclick={onsettings} />
   {/if}
 </div>
 
@@ -83,6 +89,7 @@
     border-top: 1px solid var(--color-border);
   }
   .collapsed {
+    flex-direction: column;
     justify-content: center;
   }
   .status {

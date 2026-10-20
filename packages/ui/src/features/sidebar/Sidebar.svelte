@@ -4,7 +4,7 @@
   import logo from "../../assets/logo.png";
   import Button from "../../components/Button.svelte";
   import IconButton from "../../components/IconButton.svelte";
-  import { ArrowLeftRight, Hash, NotebookPen, PanelLeft, Plus } from "../../icons";
+  import { ArrowLeftRight, Hash, NotebookPen, PanelLeft, Plus, Search } from "../../icons";
   import { MODE_LABELS, type Mode } from "../../lib/app-mode.svelte";
   import { formatCount, type ListsState } from "../../lib/lists.svelte";
   import { routeHash, type Route } from "../../lib/router.svelte";
@@ -25,6 +25,9 @@
     onnavigate?: () => void;
     onlogin?: () => void;
     onsync?: () => void;
+    onsettings?: () => void;
+    /** Suche und Befehle (Palette, P5-05) – sichtbarer Einstieg zu `Strg+K`. */
+    onsearch?: () => void;
     /** Liste, die gerade inline umbenannt wird. */
     renamingId?: string | null;
     /** Kontextmenü einer Benutzerliste an Position (Viewport). */
@@ -52,6 +55,8 @@
     onnavigate,
     onlogin,
     onsync,
+    onsettings,
+    onsearch,
     renamingId = null,
     onlistmenu,
     onrename,
@@ -141,6 +146,20 @@
     />
   </div>
 
+  {#if onsearch}
+    <div class="search">
+      {#if collapsed}
+        <IconButton label="Suchen" shortcut="Strg+K" icon={Search} tooltipSide="right" onclick={onsearch} />
+      {:else}
+        <button type="button" class="search-field" aria-label="Suchen" aria-keyshortcuts="Control+K" onclick={onsearch}>
+          <Search size={16} strokeWidth={1.75} aria-hidden="true" />
+          <span class="search-text">Suchen</span>
+          <kbd>Strg K</kbd>
+        </button>
+      {/if}
+    </div>
+  {/if}
+
   {#if notesBody}
     <!-- Einmal geladen, bleibt der Notes-Baum gemountet (Zustand, notes.md §5.2). -->
     <div class="mode-body" hidden={mode !== "notes"}>{@render notesBody()}</div>
@@ -229,7 +248,7 @@
   </div>
   </div>
 
-  <SyncFooter {status} {account} {collapsed} {onlogin} {onsync} />
+  <SyncFooter {status} {account} {collapsed} {onlogin} {onsync} {onsettings} />
 </nav>
 
 <style>
@@ -250,6 +269,45 @@
   .collapsed .brand {
     justify-content: center;
     padding: 0;
+  }
+  .search {
+    padding: 0 var(--space-3) var(--space-2);
+  }
+  .collapsed .search {
+    display: flex;
+    justify-content: center;
+    padding: 0 0 var(--space-2);
+  }
+  .search-field {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+    height: var(--control-height);
+    padding: 0 var(--space-2) 0 var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg);
+    color: var(--color-text-muted);
+    font: inherit;
+    font-size: var(--text-sm);
+    cursor: text;
+    transition: border-color var(--duration-fast) var(--ease);
+  }
+  .search-field:hover {
+    border-color: var(--color-border-strong);
+  }
+  .search-text {
+    flex: 1;
+    text-align: left;
+  }
+  kbd {
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-subtle);
+    color: var(--color-text-muted);
+    font: inherit;
+    font-size: var(--text-xs);
   }
   .mark {
     display: block;
