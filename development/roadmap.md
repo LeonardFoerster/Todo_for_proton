@@ -6,7 +6,7 @@ Etappen aus `roadmap-next.md` eingeschoben werden. Erledigte Phasen werden entfe
 anderen Dokumenten beziehen sich auf diese Archivdatei. Die abgeschlossenen Zwischenphasen P0–P3 (Mehrfachauswahl,
 Upload ≤ 5 s, Listen & Kanban, Fenster „Neue Task") liegen in `archive/roadmap-interim.md`.
 
-**Reihenfolge:** Erst die offenen Phasen hier (P5 umgesetzt, Sichtprüfung offen), danach weiter mit `roadmap-next.md` (N0-01).
+**Reihenfolge:** Erst die offenen Phasen hier (P6; P5 umgesetzt, Sichtprüfung offen), danach weiter mit `roadmap-next.md` (N0-01).
 
 ## Wie diese Liste benutzt wird
 
@@ -29,6 +29,7 @@ Upload ≤ 5 s, Listen & Kanban, Fenster „Neue Task") liegen in `archive/roadm
 | ~~P3~~ | Kanban: Umschalt + Mausrad · Fenster „Neue Task" – **abgeschlossen** 2026-10-18 | → `archive/roadmap-interim.md` |
 | P4 | Bedienung: Uhrzeit im Detail · Heute/Überfällig · Geplant nach Tagen · Fälligkeit per Kürzel · Suche & Befehlspalette · Erledigt nach Tagen – **umgesetzt** 2026-10-19 (P4-01–06); P4-07 wartet auf den User | UX-Review 2026-10-19; die häufigsten Handgriffe (finden, verschieben, Woche überblicken) vor der Web-Etappe |
 | P5 | Feinschliff der Oberfläche: Schrift · Lesespalte · Priorität/Überfällig · Cursor · Kopfzeile & Suche · Zähler · Detail · eigenes Datumsfeld · Touch – **umgesetzt** 2026-10-21; Sichtprüfung durch den User offen (`prototype-acceptance.md` F) | Design-Review 2026-10-21; vor der Web-Etappe, damit Web und Android das neue Bild erben |
+| P6 | Fenster „Neue Task“ als Schnelleingabe: oben verankert ohne Kopf · erkannte Wörter im Text markiert · Chips mit zwei Zuständen und Datums-Popover · Notiz als zweite Zeile · Fußleiste mit Kürzeln · unten aufgehender Bereich im schmalen Fenster | Design-Review 2026-10-21 (Fenster „Neue Task“); direkt nach P5 |
 
 ## P4 · Bedienung: schneller finden, verschieben, überblicken
 
@@ -369,6 +370,63 @@ den Rand – wirkt wie ein Debug-Rahmen.
 
 **Fertig wenn:**
 - `just check` grün; Budgets eingehalten; Doku stimmt mit der App überein.
+
+---
+
+## P6 · Fenster „Neue Task“ als Schnelleingabe
+
+**Ziel:** Das Fenster fühlt sich wie eine schnelle Notiz an statt wie ein Formular: sofort tippen, sofort sehen, was
+erkannt wurde, mit `Enter` fertig. Herkunft: Design-Review 2026-10-21 per Screenshot (leer, mit erkanntem Text, mit
+Datum, 420 px). Reine UI-Arbeit in `features/new-task/`, `components/Dialog.svelte`, `features/due/`. Der User will alle
+Punkte, die Notiz also als feste zweite Zeile.
+
+**Für alle Aufgaben gilt:** Erkennung bleibt `parseNewTask` (keine zweite Logik); Namen für Tests/Barrierefreiheit
+bleiben, wo möglich („Neue Task", „Priorität: …", „Liste: …", „Notiz", „Fällig am", „Weitere anlegen"). Selbsttest
+`p3new`, `p002` und Tooltip-Schritt anpassen. Nach jeder Aufgabe `just desktop-install`.
+
+### [ ] P6-01 · Erkannte Wörter im Text markieren
+**Lies vorher:** `features/new-task/parse.ts`, `parse.test.ts`, `NewTaskDialog.svelte` (`.hint`).
+
+**Schritte:**
+1. `parseNewTask` liefert zusätzlich `marks` (Zeichenbereiche im Eingabetext, Art `due`/`priority`/`list`, bei Priorität
+   der Wert) – nur die wirksamen Treffer samt „am/um/bis"; benachbarte gleicher Art zusammengefasst.
+2. Hinter dem Titelfeld eine Ebene mit demselben Text und getönten `<mark>`s (Datum Akzent, Priorität Ringfarbe, Liste
+   neutral); das Feld liegt transparent darüber, waagerechtes Scrollen läuft mit. Von Hand gesetzte Chips heben die
+   Markierung ihrer Art auf.
+3. Syntax-Zeile und „Titel: …" entfallen; die Syntax steht im Tooltip eines „?" in der Fußleiste.
+
+**Fertig wenn:** Vitest (`marks` mit Positionen, Zusammenfassen, Übersteuern); Screenshot zeigt die Markierung.
+
+### [ ] P6-02 · Oben verankert, ohne Kopf; Notiz als zweite Zeile; Fußleiste
+**Lies vorher:** `components/Dialog.svelte`, `NewTaskDialog.svelte`, `features/palette/CommandPalette.svelte` (Platzierung).
+
+**Schritte:**
+1. `Dialog` bekommt `bare` (kein Kopf, Name über `aria-label`) und `placement="top"` (fest bei 15 vh, wächst nur nach
+   unten); unter 700 px wird daraus ein Bereich, der unten aufgeht (volle Breite, oben gerundet, max. 85 dvh).
+2. Eingabe als eine Karte: Titelzeile ohne ⊕, darunter randlos die Notiz („Notiz hinzufügen …", wächst mit, ohne Griff);
+   `Alt+N` springt hinein bzw. zurück, `Strg+Enter` legt an. Chip „Notiz" entfällt.
+3. Fußleiste: „Weitere anlegen" links; rechts „?" (Syntax-Tooltip), „Esc" gedämpft und „Anlegen ↵" (leer gedämpft
+   statt blass-violett). Mit „Weitere anlegen" bestätigt eine Zeile im Fenster („✓ „Blatt 1" in „Uni" angelegt")
+   statt eines Toasts.
+4. Prioritätsmenü im Dialog rendern (liegt sonst hinter der modalen Ebene).
+
+**Fertig wenn:** Vitest (Notiz ohne Chip, Bestätigungszeile, Name des Dialogs); Selbsttest `p3new`, `p002`.
+
+### [ ] P6-03 · Chips mit zwei Zuständen, Datum als Popover
+**Lies vorher:** `features/due/DueField.svelte`, `DuePicker.svelte`, `features/lists/ListPicker.svelte`.
+
+**Schritte:**
+1. Popover-Logik aus `DueField` in `DuePopover.svelte` (Anker, Platzierung, Esc, Klick daneben, Tab im Kreis);
+   `DueField` und das Fenster nutzen sie.
+2. Chips: gesetzt = getönt mit vollem Wert und × („Fälligkeit entfernen", „Priorität entfernen"), leer = nur Kontur.
+   Priorität mit Ring statt Fähnchen (auch im Menü). `Alt+D` bzw. Klick öffnet das Datums-Popover am Chip.
+3. Schmal: Chips in einer waagerecht scrollbaren Reihe.
+
+**Fertig wenn:** Vitest (×-Buttons, Popover am Chip, `Alt+D`); Screenshot hell/dunkel/420 px.
+
+### [ ] P6-04 · Doku und Abnahme
+**Schritte:** `ui-guidelines.md` §4 (`NewTaskDialog`, `Dialog`-Varianten) und §9; `prototype-acceptance.md` F um das
+Fenster ergänzen; Selbsttest-Suiten `p3new`, `p002`, `p2perf`-Tooltip, `base` grün.
 
 ---
 
