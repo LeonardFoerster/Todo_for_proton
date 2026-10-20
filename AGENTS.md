@@ -1,7 +1,7 @@
 # AGENTS.md — Anweisungen für KI-/Claude-Code-Sessions
 
 Lies diese Datei vollständig, bevor du Code oder Doku änderst. Sie ist die Kurzfassung;
-die Details stehen in `development/` (lokal, nicht getrackt).
+die Details stehen in `development/`.
 
 ## 1. Projekt in drei Sätzen
 
@@ -24,7 +24,7 @@ Als Nächstes N0 (Prototyp abrunden), danach die Web-App (`development/roadmap-n
 | Pfad | Inhalt |
 |---|---|
 | `AGENTS.md` | Diese Datei – Regeln & Kontext |
-| `development/` | **Alle** Architektur-, Planungs- und Entscheidungsdokumente (gitignored; eigenes lokales Git-Repo ohne Remote – Doku-Änderungen dort committen) |
+| `development/` | **Alle** Architektur-, Planungs- und Entscheidungsdokumente (versioniert im Haupt-Repo) |
 | `crates/todo-core/` | Domain-Modell, Use-Cases, **Port-Traits** (Interfaces), Sync-Modell (HLC, Ops, Merge). Kein IO. |
 | `crates/todo-sync/` | Sync-Engine (Segmente, Push/Pull, Scheduler, Snapshots). Spricht nur mit Ports. |
 | `crates/todo-storage-sqlite/` | `TaskRepository`-Implementierung mit SQLite (nativ) |
@@ -53,8 +53,8 @@ mit Notizen liegt in `archive/roadmap-prototype.md`, die abgeschlossenen Zwische
 übersprungen –, ihre Vorab-Lektüre lesen, sie vollständig abarbeiten und danach abhaken (Datum + Commit-Hash). Nicht
 mehrere Aufgaben vermischen.
 
-**Vor jeder größeren Änderung** das passende Dokument lesen. Wenn `development/` fehlt
-(frischer Clone – der Ordner ist nicht versioniert), den User danach fragen, statt Architektur zu raten.
+**Vor jeder größeren Änderung** das passende Dokument lesen. Nicht Architektur raten, wenn ein Dokument
+fehlt oder schweigt – dann den User fragen.
 
 ## 3. Architekturprinzipien (nicht verhandelbar)
 

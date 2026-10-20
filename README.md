@@ -196,8 +196,7 @@ Pre-commit-Hook einmal pro Klon aktivieren: `git config core.hooksPath .githooks
 - **Messung:** `tools/measure-desktop.sh` (Startzeit, Speicher als PSS über alle Prozesse, Leerlauf-CPU).
 
 **Projektregeln** (Architektur, Benennung, Performance-Budgets, Arbeitsweise) stehen in [`AGENTS.md`](AGENTS.md).
-Planungs- und Entscheidungsdokumente (ADRs, Roadmap) werden lokal in `development/` geführt und sind nicht Teil des
-Repositorys.
+Planungs- und Entscheidungsdokumente (ADRs, Roadmap) stehen in `development/`.
 
 ## Tastaturkürzel
 

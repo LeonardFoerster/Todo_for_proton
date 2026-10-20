@@ -1,0 +1,72 @@
+===== Build (release) =====
+    Finished `release` profile [optimized] target(s) in 1m 10s
+===== P6-03 · ProtonAuthProvider live =====
+This is a third-party application not officially supported by Proton.
+[1] Im Browser mit dem TESTKONTO bestätigen (öffnet sich gleich):
+[2] Login OK nach 6 s (0× Pending); Label vorhanden: true
+[3] resume (Refresh) OK in 392 ms
+[4] logout OK, lokale Sitzung gelöscht
+[5] widerrufene Sitzung → SessionRevoked (gut)
+ERGEBNIS: OK
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.76s
+===== P6-04 · RemoteStore-Contract live =====
+[login] Im Browser mit dem TESTKONTO bestätigen:
+[login] OK nach 5 s
+[contract] open_app_root_is_idempotent: OK (5346 ms)
+[contract] create_then_read: OK (4200 ms)
+[contract] create_never_overwrites: OK (4672 ms)
+[contract] read_missing_is_not_found: OK (1910 ms)
+[contract] list_is_recursive_sorted_and_scoped: OK (9742 ms)
+[contract] replace_checks_expected_revision: OK (5465 ms)
+[contract] delete_is_idempotent: OK (6240 ms)
+[contract] changes_feed_if_supported: OK (4687 ms)
+[cleanup] Testordner gelöscht: true
+[logout] OK
+ERGEBNIS: OK
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 58 filtered out; finished in 48.99s
+===== P6-05 · Zwei Geräte über Proton (CLI) =====
+$ todo-cli login
+This is a third-party application not officially supported by Proton.
+Im Browser anmelden und den Zugriff bestätigen (2FA erledigt die Login-Seite):
+  <login-url>
+Warte auf Bestätigung (höchstens 10 min) …
+Angemeldet als <konto>
+$ todo-cli [A] add Milch kaufen
+[ ] b9b447e8  Milch kaufen
+$ todo-cli [A] list-add Arbeit
+Liste angelegt: ef0f1aba  Arbeit
+$ todo-cli [A] add Bericht schreiben -l Arbeit
+[ ] 62b2adf1  Bericht schreiben
+$ todo-cli [A] sync --remote proton
+Sync: 4 Op(s) hochgeladen, 6 empfangen, 4 Änderung(en) übernommen. (12260 ms)
+$ todo-cli [A] sync --remote proton
+Sync: 0 Op(s) hochgeladen, 0 empfangen, 0 Änderung(en) übernommen. (3874 ms)
+$ todo-cli [B] sync --remote proton
+Sync: 1 Op(s) hochgeladen, 10 empfangen, 7 Änderung(en) übernommen. (11778 ms)
+$ todo-cli [B] ls
+[ ] 8da5e768  Milch kaufen
+[ ] b9b447e8  Milch kaufen
+[ ] 71e4956c  Von Gerät B
+$ todo-cli [B] ls Arbeit
+Fehler: "Arbeit" ist mehrdeutig (2 Treffer) – mehr Zeichen angeben
+$ todo-cli [B] lists
+00000001  Inbox  (Inbox)
+f1ba2449  Arbeit
+ef0f1aba  Arbeit
+$ todo-cli [B] add Von Gerät B
+[ ] 60d01c6c  Von Gerät B
+$ todo-cli [B] sync --remote proton
+Sync: 1 Op(s) hochgeladen, 0 empfangen, 0 Änderung(en) übernommen. (9115 ms)
+$ todo-cli [A] sync --remote proton
+Sync: 0 Op(s) hochgeladen, 2 empfangen, 2 Änderung(en) übernommen. (7943 ms)
+$ todo-cli [A] ls
+[ ] 8da5e768  Milch kaufen
+[ ] b9b447e8  Milch kaufen
+[ ] 71e4956c  Von Gerät B
+[ ] 60d01c6c  Von Gerät B
+$ todo-cli [A] sync --remote proton
+Sync: 0 Op(s) hochgeladen, 0 empfangen, 0 Änderung(en) übernommen. (3978 ms)
+===== Sichtprüfung Weboberfläche =====
+Befund: Sieht gut aus
+===== Abmelden =====
+Abgemeldet; Sitzung und Sync-Schlüssel aus dem Schlüsselbund entfernt.
