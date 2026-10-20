@@ -5,19 +5,30 @@
 
 mod complete_task;
 mod complete_tasks;
+mod create_note;
+mod create_note_folder;
 mod create_task;
 mod create_task_list;
 mod delete_task;
 mod delete_task_list;
 mod delete_tasks;
+mod edit_note;
 mod ensure_inbox;
+mod import_notes;
+mod move_note_items;
 mod move_task;
 mod move_task_list;
 mod move_tasks;
+mod notes;
+#[cfg(test)]
+mod notes_sync_tests;
+mod purge_notes;
 mod rename_task_list;
 mod reopen_task;
 mod restore_tasks;
 mod set_dues;
+mod trash_notes;
+mod update_note_body;
 mod update_task;
 
 use std::{fmt, sync::Arc};
@@ -26,19 +37,41 @@ use futures::lock::{Mutex, MutexGuard};
 
 pub use complete_task::{CompleteTask, CompleteTaskInput};
 pub use complete_tasks::{CompleteTasks, CompleteTasksInput};
+pub use create_note::{CreateNote, CreateNoteInput};
+pub use create_note_folder::{
+    CreateNoteFolder, CreateNoteFolderInput, RenameNoteFolder, RenameNoteFolderInput,
+};
 pub use create_task::{CreateTask, CreateTaskInput};
 pub use create_task_list::{CreateTaskList, CreateTaskListInput};
 pub use delete_task::{DeleteTask, DeleteTaskInput};
 pub use delete_task_list::{DeleteTaskList, DeleteTaskListInput, DeleteTaskListOutput};
 pub use delete_tasks::{DeleteTasks, DeleteTasksInput};
+pub use edit_note::{RenameNote, RenameNoteInput, SetNoteKind, SetNoteKindInput};
 pub use ensure_inbox::EnsureInbox;
+pub use import_notes::{
+    ImportNoteFile, ImportNotes, ImportNotesInput, ImportReport, ImportSkip, IMPORT_CHUNK,
+};
+pub use move_note_items::{
+    MoveNote, MoveNoteFolder, MoveNoteFolderInput, MoveNoteInput, NoteTarget,
+};
 pub use move_task::{MoveTask, MoveTaskInput};
 pub use move_task_list::{MoveTaskList, MoveTaskListInput};
 pub use move_tasks::{MoveTasks, MoveTasksInput};
+pub use notes::{NoteItem, NOTE_BULK_LIMIT_MAX};
+pub use purge_notes::{
+    EmptyNoteTrash, ListNoteTrash, NoteTrashEntry, PurgeExpiredNotes, PurgeNoteItems,
+    PurgeNoteItemsInput, NOTE_TRASH_RETENTION_MS,
+};
 pub use rename_task_list::{RenameTaskList, RenameTaskListInput};
 pub use reopen_task::{ReopenTask, ReopenTaskInput};
 pub use restore_tasks::{RestoreTasks, RestoreTasksInput};
 pub use set_dues::{SetDues, SetDuesInput};
+pub use trash_notes::{
+    RestoreNoteItems, RestoreNoteItemsInput, TrashNoteItems, TrashNoteItemsInput,
+};
+pub use update_note_body::{
+    DiscardEmptyNote, DiscardEmptyNoteInput, UpdateNoteBody, UpdateNoteBodyInput,
+};
 pub use update_task::{TaskPatch, UpdateTask, UpdateTaskInput};
 
 use crate::{
@@ -160,8 +193,37 @@ mod send_tests {
                 name: "x".into(),
             }),
         );
-        assert_send(DeleteTaskList::new(deps).execute(DeleteTaskListInput {
-            id: TaskListId::new(),
+        assert_send(
+            DeleteTaskList::new(deps.clone()).execute(DeleteTaskListInput {
+                id: TaskListId::new(),
+            }),
+        );
+        let note = crate::domain::NoteId::new();
+        assert_send(CreateNote::new(deps.clone()).execute(CreateNoteInput {
+            folder: None,
+            kind: crate::domain::NoteKind::Text,
+        }));
+        assert_send(
+            UpdateNoteBody::new(deps.clone()).execute(UpdateNoteBodyInput {
+                id: note,
+                text: String::new(),
+                base_rev: None,
+            }),
+        );
+        assert_send(MoveNote::new(deps.clone()).execute(MoveNoteInput {
+            id: note,
+            target: NoteTarget {
+                folder: None,
+                after: None,
+                before: None,
+            },
+        }));
+        assert_send(EmptyNoteTrash::new(deps.clone()).execute());
+        assert_send(PurgeExpiredNotes::new(deps.clone()).execute());
+        assert_send(ListNoteTrash::new(deps.clone()).execute());
+        assert_send(ImportNotes::new(deps).execute(ImportNotesInput {
+            root: "x".into(),
+            files: Vec::new(),
         }));
     }
 }

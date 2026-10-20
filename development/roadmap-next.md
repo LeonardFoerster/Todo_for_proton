@@ -72,7 +72,7 @@ Absturz"; `just check` grün. Commit `feat(sync): notes in the op log`.
 > Contract-Fälle mit zwei Repositories (`testing/note_sync_contract.rs`, für beide Speicher) und über die Engine
 > (`todo-sync/tests/notes.rs`). Details ADR-029, Nachtrag N5-03.
 
-### [ ] N5-04 · SQLite: Tabellen, `NoteRepository`, FTS, Aufräumen
+### [x] N5-04 · SQLite: Tabellen, `NoteRepository`, FTS, Aufräumen — 2026-10-20 · ae3f27b
 **Lies vorher:** `notes.md` §3.5, §4.5, §7, Migrationen, `mapping.rs`, Repository-Contract, ADR-014, ADR-027.
 **Schritte:** Migration (`note_folders`, `notes`, `note_revisions`, `notes_fts` mit `WHEN`-Triggern); `ChangeSet` um
 Notiz-/Ordner-Änderungen erweitern; Lese-Port `NoteRepository` (Ordnerinhalt seitenweise, Notiz laden, Papierkorb,
@@ -88,6 +88,13 @@ Leere neue Notiz beim Verlassen verwerfen, Auto-Leeren nach 30 Tagen, `ResolveNo
 um `notes`/`noteFolders` erweitern.
 **Fertig wenn:** Unit-Tests je Use-Case, Zwei-Geräte-Szenarien (gleichzeitige Bearbeitung mit sauberem Merge und mit
 Konflikt, Papierkorb vs. Bearbeitung, Leeren vs. neue Notiz), `just check` grün. Commit `feat(core): note use cases`.
+> Notiz: `ResolveNoteHeads` ist kein eigener Use-Case, sondern Teil jedes Commits/Pulls (User-Entscheidung, ADR-029
+> Nachtrag N5-03). Kleine Use-Cases teilen sich Dateien (`edit_note.rs`: Umbenennen + Typ; `move_note_items.rs`;
+> `trash_notes.rs`: Papierkorb + Wiederherstellen; `purge_notes.rs`: Löschen, Leeren, 30 Tage, Papierkorb-Liste).
+> `base_rev` muss die zuletzt gelieferte Revision sein (Speichern je Notiz nacheinander), sonst kann eine ersetzte,
+> noch nicht hochgeladene Revision nicht als veraltet erkannt werden. Notizen im (wirksamen) Papierkorb sind nur
+> lesbar: Bearbeiten, Umbenennen, Typ, Verschieben → `Validation`. `CoreEvent::Changed` hat seit N5-03 `notes`/
+> `note_folders`.
 
 ### [ ] N5-06 · API, Shell, `CoreClient`
 **Lies vorher:** `api/dto.rs`, `commands.rs` (Auslöser-Liste), `core-client.ts`, `fake-core-client.ts`, `interfaces.md` §7.
