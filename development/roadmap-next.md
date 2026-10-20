@@ -137,7 +137,7 @@ gemessen, `just check` grün. Commit `feat(ui): markdown preview`.
 > (N5-12). Neues Command `open_external` (nur http/https/mailto, `xdg-open`). Weiche Zeilenumbrüche im Absatz werden
 > wie in CommonMark zu Leerzeichen; harte Umbrüche mit zwei Leerzeichen oder `\` am Zeilenende.
 
-### [ ] N5-10 · Gemeinsame Suche
+### [x] N5-10 · Gemeinsame Suche — 2026-10-20 · 66f1a1c
 **Lies vorher:** `notes.md` §7, `features/palette/`, ADR-027.
 **Schritte:** Palette fragt `searchTasks` und `searchNotes` parallel ab, Gruppen, Ausschnitt, Öffnen im Notes-Modus
 mit Sprung zum Treffer.
@@ -145,12 +145,16 @@ mit Sprung zum Treffer.
 > Notiz: Messung `bench_storage` (2 000 Notizen à 20 KB): `CoreApi::search_notes` mit Pfad p95 8 ms, Einzelsuchen
 > p95 0,1–14,8 ms. Ohne Treffer legt Enter nur im Modus „Tasks" eine neue Task an.
 
-### [ ] N5-11 · Ordner-Import (Desktop)
+### [x] N5-11 · Ordner-Import (Desktop) — 2026-10-20 · db8972a
 **Lies vorher:** `notes.md` §8.
 **Schritte:** Ordnerauswahl (Portal vs. `tauri-plugin-dialog`, Größe prüfen, im Commit begründen), Einlesen in der
 Shell, `ImportNotes` in Blöcken, Ergebnis-Dialog.
 **Fertig wenn:** Integrationstest mit Testordner (Unterordner, versteckt, Nicht-UTF-8, zu groß, Symlink, CRLF/BOM),
 `just check` grün. Commit `feat(desktop): import notes from a folder`.
+
+> Notiz: Ordnerauswahl über das XDG-Portal (`ashpd`, Feature `file_chooser`; Crate war schon im Baum) statt
+> `tauri-plugin-dialog`. Grenzen in der Shell: höchstens 20 000 Dateien, 31 Unterordner-Ebenen unter dem neuen Ordner.
+> Im Web fehlt `notes.importFolder`, der Menüeintrag erscheint dort nicht.
 
 ### [ ] N5-12 · Selbsttest, Messung, Abnahme, Doku
 **Schritte:** WebView-Selbsttest `notes` (umschalten, Notiz anlegen, tippen, Autosave, Vorschau, zurück zu Tasks mit
