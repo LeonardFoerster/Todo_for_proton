@@ -1,6 +1,6 @@
 import type { TaskListDto } from "@tasks/core-client";
 import { describe, expect, it } from "vitest";
-import { parseDue, parseNewTask } from "./parse";
+import { parseDue, parseNewTask, recognizedMarks } from "./parse";
 
 /** Sonntag, 18.10.2026, 10:00 Uhr. */
 const now = new Date(2026, 9, 18, 10);
@@ -114,5 +114,26 @@ describe("parseDue (Datum wählen…)", () => {
   it("returns null without a day or time", () => {
     expect(due("")).toBeNull();
     expect(due("quatsch")).toBeNull();
+  });
+});
+
+describe("recognizedMarks (P6-01)", () => {
+  const marks = (input: string) => recognizedMarks(input, { now, lists, tz: "Europe/Berlin" });
+  const texts = (input: string) => marks(input).map((m) => [input.slice(m.start, m.end), m.kind, m.priority ?? null]);
+
+  it("marks the effective hits at their character positions, merging neighbours of one kind", () => {
+    expect(texts("Bericht bis Fr 14:00 !1 @einkauf")).toEqual([
+      ["bis Fr 14:00", "due", null],
+      ["!1", "priority", "high"],
+      ["@einkauf", "list", null],
+    ]);
+    // Positionen beziehen sich auf den unveränderten Text (führende Leerzeichen bleiben).
+    expect(marks("  Milch morgen")).toEqual([{ start: 8, end: 14, kind: "due" }]);
+  });
+
+  it("marks only the last hit of a kind and nothing when the title would be empty", () => {
+    expect(texts("morgen Bericht heute")).toEqual([["heute", "due", null]]);
+    expect(texts("Morgen")).toEqual([]);
+    expect(texts("Kaufen @unbekannt")).toEqual([]);
   });
 });

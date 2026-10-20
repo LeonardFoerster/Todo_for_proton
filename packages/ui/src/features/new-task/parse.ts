@@ -9,6 +9,17 @@ export interface ParsedNewTask {
   listId: string | null;
 }
 
+/**
+ * Erkannte Stelle im Eingabetext (P6-01) für die Markierung im Titelfeld: Zeichenbereich `[start, end)`,
+ * Art und bei Priorität deren Wert. Nur wirksame Treffer, samt „am/um/bis“ davor.
+ */
+export interface TextMark {
+  start: number;
+  end: number;
+  kind: "due" | "priority" | "list";
+  priority?: PriorityDto;
+}
+
 export interface ParseOptions {
   now?: Date;
   /** Für `@name`; ohne Listen bleibt `@…` Teil des Titels. */
@@ -106,28 +117,54 @@ export function parseDue(input: string, options: Omit<ParseOptions, "lists"> = {
  * kein Titel übrig, gilt der Text unverändert als Titel („Morgen“).
  */
 export function parseNewTask(input: string, options: ParseOptions = {}): ParsedNewTask {
+  return analyze(input, options).parsed;
+}
+
+/**
+ * Wo im Text `parseNewTask` etwas erkannt hat (P6-01) – dieselbe Analyse, als Zeichenbereiche im
+ * unveränderten `input`. Benachbarte Stellen gleicher Art („bis Fr 14:00“) werden zusammengefasst.
+ */
+export function recognizedMarks(input: string, options: ParseOptions = {}): TextMark[] {
+  return analyze(input, options).marks;
+}
+
+function analyze(input: string, options: ParseOptions): { parsed: ParsedNewTask; marks: TextMark[] } {
   const now = options.now ?? new Date();
   const text = input.trim();
-  const tokens = text.split(/\s+/).filter(Boolean);
+  const words = [...input.matchAll(/\S+/g)].map((m) => ({ word: m[0], start: m.index, end: m.index + m[0].length }));
+  const tokens = words.map((w) => w.word);
   const { day, time, priority, list } = scan(tokens, now, options.lists);
 
-  const drop = new Set<number>();
-  for (const hit of [day, time, priority, list]) {
+  const drop = new Map<number, TextMark["kind"]>();
+  const hits: [Hit<unknown> | null, TextMark["kind"]][] = [[day, "due"], [time, "due"], [priority, "priority"], [list, "list"]];
+  for (const [hit, kind] of hits) {
     if (!hit) continue;
-    for (let i = hit.start; i < hit.end; i++) drop.add(i);
+    for (let i = hit.start; i < hit.end; i++) drop.set(i, kind);
   }
   for (const hit of [day, time]) {
     const before = hit ? hit.start - 1 : -1;
-    if (before >= 0 && !drop.has(before) && PREPOSITIONS.has(tokens[before].toLowerCase())) drop.add(before);
+    if (before >= 0 && !drop.has(before) && PREPOSITIONS.has(tokens[before].toLowerCase())) drop.set(before, "due");
   }
   const title = tokens.filter((_, i) => !drop.has(i)).join(" ");
-  if (!title) return { title: text, due: null, priority: null, listId: null };
+  if (!title) return { parsed: { title: text, due: null, priority: null, listId: null }, marks: [] };
+
+  const marks: TextMark[] = [];
+  for (const [i, w] of words.entries()) {
+    const kind = drop.get(i);
+    if (!kind) continue;
+    const last = marks.at(-1);
+    if (last && last.kind === kind && drop.get(i - 1) === kind) last.end = w.end;
+    else marks.push({ start: w.start, end: w.end, kind, ...(kind === "priority" ? { priority: priority!.value } : {}) });
+  }
 
   return {
-    title,
-    due: toDue(day?.value.date ?? null, time?.value ?? null, now, options.tz),
-    priority: priority?.value ?? null,
-    listId: list?.value ?? null,
+    parsed: {
+      title,
+      due: toDue(day?.value.date ?? null, time?.value ?? null, now, options.tz),
+      priority: priority?.value ?? null,
+      listId: list?.value ?? null,
+    },
+    marks,
   };
 }
 
