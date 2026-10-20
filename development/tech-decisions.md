@@ -728,6 +728,10 @@ DejaVu. Die App hatte damit keine eigene Typografie, Ziffernbreiten und Laufweit
 **Konsequenzen:** Release-Binary +48 KB (22 060 040 → 22 109 224 B). Messung `MODE=tasks tools/measure-desktop.sh`
 (7 Läufe): Start bis erster Paint 338 → 347 ms Median (Ziel < 400 ms), PSS 254 → 251–257 MB (Streuung wie vorher),
 Leerlauf-CPU 0 %. Für die Web-App kommt die Datei als eigenes Asset hinzu (zählt nicht zum JS-Budget).
+Nachmessung am Ende von P5 (2026-10-21, alle Stände direkt nacheinander gebaut, `MODE=tasks`, 5 Läufe, 20 s Leerlauf –
+das System lag inzwischen ~30 MB höher als bei der ersten Messung): vor P5 349 ms / 286 MB, nach P5-01 (Schrift)
+358 ms / 297 MB, Ende P5 376 ms / 303–310 MB. Die Schrift kostet damit ~10 ms und ~10 MB PSS (Glyphen-Caches im
+WebProcess); Start bleibt unter dem Ziel, PSS unter der harten Grenze (das 250-MB-Ziel ist seit N0-02 zurückgestellt).
 
 ---
 

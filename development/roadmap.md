@@ -358,7 +358,8 @@ den Rand – wirkt wie ein Debug-Rahmen.
 - Vitest für `density` (gemocktes `matchMedia`); Screenshot bei 420 px: 44-px-Zeilen, Button sichtbar, kein
   waagerechtes Scrollen.
 
-### [ ] P5-10 · Doku und Abnahme
+### [x] P5-10 · Doku und Abnahme — 2026-10-21 · 07742ff
+> Notiz: Abschlussmessung (`MODE=tasks`, gleiche Bedingungen, je Stand frisch gebaut): vor P5 349 ms / 286 MB PSS, Ende P5 376 ms / 303–310 MB, Leerlauf-CPU 0 % (vereinzelte Ausreißer gab es vor und nach P5). Start < 400 ms ✔, PSS < 320 MB hart ✔, Ziel 250 MB wie schon vorher verfehlt (N0-02 zurückgestellt). Initiales JS 67,2 KB gzip, CSS 8,3 KB, Schrift 48 KB. Selbsttest `base`, `p3new`, `p4due`, `p4today`, `p4keys`, `p708a/b` bestanden. Sichtprüfung durch den User: `prototype-acceptance.md` F.
 **Schritte:**
 1. `ui-guidelines.md`: §2 (Lesespalte, Kopfzeile mit Unterzeile, Suche), §3 (Schrift, `--text-2xl`, `--content-max`),
    §4 (Fähnchen weg, `DueField`, Zähler-Pille, Button „Neue Task" unten), neuer §9 „Design-Review P5" (Befund/Status
