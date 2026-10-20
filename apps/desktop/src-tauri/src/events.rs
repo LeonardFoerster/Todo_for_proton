@@ -24,7 +24,7 @@ impl<R: Runtime> ChangedEmitter<R> {
 
 impl<R: Runtime> EventSink for ChangedEmitter<R> {
     fn emit(&self, event: CoreEvent) {
-        let CoreEvent::Changed { tasks, lists } = event;
+        let CoreEvent::Changed { tasks, lists, .. } = event;
         let _ = self
             .app
             .emit(CHANGED_EVENT, ChangedEventDto { tasks, lists });

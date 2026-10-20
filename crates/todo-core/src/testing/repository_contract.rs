@@ -13,7 +13,7 @@
 
 use futures::executor::block_on;
 
-pub use super::sync_contract::*;
+pub use super::{note_sync_contract::*, sync_contract::*};
 
 use crate::{
     domain::{Due, LocalDay, NaiveDate, SortKey, Task, TaskId, TaskList, TaskListId, Timestamp},
@@ -74,6 +74,25 @@ macro_rules! repository_contract_tests {
             sync_cursors_and_values_roundtrip,
             entity_states_export_everything,
         );
+        $crate::repository_contract_tests!(@pairs $make;
+            note_body_edits_coalesce_until_frozen,
+            concurrent_note_edits_merge_cleanly,
+            conflicting_note_edits_create_one_copy,
+            purged_folder_rescues_offline_note,
+            folder_cycle_resolves_identically,
+            trash_and_edit_both_survive,
+            purge_wins_over_offline_edit,
+            acked_revisions_are_pruned,
+            note_state_survives_snapshot_roundtrip,
+        );
+    };
+    (@pairs $make:expr; $($case:ident),* $(,)?) => {
+        $(
+            #[test]
+            fn $case() {
+                $crate::testing::repository_contract::$case(|| $make);
+            }
+        )*
     };
     (@cases $make:expr; $($case:ident),* $(,)?) => {
         $(
@@ -131,6 +150,15 @@ pub fn run_all<R: TaskRepository>(make: impl Fn() -> R) {
     inboxes_of_two_devices_merge(make());
     sync_cursors_and_values_roundtrip(make());
     entity_states_export_everything(make());
+    note_body_edits_coalesce_until_frozen(&make);
+    concurrent_note_edits_merge_cleanly(&make);
+    conflicting_note_edits_create_one_copy(&make);
+    purged_folder_rescues_offline_note(&make);
+    folder_cycle_resolves_identically(&make);
+    trash_and_edit_both_survive(&make);
+    purge_wins_over_offline_edit(&make);
+    acked_revisions_are_pruned(&make);
+    note_state_survives_snapshot_roundtrip(&make);
 }
 
 // --- Hilfen ------------------------------------------------------------------------------------

@@ -665,6 +665,33 @@ Stelle oder eine Einfügung mitten in einem ersetzten Bereich; gleiche Änderung
 Merge-Basis: gemeinsamer Vorfahr; gibt es mehrere gleichrangige (Kreuz-Merges), wird ihre eigene Auflösung die Basis
 (wie Git „recursive"). Zwei unabhängige erste Revisionen setzen auf dem leeren Text auf. Köpfe mit gleichem Text
 brauchen keine Merge-Revision; die nächste Bearbeitung nennt sie alle als Eltern (`parents_for_edit`).
+**Nachtrag N5-03 (2026-10-20):**
+- **Format:** `EntityRef::Note`/`NoteFolder`, Felder `ParentFolder` (13), `NoteKind` (14), `AutoName` (15), `Trashed`
+  (16), Werte `Folder`, `NoteKind`, `Trashed`, `OpKind::Revise` – alles angehängt; Golden File `ops_v1_notes.bin`,
+  `ops_v1.bin` unverändert. Snapshot-Format **Version 2** hängt die gespeicherten Revisionen als `Revise`-Ops an
+  (`SnapshotBody.revisions`); Version 1 bleibt lesbar, ältere Apps überspringen Version 2 („neueres Format").
+- **Auto-Name ist kein Sync-Feld:** Mit `auto_name` leitet jedes Gerät den Namen aus dem *aufgelösten* Inhalt ab
+  (`Name` wird erst nach dem ersten Umbenennen synchronisiert). Sonst könnte nach einem Merge der LWW-Name zum
+  unterlegenen Text passen, und jeder Tastendruck in der ersten Zeile erzeugte ein `Set`.
+- **`ResolveNoteHeads` läuft im selben Commit** (User-Entscheidung 2026-10-20): `record_local` und `apply_remote`
+  legen nach jeder Änderung Köpfe mit verschiedenem Text zu einer Merge-Revision zusammen (lokale Op in der Outbox)
+  und legen Konfliktkopien an; die UI sieht nie einen ungemergten Stand. Kein eigener Engine-Schritt.
+- **Konfliktkopie** heißt „<Name> (Konflikt TT.MM.JJJJ)" (Datum der unterlegenen Revision, UTC) ohne Gerätenamen
+  (User-Entscheidung 2026-10-20): Der Core kennt die Namen anderer Geräte nicht, und das Ergebnis ist überall gleich.
+  Existiert die Kopie schon (anderes Gerät war schneller) oder ist sie gelöscht, entsteht keine zweite.
+- **Zusammenfassen in der Outbox:** Ersetzt werden die neueste ungepushte `Revise`-Op (wenn sie Kopf und Basis der
+  Bearbeitung ist) und ungepushte `Set`s derselben Notiz und desselben Felds – mit **gleicher Nummer** und neuer HLC
+  (Segmente verlangen lückenlose Nummern). **Rennen mit dem Upload:** Die Engine ruft vor jedem Upload
+  `freeze_outbox(seq_to)` (persistent); ab dann sind diese Ops unveränderlich, auch nach Abbruch oder Absturz. Sonst
+  könnte eine Bearbeitung zwischen Lesen und `mark_ops_pushed` verloren gehen oder dieselbe Op-ID mit zwei Inhalten
+  im Backend landen. SQLite findet die Kandidaten über `outbox_ops.entity_id/slot` (Migration 0004).
+- **Segmente** sind zusätzlich auf 2 MiB Klartext begrenzt (`MAX_SEGMENT_PLAIN_BYTES`).
+- **Aufräumen** (§4.5) läuft mit der Kompaktierung nach einem eigenen Snapshot: je Ursprungsgerät die kleinste
+  gesehene Op-Nummer über alle aktiven Geräte (`devices/*.json`, 90 Tage); eine unlesbare Gerätedatei verhindert es.
+- **Scheduler:** `SchedulerEvent::ContentChange` (Debounce 3 s, höchstens 30 s, solange die Serie nur Inhalte
+  enthält) und `Flush` (sofort, wenn etwas wartet – Notiz-/Moduswechsel). Nachtrag zu ADR-022.
+- **Ports:** `NoteRepository` (Lesen) ist Supertrait von `TaskRepository`; so bleibt es bei einem Repository für
+  `CoreApi`, Engine und Shells. Neue Sync-Methoden `freeze_outbox`, `revision_ops`, `prune_revisions`.
 
 ---
 

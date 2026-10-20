@@ -7,13 +7,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{MaybeSend, MaybeSync};
+use super::{MaybeSend, MaybeSync, NoteRepository};
 use crate::{
     domain::{
-        DeviceId, Due, LocalDay, Priority, SortKey, TagId, Task, TaskId, TaskList, TaskListId,
-        TaskStatus, Timestamp,
+        DeviceId, Due, LocalDay, Note, NoteFolder, NoteFolderId, NoteId, Priority, SortKey, TagId,
+        Task, TaskId, TaskList, TaskListId, TaskStatus, Timestamp,
     },
-    sync::{EntityState, Op, RemoteBatch, RemoteReceipt},
+    sync::{EntityState, NoteConflict, Op, RemoteBatch, RemoteReceipt},
     CoreError, CoreResult,
 };
 
@@ -25,6 +25,8 @@ pub const PAGE_LIMIT_MAX: u32 = 500;
 pub enum EntityRef {
     Task(TaskId),
     TaskList(TaskListId),
+    Note(NoteId),
+    NoteFolder(NoteFolderId),
 }
 
 /// Eine einzelne Domain-Änderung.
@@ -34,6 +36,11 @@ pub enum Change {
     UpsertTask(Task),
     /// Liste anlegen oder vollständig ersetzen.
     UpsertList(TaskList),
+    /// Notiz anlegen oder ersetzen. Weicht `body` vom bisherigen Inhalt ab, entsteht eine neue
+    /// Revision auf der Basis `body_rev` (ADR-029); gespeichert wird danach der aufgelöste Inhalt.
+    UpsertNote(Note),
+    /// Notiz-Ordner anlegen oder ersetzen.
+    UpsertNoteFolder(NoteFolder),
     /// Entity entfernen. Unbekannte IDs sind kein Fehler (idempotent, wichtig für den Sync).
     Delete(EntityRef),
 }
@@ -45,6 +52,8 @@ impl Change {
         match self {
             Self::UpsertTask(task) => EntityRef::Task(task.id()),
             Self::UpsertList(list) => EntityRef::TaskList(list.id()),
+            Self::UpsertNote(note) => EntityRef::Note(note.id()),
+            Self::UpsertNoteFolder(folder) => EntityRef::NoteFolder(folder.id()),
             Self::Delete(entity) => *entity,
         }
     }
@@ -77,6 +86,18 @@ impl ChangeSet {
     }
 
     #[must_use]
+    pub fn upsert_note(mut self, note: Note) -> Self {
+        self.changes.push(Change::UpsertNote(note));
+        self
+    }
+
+    #[must_use]
+    pub fn upsert_note_folder(mut self, folder: NoteFolder) -> Self {
+        self.changes.push(Change::UpsertNoteFolder(folder));
+        self
+    }
+
+    #[must_use]
     pub fn delete(mut self, entity: EntityRef) -> Self {
         self.changes.push(Change::Delete(entity));
         self
@@ -103,7 +124,8 @@ impl ChangeSet {
                 .filter_map(|change| match change {
                     Change::UpsertTask(task) => Some(task.updated_at()),
                     Change::UpsertList(list) => Some(list.updated_at()),
-                    Change::Delete(_) => None,
+                    Change::UpsertNote(note) => Some(note.modified_at()),
+                    Change::UpsertNoteFolder(_) | Change::Delete(_) => None,
                 })
                 .max()
         })
@@ -151,6 +173,8 @@ impl IntoIterator for ChangeSet {
 pub struct CommitReceipt {
     /// Geänderte Entities (Grundlage für `CoreEvent::Changed`).
     pub changed: Vec<EntityRef>,
+    /// Beim Speichern entstandene Konfliktkopien (Notiz-Inhalt, ADR-029).
+    pub conflicts: Vec<NoteConflict>,
 }
 
 /// Vordefinierte Ansichten. Bestimmen, *welche* Tasks in Frage kommen und wie sortiert wird.
@@ -351,7 +375,7 @@ impl From<&Task> for TaskSummary {
 /// `InMemoryTaskRepository` (Tests).
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-pub trait TaskRepository: MaybeSend + MaybeSync {
+pub trait TaskRepository: NoteRepository + MaybeSend + MaybeSync {
     /// Lädt eine Task; `None`, wenn sie nicht existiert.
     async fn get_task(&self, id: TaskId) -> CoreResult<Option<Task>>;
 
@@ -461,6 +485,19 @@ pub trait TaskRepository: MaybeSend + MaybeSync {
 
     /// Entfernt alle Ops mit Nummer `<= up_to` aus der Outbox. Idempotent.
     async fn mark_ops_pushed(&self, up_to: u64) -> CoreResult<()>;
+
+    /// Gibt die Outbox bis `up_to` zum Upload heraus (vor dem Hochladen aufrufen): Diese Ops
+    /// sind ab dann unveränderlich, auch über einen Neustart – eine neue Bearbeitung derselben
+    /// Notiz ersetzt sie nicht mehr, sondern schreibt eine neue Revision (§4.6, ADR-029).
+    async fn freeze_outbox(&self, up_to: u64) -> CoreResult<()>;
+
+    /// Alle gespeicherten Revisionen nicht gelöschter Notizen als `Revise`-Ops (Snapshot).
+    async fn revision_ops(&self) -> CoreResult<Vec<Op>>;
+
+    /// Räumt Revisionen auf, die kein aktives Gerät mehr als Basis braucht
+    /// ([`crate::sync::prune_revisions`]). `acked` = je Gerät die höchste Op-Nummer, die alle
+    /// aktiven Geräte gesehen haben. Liefert die Zahl entfernter Revisionen.
+    async fn prune_revisions(&self, acked: Vec<(DeviceId, u64)>) -> CoreResult<u32>;
 
     /// Wendet empfangene Ops an (Merge, Materialisierung) und setzt die Cursor des Batches –
     /// atomar und idempotent ([`crate::sync::apply_remote`]).

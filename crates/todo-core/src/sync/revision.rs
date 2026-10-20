@@ -15,7 +15,7 @@ use super::{
     text_merge::{merge3, Merge3},
     Hlc,
 };
-use crate::domain::{NoteId, RevisionId};
+use crate::domain::{NoteId, RevisionId, NOTE_BODY_MAX_BYTES};
 
 /// Eine Revision des Inhalts (= eine `Revise`-Op).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -253,8 +253,9 @@ impl RevisionSet {
                 .merge_base(&folded, head.id, depth)
                 .map(|base| merge3(&base, &text, &head.text));
             match merged {
-                Some(Merge3::Clean(merged)) => text = merged,
-                Some(Merge3::Conflict) | None => {
+                // Zusammen zu groß: wie ein Konflikt behandeln (keine Notiz über dem Limit).
+                Some(Merge3::Clean(merged)) if merged.len() <= NOTE_BODY_MAX_BYTES => text = merged,
+                Some(_) | None => {
                     losers.push(ConflictLoser {
                         rev: newest.id,
                         hlc: newest.hlc,

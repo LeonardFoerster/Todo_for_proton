@@ -50,7 +50,7 @@ erster Zeile, reine Baum-Funktionen (Waisen → Wurzel, Zyklus-Bruch per höchst
 **Fertig wenn:** Unit- und Property-Tests (Baum ist immer zyklenfrei, jedes Element erreichbar), `just check` grün.
 Commit `feat(core): note domain`.
 
-### [ ] N5-02 · Revisionen + 3-Wege-Merge
+### [x] N5-02 · Revisionen + 3-Wege-Merge — 2026-10-20 · 1bf91a0
 **Lies vorher:** `notes.md` §4.2–4.5, `sync/merge.rs`, `sync/hlc.rs`.
 **Schritte:** `sync/revision.rs`: `RevisionSet` (Vereinigung, Köpfe, jüngster gemeinsamer Vorfahr), `merge3`,
 `resolve_body` (Ergebnis: Text + optional unterlegener Kopf), deterministische Konfliktkopie-ID (UUIDv5). diff3-Crate

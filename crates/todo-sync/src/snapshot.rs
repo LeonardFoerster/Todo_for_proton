@@ -13,6 +13,10 @@
 //! Importiert wird über denselben Merge wie Ops: Jedes Register wird zu einem `Set` mit seiner
 //! HLC, jeder Tombstone zu einem `Delete` ([`SnapshotBody::to_ops`]). Das ist ein State-Join –
 //! er schadet auch bei vorhandenen lokalen Daten nicht.
+//!
+//! Version 2 (ADR-029) hängt die gespeicherten Notiz-Revisionen als `Revise`-Ops an (Köpfe und
+//! mögliche Basen). Version-1-Snapshots bleiben lesbar; ältere Apps überspringen Version 2 als
+//! „neueres Format".
 
 use serde::{Deserialize, Serialize};
 use todo_core::{
@@ -25,7 +29,7 @@ use todo_core::{
 use crate::{compression, segment::SegmentError};
 
 pub const MAGIC: [u8; 4] = *b"TSNP";
-pub const FORMAT_VERSION: u8 = 1;
+pub const FORMAT_VERSION: u8 = 2;
 pub const HEADER_LEN: usize = 52;
 pub const EXTENSION: &str = "snap";
 
@@ -45,6 +49,15 @@ pub struct SnapshotBody {
     pub vector: Vec<(DeviceId, u64)>,
     /// Register bzw. Tombstone jeder Entity.
     pub entities: Vec<(EntityRef, EntityState)>,
+    /// Notiz-Revisionen als `Revise`-Ops mit ihrer Original-ID (ab Version 2).
+    pub revisions: Vec<Op>,
+}
+
+/// Inhalt eines Version-1-Snapshots (vor den Notizen).
+#[derive(Deserialize)]
+struct SnapshotBodyV1 {
+    vector: Vec<(DeviceId, u64)>,
+    entities: Vec<(EntityRef, EntityState)>,
 }
 
 impl SnapshotHeader {
@@ -69,7 +82,7 @@ impl SnapshotHeader {
         if bytes[4] > FORMAT_VERSION {
             return Err(SegmentError::NewerFormat(bytes[4]));
         }
-        if bytes[4] != FORMAT_VERSION || bytes[5] != CODEC_ZSTD || bytes[6..8] != [0, 0] {
+        if bytes[4] == 0 || bytes[5] != CODEC_ZSTD || bytes[6..8] != [0, 0] {
             return Err(corrupt("unsupported header fields"));
         }
         let header = Self {
@@ -130,6 +143,7 @@ impl SnapshotBody {
                 }
             }
         }
+        ops.extend(self.revisions.iter().cloned());
         ops
     }
 }
@@ -165,8 +179,26 @@ pub fn open_snapshot(
         .open(key, &bytes[HEADER_LEN..], &bytes[..HEADER_LEN])
         .map_err(corrupt)?;
     let plain = compression::decompress(&packed).map_err(corrupt)?;
-    let body: SnapshotBody = postcard::from_bytes(&plain)
-        .map_err(|e| SegmentError::Corrupt(format!("snapshot encoding: {e}")))?;
+    let invalid = |e: postcard::Error| SegmentError::Corrupt(format!("snapshot encoding: {e}"));
+    let body = if bytes[4] == 1 {
+        let v1: SnapshotBodyV1 = postcard::from_bytes(&plain).map_err(invalid)?;
+        SnapshotBody {
+            vector: v1.vector,
+            entities: v1.entities,
+            revisions: Vec::new(),
+        }
+    } else {
+        postcard::from_bytes(&plain).map_err(invalid)?
+    };
+    // Revisionen sind ganze Ops: wie Segment-Inhalte prüfen (Größe, Eltern, nur Notizen).
+    for op in &body.revisions {
+        if !matches!(op.kind, OpKind::Revise { .. }) {
+            return Err(SegmentError::Corrupt(
+                "snapshot revision is not a revision".into(),
+            ));
+        }
+        op.validate().map_err(corrupt)?;
+    }
     Ok((header, body))
 }
 
@@ -219,9 +251,19 @@ mod tests {
                 .stamp(Timestamp::from_millis(6), gone, OpKind::Delete)
                 .hlc,
         );
+        let note = EntityRef::Note(todo_core::domain::NoteId::new());
+        let revision = clock.stamp(
+            Timestamp::from_millis(7),
+            note,
+            OpKind::Revise {
+                parents: Vec::new(),
+                text: "# Blatt 3".into(),
+            },
+        );
         SnapshotBody {
-            vector: vec![(device, 2)],
+            vector: vec![(device, 3)],
             entities: vec![(entity, live), (gone, deleted)],
+            revisions: vec![revision],
         }
     }
 
@@ -246,6 +288,45 @@ mod tests {
         let last = tampered.len() - 1;
         tampered[last] ^= 1;
         assert!(open_snapshot(&cipher, &key, &tampered).is_err());
+    }
+
+    #[test]
+    fn version_one_snapshots_stay_readable() {
+        #[derive(Serialize)]
+        struct V1<'a> {
+            vector: &'a [(DeviceId, u64)],
+            entities: &'a [(EntityRef, EntityState)],
+        }
+        let cipher = XChaCha20Poly1305Cipher::new();
+        let key = cipher.generate_key().unwrap();
+        let header = header(DeviceId::new());
+        let body = body();
+        let mut aad = header.to_bytes();
+        aad[4] = 1;
+        let plain = postcard::to_allocvec(&V1 {
+            vector: &body.vector,
+            entities: &body.entities,
+        })
+        .unwrap();
+        let sealed = cipher
+            .seal(&key, &compression::compress(&plain).unwrap(), &aad)
+            .unwrap();
+        let bytes = [aad.as_slice(), &sealed].concat();
+        let (read_header, read_body) = open_snapshot(&cipher, &key, &bytes).unwrap();
+        assert_eq!(read_header, header);
+        assert_eq!(read_body.entities, body.entities);
+        assert!(read_body.revisions.is_empty());
+    }
+
+    #[test]
+    fn invalid_revisions_are_rejected() {
+        let cipher = XChaCha20Poly1305Cipher::new();
+        let key = cipher.generate_key().unwrap();
+        let header = header(DeviceId::new());
+        let mut body = body();
+        body.revisions[0].entity = EntityRef::Task(todo_core::domain::TaskId::new());
+        let bytes = seal_snapshot(&cipher, &key, &header, &body).unwrap();
+        assert!(open_snapshot(&cipher, &key, &bytes).is_err());
     }
 
     #[test]
@@ -296,8 +377,15 @@ mod tests {
     #[test]
     fn header_matches_golden_file() {
         let header = header(DeviceId::parse("0192f0c4-7a3b-7c2d-8e4f-0123456789ab").unwrap());
-        let path =
+        let v1 =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/snapshot_header_v1.bin");
+        assert_eq!(
+            SnapshotHeader::parse(&std::fs::read(v1).expect("golden file")).unwrap(),
+            header,
+            "Version-1-Header bleibt lesbar"
+        );
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/snapshot_header_v2.bin");
         if std::env::var_os("UPDATE_GOLDEN").is_some() {
             std::fs::write(&path, header.to_bytes()).unwrap();
         }

@@ -14,7 +14,10 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 use super::Hlc;
 use crate::{
-    domain::{DeviceId, Due, Priority, SortKey, TagId, TaskId, TaskListId, Timestamp},
+    domain::{
+        DeviceId, Due, NoteFolderId, NoteKind, Priority, RevisionId, SortKey, TagId, TaskId,
+        TaskListId, Timestamp, NOTE_BODY_MAX_BYTES,
+    },
     ports::EntityRef,
     CoreError, CoreResult,
 };
@@ -25,6 +28,28 @@ pub struct OpId {
     pub device: DeviceId,
     pub seq: u64,
 }
+
+/// Eine Inhalts-Revision ist die `Revise`-Op, die sie geschrieben hat.
+impl From<OpId> for RevisionId {
+    fn from(id: OpId) -> Self {
+        Self {
+            device: id.device,
+            seq: id.seq,
+        }
+    }
+}
+
+impl From<RevisionId> for OpId {
+    fn from(id: RevisionId) -> Self {
+        Self {
+            device: id.device,
+            seq: id.seq,
+        }
+    }
+}
+
+/// Höchstzahl an Eltern einer Revision (Merge vieler Köpfe; schützt vor absurden Ops).
+pub const MAX_REVISION_PARENTS: usize = 64;
 
 /// Eine Änderung an genau einer Entity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +70,9 @@ pub enum OpKind {
     Set { field: FieldName, value: FieldValue },
     /// Löscht die Entity (Tombstone; gewinnt gegen alle Sets, auch spätere).
     Delete,
+    /// Neue Revision des Notiz-Inhalts (nur `EntityRef::Note`, ADR-029): unveränderlich, ihre ID
+    /// ist die `OpId` dieser Op. `parents` = Revisionen, auf denen sie aufsetzt.
+    Revise { parents: Vec<OpId>, text: String },
     // Später (OR-Set für Tags): AddToSet, RemoveFromSet – nur anhängen.
 }
 
@@ -68,14 +96,22 @@ pub enum FieldName {
     // Task und TaskList
     SortKey,
     CreatedAt,
-    // TaskList
+    // TaskList (Name auch für Notizen und Ordner)
     Name,
     IsInbox,
+    // Notiz und Ordner (ADR-029)
+    /// Elternordner eines Ordners bzw. Ordner einer Notiz (`None` = Wurzel).
+    ParentFolder,
+    NoteKind,
+    /// Name folgt der ersten Zeile (bis zum ersten Umbenennen).
+    AutoName,
+    /// Papierkorb: `Some(seit)`; LWW wie jedes Feld, kein Tombstone.
+    Trashed,
 }
 
 impl FieldName {
     /// Alle Felder (für Tests und Validierung).
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 16] = [
         Self::ListId,
         Self::ParentId,
         Self::Title,
@@ -88,6 +124,10 @@ impl FieldName {
         Self::CreatedAt,
         Self::Name,
         Self::IsInbox,
+        Self::ParentFolder,
+        Self::NoteKind,
+        Self::AutoName,
+        Self::Trashed,
     ];
 
     /// Felder einer Task.
@@ -107,6 +147,26 @@ impl FieldName {
     /// Felder einer Liste.
     pub const TASK_LIST: [Self; 4] = [Self::Name, Self::SortKey, Self::CreatedAt, Self::IsInbox];
 
+    /// Felder einer Notiz (der Inhalt ist kein Feld, sondern Revisionen).
+    pub const NOTE: [Self; 7] = [
+        Self::ParentFolder,
+        Self::Name,
+        Self::AutoName,
+        Self::NoteKind,
+        Self::SortKey,
+        Self::CreatedAt,
+        Self::Trashed,
+    ];
+
+    /// Felder eines Notiz-Ordners.
+    pub const NOTE_FOLDER: [Self; 5] = [
+        Self::ParentFolder,
+        Self::Name,
+        Self::SortKey,
+        Self::CreatedAt,
+        Self::Trashed,
+    ];
+
     /// Stabiler Code im Binärformat. **Nie ändern oder wiederverwenden.**
     #[must_use]
     pub const fn code(self) -> u8 {
@@ -123,6 +183,10 @@ impl FieldName {
             Self::CreatedAt => 10,
             Self::Name => 11,
             Self::IsInbox => 12,
+            Self::ParentFolder => 13,
+            Self::NoteKind => 14,
+            Self::AutoName => 15,
+            Self::Trashed => 16,
         }
     }
 
@@ -138,6 +202,8 @@ impl FieldName {
         match entity {
             EntityRef::Task(_) => Self::TASK.contains(&self),
             EntityRef::TaskList(_) => Self::TASK_LIST.contains(&self),
+            EntityRef::Note(_) => Self::NOTE.contains(&self),
+            EntityRef::NoteFolder(_) => Self::NOTE_FOLDER.contains(&self),
         }
     }
 
@@ -155,7 +221,10 @@ impl FieldName {
                 | (Self::Tags, FieldValue::Tags(_))
                 | (Self::SortKey, FieldValue::SortKey(_))
                 | (Self::CreatedAt, FieldValue::Timestamp(_))
-                | (Self::IsInbox, FieldValue::Bool(_))
+                | (Self::IsInbox | Self::AutoName, FieldValue::Bool(_))
+                | (Self::ParentFolder, FieldValue::Folder(_))
+                | (Self::NoteKind, FieldValue::NoteKind(_))
+                | (Self::Trashed, FieldValue::Trashed(_))
         )
     }
 }
@@ -188,6 +257,11 @@ pub enum FieldValue {
     SortKey(#[serde(with = "sort_key_str")] SortKey),
     Timestamp(Timestamp),
     Bool(bool),
+    /// Ordner einer Notiz bzw. Elternordner; `None` = Wurzel.
+    Folder(Option<NoteFolderId>),
+    NoteKind(#[serde(with = "note_kind_code")] NoteKind),
+    /// `Some(seit)` = im Papierkorb.
+    Trashed(Option<Timestamp>),
 }
 
 impl Op {
@@ -237,6 +311,24 @@ impl Op {
             OpKind::Create { fields } => fields.iter().try_for_each(|(f, v)| check(*f, v)),
             OpKind::Set { field, value } => check(*field, value),
             OpKind::Delete => Ok(()),
+            OpKind::Revise { parents, text } => {
+                let invalid = |why: &str| {
+                    CoreError::Validation(format!(
+                        "op {}/{}: invalid revision: {why}",
+                        self.id.device, self.id.seq
+                    ))
+                };
+                if !matches!(self.entity, EntityRef::Note(_)) {
+                    return Err(invalid("only notes have revisions"));
+                }
+                if text.len() > NOTE_BODY_MAX_BYTES {
+                    return Err(invalid("text too large"));
+                }
+                if parents.len() > MAX_REVISION_PARENTS || parents.contains(&self.id) {
+                    return Err(invalid("parents"));
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -299,6 +391,29 @@ mod priority_code {
             2 => Ok(Priority::Medium),
             3 => Ok(Priority::High),
             other => Err(de::Error::custom(format!("unknown priority code {other}"))),
+        }
+    }
+}
+
+/// Notiz-Typ als fester Code.
+mod note_kind_code {
+    use serde::{de, Deserialize, Deserializer, Serializer};
+
+    use crate::domain::NoteKind;
+
+    #[allow(clippy::trivially_copy_pass_by_ref)] // Signatur von serde vorgegeben
+    pub(super) fn serialize<S: Serializer>(kind: &NoteKind, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_u8(match kind {
+            NoteKind::Text => 0,
+            NoteKind::Markdown => 1,
+        })
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<NoteKind, D::Error> {
+        match u8::deserialize(d)? {
+            0 => Ok(NoteKind::Text),
+            1 => Ok(NoteKind::Markdown),
+            other => Err(de::Error::custom(format!("unknown note kind code {other}"))),
         }
     }
 }
@@ -432,13 +547,102 @@ mod tests {
     }
 
     #[test]
-    fn task_and_list_fields_cover_all() {
+    fn entity_fields_cover_all() {
         for field in FieldName::ALL {
             assert!(
-                FieldName::TASK.contains(&field) || FieldName::TASK_LIST.contains(&field),
+                FieldName::TASK.contains(&field)
+                    || FieldName::TASK_LIST.contains(&field)
+                    || FieldName::NOTE.contains(&field)
+                    || FieldName::NOTE_FOLDER.contains(&field),
                 "{field:?}"
             );
         }
+    }
+
+    #[test]
+    fn note_ops_roundtrip_and_validate() {
+        use crate::domain::{NoteFolderId, NoteId};
+        let d = device();
+        let note = EntityRef::Note(NoteId::new());
+        let folder = EntityRef::NoteFolder(NoteFolderId::new());
+        let fields: FieldMap = [
+            (
+                FieldName::ParentFolder,
+                FieldValue::Folder(Some(NoteFolderId::new())),
+            ),
+            (FieldName::Name, FieldValue::Text("Blatt 3".into())),
+            (FieldName::AutoName, FieldValue::Bool(true)),
+            (FieldName::NoteKind, FieldValue::NoteKind(NoteKind::Text)),
+            (FieldName::SortKey, FieldValue::SortKey(SortKey::first())),
+            (
+                FieldName::CreatedAt,
+                FieldValue::Timestamp(Timestamp::from_millis(1)),
+            ),
+            (
+                FieldName::Trashed,
+                FieldValue::Trashed(Some(Timestamp::from_millis(2))),
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let parent = OpId { device: d, seq: 1 };
+        let ops = vec![
+            op(d, 1, note, OpKind::Create { fields }),
+            op(
+                d,
+                2,
+                note,
+                OpKind::Revise {
+                    parents: vec![parent],
+                    text: "# Blatt 3\n".into(),
+                },
+            ),
+            op(
+                d,
+                3,
+                folder,
+                OpKind::Set {
+                    field: FieldName::Trashed,
+                    value: FieldValue::Trashed(None),
+                },
+            ),
+        ];
+        assert_eq!(decode_ops(&encode_ops(&ops)).unwrap(), ops);
+
+        let revise = |entity, parents: Vec<OpId>, text: String| {
+            op(d, 9, entity, OpKind::Revise { parents, text })
+        };
+        assert!(revise(folder, Vec::new(), String::new())
+            .validate()
+            .is_err());
+        assert!(
+            revise(note, Vec::new(), "x".repeat(NOTE_BODY_MAX_BYTES + 1))
+                .validate()
+                .is_err()
+        );
+        assert!(
+            revise(note, vec![OpId { device: d, seq: 9 }], String::new())
+                .validate()
+                .is_err(),
+            "eigene ID als Elternteil"
+        );
+        assert!(
+            revise(note, vec![parent; MAX_REVISION_PARENTS + 1], String::new())
+                .validate()
+                .is_err()
+        );
+        let kind_on_folder = op(
+            d,
+            4,
+            folder,
+            OpKind::Set {
+                field: FieldName::NoteKind,
+                value: FieldValue::NoteKind(NoteKind::Markdown),
+            },
+        );
+        assert!(kind_on_folder.validate().is_err());
+        let rev: RevisionId = parent.into();
+        assert_eq!(OpId::from(rev), parent);
     }
 
     #[test]

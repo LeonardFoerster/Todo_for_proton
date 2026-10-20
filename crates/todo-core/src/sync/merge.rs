@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{FieldMap, FieldName, FieldValue, Hlc, Op, OpKind};
 use crate::domain::{
-    Due, Priority, SortKey, TagId, Task, TaskId, TaskList, TaskListId, TaskListParts, TaskParts,
-    TaskStatus, Timestamp,
+    Due, Note, NoteFolder, NoteFolderId, NoteFolderParts, NoteId, NoteParts, Priority, SortKey,
+    TagId, Task, TaskId, TaskList, TaskListId, TaskListParts, TaskParts, TaskStatus, Timestamp,
 };
 
 /// Ein Feldwert mit der HLC der Op, die ihn gesetzt hat.
@@ -117,6 +117,8 @@ impl EntityState {
             (Self::Live(registers), OpKind::Set { field, value }) => {
                 write(registers, *field, value, op.hlc)
             }
+            // Inhalte sind keine Register (Revisionen, `sync::revision`).
+            (Self::Live(_), OpKind::Revise { .. }) => false,
         }
     }
 }
@@ -208,6 +210,87 @@ pub fn materialize_list(id: TaskListId, registers: &Registers) -> Option<TaskLis
     TaskList::from_parts(parts).ok()
 }
 
+/// Wie [`materialize_task`] für Notiz-Ordner. `parent` = wirksamer Elternordner nach den
+/// Baum-Regeln (`domain::note_tree`), nicht unbedingt der aus den Registern.
+#[must_use]
+pub fn materialize_note_folder(
+    id: NoteFolderId,
+    registers: &Registers,
+    parent: Option<NoteFolderId>,
+) -> Option<NoteFolder> {
+    folder(registers)?;
+    let parts = NoteFolderParts {
+        id,
+        parent,
+        name: text(registers, FieldName::Name)?,
+        sort_key: sort_key(registers)?,
+        created_at: created_at(registers)?,
+        trashed_at: trashed(registers)?,
+    };
+    NoteFolder::from_parts(parts).ok()
+}
+
+/// Felder einer Notiz aus den Registern; Ordner (wirksam), Inhalt, `modified_at` und – bei
+/// Auto-Name oder fehlendem Namen – den Namen setzt der Aufrufer (`sync::replica`). `None` bei
+/// unvollständigen oder ungültigen Registern.
+#[must_use]
+pub fn materialize_note(id: NoteId, registers: &Registers) -> Option<NoteParts> {
+    let created_at = created_at(registers)?;
+    let name = registers.get(&FieldName::Name);
+    let auto_name = match value(registers, FieldName::AutoName)? {
+        FieldValue::Bool(b) => *b,
+        _ => return None,
+    };
+    let explicit = name
+        .filter(|_| !auto_name)
+        .and_then(|reg| match &reg.value {
+            FieldValue::Text(s) => Some((s.clone(), reg.hlc.wall_ms)),
+            _ => None,
+        });
+    Some(NoteParts {
+        id,
+        folder: folder(registers)?,
+        name: explicit.as_ref().map_or_else(
+            || crate::domain::UNTITLED_NOTE_NAME.to_owned(),
+            |(s, _)| s.clone(),
+        ),
+        auto_name: auto_name || explicit.is_none(),
+        kind: match value(registers, FieldName::NoteKind)? {
+            FieldValue::NoteKind(kind) => *kind,
+            _ => return None,
+        },
+        body: String::new(),
+        body_rev: None,
+        sort_key: sort_key(registers)?,
+        created_at,
+        modified_at: created_at.max(wall(explicit.map_or(0, |(_, at)| at))),
+        trashed_at: trashed(registers)?,
+    })
+    .filter(|parts| Note::from_parts(parts.clone()).is_ok())
+}
+
+/// Gespeicherter Ordner (bzw. Elternordner) laut Registern.
+#[must_use]
+pub fn folder(registers: &Registers) -> Option<Option<NoteFolderId>> {
+    match value(registers, FieldName::ParentFolder)? {
+        FieldValue::Folder(folder) => Some(*folder),
+        _ => None,
+    }
+}
+
+fn trashed(registers: &Registers) -> Option<Option<Timestamp>> {
+    match value(registers, FieldName::Trashed)? {
+        FieldValue::Trashed(at) => Some(*at),
+        _ => None,
+    }
+}
+
+/// HLC-Wandzeit als Zeitstempel.
+#[must_use]
+pub fn wall(wall_ms: u64) -> Timestamp {
+    Timestamp::from_millis(i64::try_from(wall_ms).unwrap_or(i64::MAX))
+}
+
 /// Die Liste, in die eine Task laut Registern gehört (auch wenn die Task unvollständig ist).
 #[must_use]
 pub fn list_id(registers: &Registers) -> Option<TaskListId> {
@@ -264,12 +347,13 @@ fn created_at(registers: &Registers) -> Option<Timestamp> {
 }
 
 fn updated_at(registers: &Registers) -> Timestamp {
-    let wall = registers
-        .values()
-        .map(|reg| reg.hlc.wall_ms)
-        .max()
-        .unwrap_or(0);
-    Timestamp::from_millis(i64::try_from(wall).unwrap_or(i64::MAX))
+    wall(
+        registers
+            .values()
+            .map(|reg| reg.hlc.wall_ms)
+            .max()
+            .unwrap_or(0),
+    )
 }
 
 #[cfg(test)]

@@ -14,6 +14,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_init.sql"),
     include_str!("../migrations/0002_sync.sql"),
     include_str!("../migrations/0003_search.sql"),
+    include_str!("../migrations/0004_notes.sql"),
 ];
 
 /// Bringt das Schema auf den neuesten Stand. Mehrfacher Aufruf ist harmlos.
@@ -84,6 +85,9 @@ mod tests {
             [
                 "field_clocks",
                 "meta",
+                "note_folders",
+                "note_revisions",
+                "notes",
                 "outbox_ops",
                 "remote_cursors",
                 "sync_meta",
@@ -211,5 +215,37 @@ mod tests {
             hits, 1,
             "bestehende Tasks indiziert, Umlaut ohne Groß/Klein"
         );
+    }
+
+    #[test]
+    fn notes_migration_keeps_registers_tombstones_and_outbox() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run(&mut conn, &MIGRATIONS[..3]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO field_clocks VALUES ('t', 3, 0, x'00', x'01');
+             INSERT INTO tombstones VALUES ('d', 1, x'02');
+             INSERT INTO outbox_ops VALUES (1, x'03');",
+        )
+        .unwrap();
+        migrate(&mut conn).unwrap();
+        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(
+            count("SELECT count(*) FROM field_clocks WHERE entity_id = 't'"),
+            1
+        );
+        assert_eq!(
+            count("SELECT count(*) FROM tombstones WHERE entity_kind = 1"),
+            1
+        );
+        assert_eq!(
+            count("SELECT count(*) FROM outbox_ops WHERE entity_id IS NULL"),
+            1,
+            "alte Ops sind nie ersetzbar"
+        );
+        conn.execute("INSERT INTO tombstones VALUES ('n', 2, x'04')", [])
+            .unwrap();
+        assert!(conn
+            .execute("INSERT INTO tombstones VALUES ('x', 4, x'04')", [])
+            .is_err());
     }
 }

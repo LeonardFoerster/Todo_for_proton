@@ -3,6 +3,7 @@
 mod in_memory_key_store;
 mod in_memory_remote_store;
 mod in_memory_repository;
+mod note_sync_contract;
 pub mod remote_store_contract;
 pub mod repository_contract;
 mod sync_contract;

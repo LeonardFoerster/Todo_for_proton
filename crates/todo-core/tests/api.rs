@@ -80,7 +80,9 @@ fn full_flow_inbox_create_move_complete_list() {
         events.take(),
         [CoreEvent::Changed {
             tasks: vec![],
-            lists: vec![inbox.id.clone()]
+            lists: vec![inbox.id.clone()],
+            notes: Vec::new(),
+            note_folders: Vec::new(),
         }]
     );
     assert_eq!(block_on(api.ensure_inbox()).unwrap(), inbox, "idempotent");
@@ -116,7 +118,9 @@ fn full_flow_inbox_create_move_complete_list() {
         events.take(),
         [CoreEvent::Changed {
             tasks: vec![c.id.clone()],
-            lists: vec![]
+            lists: vec![],
+            notes: Vec::new(),
+            note_folders: Vec::new(),
         }]
     );
 
@@ -233,7 +237,9 @@ fn update_due_today_view_and_deletes() {
         events.take(),
         [CoreEvent::Changed {
             tasks: vec![t.id.clone()],
-            lists: vec![work.id.clone()]
+            lists: vec![work.id.clone()],
+            notes: Vec::new(),
+            note_folders: Vec::new(),
         }]
     );
     assert_eq!(titles(&api, ViewDto::Inbox), ["Bericht"]);

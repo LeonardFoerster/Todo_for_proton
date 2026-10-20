@@ -7,14 +7,17 @@ use std::{
 };
 
 use crate::{
-    domain::{DeviceId, SortKey, Task, TaskId, TaskList, TaskListId, Timestamp},
+    domain::{
+        DeviceId, Note, NoteFolder, NoteFolderId, NoteId, RevisionId, SortKey, Task, TaskId,
+        TaskList, TaskListId, Timestamp,
+    },
     ports::{
-        Change, ChangeSet, CommitReceipt, EntityRef, Page, PageRequest, SmartView, TaskQuery,
-        TaskRepository, TaskSummary, PAGE_LIMIT_MAX,
+        Change, ChangeSet, CommitReceipt, EntityRef, NoteRepository, Page, PageRequest, SmartView,
+        TaskQuery, TaskRepository, TaskSummary, PAGE_LIMIT_MAX,
     },
     sync::{
-        self, EntityState, HlcState, Op, OpClock, Registers, RemoteBatch, RemoteReceipt,
-        ReplicaStore,
+        self, EntityState, FieldName, HlcState, Op, OpClock, OpKind, Registers, RemoteBatch,
+        RemoteReceipt, ReplicaStore, Revision, RevisionSet,
     },
     CoreError, CoreResult,
 };
@@ -23,10 +26,15 @@ use crate::{
 struct State {
     tasks: BTreeMap<TaskId, Task>,
     lists: BTreeMap<TaskListId, TaskList>,
+    notes: BTreeMap<NoteId, Note>,
+    folders: BTreeMap<NoteFolderId, NoteFolder>,
     // Sync-Buchhaltung
     clock: OpClock,
     entities: BTreeMap<EntityRef, EntityState>,
+    revisions: BTreeMap<NoteId, RevisionSet>,
     outbox: Vec<Op>,
+    /// Bis hier ist die Outbox zum Upload herausgegeben (`freeze_outbox`).
+    frozen_up_to: u64,
     cursors: BTreeMap<DeviceId, u64>,
     values: BTreeMap<String, String>,
 }
@@ -57,9 +65,13 @@ impl InMemoryTaskRepository {
             state: Mutex::new(State {
                 tasks: BTreeMap::new(),
                 lists: BTreeMap::new(),
+                notes: BTreeMap::new(),
+                folders: BTreeMap::new(),
                 clock: OpClock::new(HlcState::new(device), 0),
                 entities: BTreeMap::new(),
+                revisions: BTreeMap::new(),
                 outbox: Vec::new(),
+                frozen_up_to: 0,
                 cursors: BTreeMap::new(),
                 values: BTreeMap::new(),
             }),
@@ -161,10 +173,36 @@ fn apply(state: &mut State, change: Change) {
         Change::Delete(EntityRef::TaskList(id)) => {
             state.lists.remove(&id);
         }
+        Change::UpsertNote(note) => {
+            state.notes.insert(note.id(), note);
+        }
+        Change::UpsertNoteFolder(folder) => {
+            state.folders.insert(folder.id(), folder);
+        }
+        Change::Delete(EntityRef::Note(id)) => {
+            state.notes.remove(&id);
+        }
+        Change::Delete(EntityRef::NoteFolder(id)) => {
+            state.folders.remove(&id);
+        }
     }
 }
 
 fn check_integrity(state: &State) -> CoreResult<()> {
+    let known =
+        |folder: Option<NoteFolderId>| folder.is_none_or(|f| state.folders.contains_key(&f));
+    if let Some(note) = state.notes.values().find(|n| !known(n.folder())) {
+        return Err(CoreError::Validation(format!(
+            "note {} refers to an unknown folder",
+            note.id()
+        )));
+    }
+    if let Some(folder) = state.folders.values().find(|f| !known(f.parent())) {
+        return Err(CoreError::Validation(format!(
+            "folder {} refers to an unknown parent",
+            folder.id()
+        )));
+    }
     match state
         .tasks
         .values()
@@ -176,6 +214,18 @@ fn check_integrity(state: &State) -> CoreResult<()> {
             task.list_id()
         ))),
         None => Ok(()),
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+impl NoteRepository for InMemoryTaskRepository {
+    async fn get_note(&self, id: NoteId) -> CoreResult<Option<Note>> {
+        Ok(self.state().notes.get(&id).cloned())
+    }
+
+    async fn get_note_folder(&self, id: NoteFolderId) -> CoreResult<Option<NoteFolder>> {
+        Ok(self.state().folders.get(&id).cloned())
     }
 }
 
@@ -239,12 +289,17 @@ impl TaskRepository for InMemoryTaskRepository {
     }
 
     async fn commit(&self, changes: ChangeSet) -> CoreResult<CommitReceipt> {
-        let changed = changes.entities();
+        let requested = changes.entities();
         self.transaction(|state| {
-            for change in sync::record_local(state, changes)? {
+            let recorded = sync::record_local(state, changes)?;
+            let changed = recorded.changed(requested);
+            for change in recorded.changes {
                 apply(state, change);
             }
-            Ok(CommitReceipt { changed })
+            Ok(CommitReceipt {
+                changed,
+                conflicts: recorded.conflicts,
+            })
         })
     }
 
@@ -269,6 +324,32 @@ impl TaskRepository for InMemoryTaskRepository {
     async fn mark_ops_pushed(&self, up_to: u64) -> CoreResult<()> {
         self.state().outbox.retain(|op| op.id.seq > up_to);
         Ok(())
+    }
+
+    async fn freeze_outbox(&self, up_to: u64) -> CoreResult<()> {
+        let mut state = self.state();
+        state.frozen_up_to = state.frozen_up_to.max(up_to);
+        Ok(())
+    }
+
+    async fn revision_ops(&self) -> CoreResult<Vec<Op>> {
+        let state = self.state();
+        Ok(state
+            .revisions
+            .iter()
+            .filter(|(note, _)| {
+                !state
+                    .entities
+                    .get(&EntityRef::Note(**note))
+                    .is_some_and(EntityState::is_deleted)
+            })
+            .flat_map(|(note, revs)| revs.iter().map(|rev| sync::revise_op(*note, rev)))
+            .collect())
+    }
+
+    async fn prune_revisions(&self, acked: Vec<(DeviceId, u64)>) -> CoreResult<u32> {
+        let acked = acked.into_iter().collect();
+        self.transaction(|state| sync::prune_revisions(state, &acked))
     }
 
     async fn apply_remote(&self, batch: RemoteBatch) -> CoreResult<RemoteReceipt> {
@@ -361,6 +442,130 @@ impl ReplicaStore for State {
                 _ => None,
             })
             .collect())
+    }
+
+    fn revisions(&mut self, note: NoteId) -> CoreResult<RevisionSet> {
+        Ok(self.revisions.get(&note).cloned().unwrap_or_default())
+    }
+
+    fn put_revision(&mut self, note: NoteId, rev: &Revision) -> CoreResult<()> {
+        let revs = self.revisions.entry(note).or_default();
+        revs.remove(rev.id);
+        revs.insert(rev.clone());
+        Ok(())
+    }
+
+    fn remove_revisions(&mut self, note: NoteId, ids: Option<&[RevisionId]>) -> CoreResult<()> {
+        match ids {
+            None => {
+                self.revisions.remove(&note);
+            }
+            Some(ids) => {
+                if let Some(revs) = self.revisions.get_mut(&note) {
+                    for id in ids {
+                        revs.remove(*id);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn notes_with_revisions(&mut self) -> CoreResult<Vec<NoteId>> {
+        Ok(self
+            .revisions
+            .iter()
+            .filter(|(_, revs)| !revs.is_empty())
+            .map(|(id, _)| *id)
+            .collect())
+    }
+
+    fn replaceable_op(
+        &mut self,
+        entity: EntityRef,
+        field: Option<FieldName>,
+    ) -> CoreResult<Option<Op>> {
+        let latest = self.outbox.iter().rev().find(|op| {
+            op.entity == entity
+                && match (&op.kind, field) {
+                    (OpKind::Revise { .. }, None) => true,
+                    (OpKind::Set { field: f, .. }, Some(wanted)) => *f == wanted,
+                    (OpKind::Create { fields }, Some(wanted)) => fields.contains_key(&wanted),
+                    _ => false,
+                }
+        });
+        Ok(latest
+            .filter(|op| op.id.seq > self.frozen_up_to && !matches!(op.kind, OpKind::Create { .. }))
+            .cloned())
+    }
+
+    fn replace_outbox(&mut self, op: &Op) -> CoreResult<()> {
+        if let Some(slot) = self.outbox.iter_mut().find(|o| o.id == op.id) {
+            *slot = op.clone();
+        }
+        Ok(())
+    }
+
+    fn live_note_folders(&mut self) -> CoreResult<Vec<(NoteFolderId, Registers)>> {
+        Ok(self
+            .entities
+            .iter()
+            .filter_map(|(entity, state)| match (entity, state) {
+                (EntityRef::NoteFolder(id), EntityState::Live(registers)) => {
+                    Some((*id, registers.clone()))
+                }
+                _ => None,
+            })
+            .collect())
+    }
+
+    fn live_notes(&mut self) -> CoreResult<Vec<(NoteId, Registers)>> {
+        Ok(self
+            .entities
+            .iter()
+            .filter_map(|(entity, state)| match (entity, state) {
+                (EntityRef::Note(id), EntityState::Live(registers)) => {
+                    Some((*id, registers.clone()))
+                }
+                _ => None,
+            })
+            .collect())
+    }
+
+    fn next_sort_key(
+        &mut self,
+        folder: Option<NoteFolderId>,
+        after: &SortKey,
+    ) -> CoreResult<Option<SortKey>> {
+        let notes = self
+            .notes
+            .values()
+            .filter(|n| n.folder() == folder)
+            .map(Note::sort_key);
+        let folders = self
+            .folders
+            .values()
+            .filter(|f| f.parent() == folder)
+            .map(NoteFolder::sort_key);
+        Ok(notes.chain(folders).filter(|k| *k > after).min().cloned())
+    }
+
+    fn note(&mut self, id: NoteId) -> CoreResult<Option<Note>> {
+        Ok(self.notes.get(&id).cloned())
+    }
+
+    fn note_folder(&mut self, id: NoteFolderId) -> CoreResult<Option<NoteFolder>> {
+        Ok(self.folders.get(&id).cloned())
+    }
+
+    fn put_note(&mut self, note: &Note) -> CoreResult<()> {
+        apply(self, Change::UpsertNote(note.clone()));
+        Ok(())
+    }
+
+    fn put_note_folder(&mut self, folder: &NoteFolder) -> CoreResult<()> {
+        apply(self, Change::UpsertNoteFolder(folder.clone()));
+        Ok(())
     }
 
     fn task(&mut self, id: TaskId) -> CoreResult<Option<Task>> {

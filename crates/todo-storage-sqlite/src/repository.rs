@@ -4,10 +4,13 @@ use std::path::Path;
 
 use rusqlite::{params_from_iter, Connection, TransactionBehavior};
 use todo_core::{
-    domain::{DeviceId, SortKey, Task, TaskId, TaskList, TaskListId},
+    domain::{
+        DeviceId, Note, NoteFolder, NoteFolderId, NoteId, SortKey, Task, TaskId, TaskList,
+        TaskListId,
+    },
     ports::{
-        Change, ChangeSet, CommitReceipt, EntityRef, Page, PageRequest, SearchQuery, SmartView,
-        TaskQuery, TaskRepository, TaskSummary, PAGE_LIMIT_MAX,
+        Change, ChangeSet, CommitReceipt, EntityRef, NoteRepository, Page, PageRequest,
+        SearchQuery, SmartView, TaskQuery, TaskRepository, TaskSummary, PAGE_LIMIT_MAX,
     },
     sync::{self, EntityState, Op, RemoteBatch, RemoteReceipt, ReplicaStore},
     CoreError, CoreResult,
@@ -17,8 +20,8 @@ use crate::{
     connection::Database,
     error::{corrupt, storage},
     mapping::{
-        read_list, read_sort_key, read_summary, read_task, write_list, write_task, LIST_COLUMNS,
-        TASK_COLUMNS,
+        read_list, read_sort_key, read_summary, read_task, write_folder, write_list, write_note,
+        write_task, LIST_COLUMNS, TASK_COLUMNS,
     },
     query::{list_tasks_sql, search_tasks_sql, Position},
     sync_store::{self, SqliteReplica},
@@ -51,6 +54,21 @@ impl SqliteTaskRepository {
         Ok(Self {
             db: Database::open_in_memory()?,
         })
+    }
+}
+
+#[async_trait::async_trait]
+impl NoteRepository for SqliteTaskRepository {
+    async fn get_note(&self, id: NoteId) -> CoreResult<Option<Note>> {
+        self.db
+            .call(move |conn| sync_store::read_note_row(conn, id))
+            .await
+    }
+
+    async fn get_note_folder(&self, id: NoteFolderId) -> CoreResult<Option<NoteFolder>> {
+        self.db
+            .call(move |conn| sync_store::read_folder_row(conn, id))
+            .await
     }
 }
 
@@ -201,19 +219,24 @@ impl TaskRepository for SqliteTaskRepository {
     }
 
     async fn commit(&self, changes: ChangeSet) -> CoreResult<CommitReceipt> {
-        let changed = changes.entities();
+        let requested = changes.entities();
         self.db
             .call(move |conn| {
                 let tx = conn
                     .transaction_with_behavior(TransactionBehavior::Immediate)
                     .map_err(storage)?;
-                for change in sync::record_local(&mut SqliteReplica::new(&tx), changes)? {
-                    apply(&tx, &change)?;
+                let recorded = sync::record_local(&mut SqliteReplica::new(&tx), changes)?;
+                let changed = recorded.changed(requested);
+                for change in recorded.changes.changes() {
+                    apply(&tx, change)?;
                 }
                 // Aufgeschobene Fremdschlüssel werden hier geprüft; bei Verstoß rollt der Drop
                 // der Transaktion alles zurück – Zustand, Outbox und Register gemeinsam.
                 tx.commit().map_err(storage)?;
-                Ok(CommitReceipt { changed })
+                Ok(CommitReceipt {
+                    changed,
+                    conflicts: recorded.conflicts,
+                })
             })
             .await
     }
@@ -237,6 +260,30 @@ impl TaskRepository for SqliteTaskRepository {
     async fn mark_ops_pushed(&self, up_to: u64) -> CoreResult<()> {
         self.db
             .call(move |conn| sync_store::mark_ops_pushed(conn, up_to))
+            .await
+    }
+
+    async fn freeze_outbox(&self, up_to: u64) -> CoreResult<()> {
+        self.db
+            .call(move |conn| sync_store::freeze_outbox(conn, up_to))
+            .await
+    }
+
+    async fn revision_ops(&self) -> CoreResult<Vec<Op>> {
+        self.db.call(|conn| sync_store::revision_ops(conn)).await
+    }
+
+    async fn prune_revisions(&self, acked: Vec<(DeviceId, u64)>) -> CoreResult<u32> {
+        self.db
+            .call(move |conn| {
+                let tx = conn
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .map_err(storage)?;
+                let acked = acked.into_iter().collect();
+                let removed = sync::prune_revisions(&mut SqliteReplica::new(&tx), &acked)?;
+                tx.commit().map_err(storage)?;
+                Ok(removed)
+            })
             .await
     }
 
@@ -324,8 +371,12 @@ fn apply(conn: &Connection, change: &Change) -> CoreResult<()> {
     match change {
         Change::UpsertTask(task) => write_task(conn, task),
         Change::UpsertList(list) => write_list(conn, list),
+        Change::UpsertNote(note) => write_note(conn, note),
+        Change::UpsertNoteFolder(folder) => write_folder(conn, folder),
         Change::Delete(EntityRef::Task(id)) => delete(conn, "tasks", &id.to_string()),
         Change::Delete(EntityRef::TaskList(id)) => delete(conn, "task_lists", &id.to_string()),
+        Change::Delete(EntityRef::Note(id)) => delete(conn, "notes", &id.to_string()),
+        Change::Delete(EntityRef::NoteFolder(id)) => delete(conn, "note_folders", &id.to_string()),
     }
 }
 
@@ -373,6 +424,16 @@ mod tests {
     }
 
     #[async_trait::async_trait]
+    impl NoteRepository for OnDisk {
+        async fn get_note(&self, id: NoteId) -> CoreResult<Option<Note>> {
+            self.repo.get_note(id).await
+        }
+        async fn get_note_folder(&self, id: NoteFolderId) -> CoreResult<Option<NoteFolder>> {
+            self.repo.get_note_folder(id).await
+        }
+    }
+
+    #[async_trait::async_trait]
     impl TaskRepository for OnDisk {
         async fn get_task(&self, id: TaskId) -> CoreResult<Option<Task>> {
             self.repo.get_task(id).await
@@ -413,6 +474,15 @@ mod tests {
         }
         async fn mark_ops_pushed(&self, up_to: u64) -> CoreResult<()> {
             self.repo.mark_ops_pushed(up_to).await
+        }
+        async fn freeze_outbox(&self, up_to: u64) -> CoreResult<()> {
+            self.repo.freeze_outbox(up_to).await
+        }
+        async fn revision_ops(&self) -> CoreResult<Vec<Op>> {
+            self.repo.revision_ops().await
+        }
+        async fn prune_revisions(&self, acked: Vec<(DeviceId, u64)>) -> CoreResult<u32> {
+            self.repo.prune_revisions(acked).await
         }
         async fn apply_remote(&self, batch: RemoteBatch) -> CoreResult<RemoteReceipt> {
             self.repo.apply_remote(batch).await

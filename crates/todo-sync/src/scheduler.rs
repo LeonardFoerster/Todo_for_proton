@@ -63,6 +63,13 @@ pub enum SchedulerEvent {
     LocalChange {
         pending_ops: u64,
     },
+    /// Nur Notiz-Inhalt gespeichert (Autosave): längerer Debounce und längere Höchstwartezeit,
+    /// sonst lädt durchgehendes Tippen alle paar Sekunden den ganzen Text hoch (ADR-029).
+    ContentChange {
+        pending_ops: u64,
+    },
+    /// Jetzt hochladen, falls etwas wartet (Notiz- oder Moduswechsel).
+    Flush,
     AppFocused,
     /// Fenster versteckt/minimiert oder App wird geschlossen.
     AppHidden,
@@ -97,6 +104,9 @@ pub struct SchedulerConfig {
     pub backoff_max_ms: u64,
     /// Anteil zufälliger Streuung des Backoffs (0.2 = ±20 %).
     pub jitter: f64,
+    /// Wie `debounce_ms`/`max_wait_ms`, wenn die Serie nur aus Notiz-Inhalten besteht.
+    pub content_debounce_ms: u64,
+    pub content_max_wait_ms: u64,
     /// Periodischer Pull bei sichtbarem Fenster: Startabstand; `None` = nie periodisch.
     pub poll_min_ms: Option<u64>,
     /// Größter Abstand des periodischen Pulls (wächst, solange nichts passiert).
@@ -108,6 +118,8 @@ impl Default for SchedulerConfig {
         Self {
             debounce_ms: 1_500,
             max_wait_ms: 5_000,
+            content_debounce_ms: 3_000,
+            content_max_wait_ms: 30_000,
             backoff_min_ms: 5_000,
             backoff_max_ms: 10 * 60 * 1000,
             jitter: 0.2,
@@ -131,6 +143,8 @@ pub struct Scheduler {
     deadline: Option<Timestamp>,
     /// Erste noch nicht hochgeladene lokale Änderung der laufenden Serie (für `max_wait_ms`).
     burst_since: Option<Timestamp>,
+    /// Die Serie besteht nur aus Notiz-Inhalten (`ContentChange`).
+    burst_content_only: bool,
     failures: u32,
     /// Abstand bis zum nächsten periodischen Pull.
     poll_wait_ms: u64,
@@ -162,6 +176,7 @@ impl Scheduler {
             rerun: false,
             deadline: None,
             burst_since: None,
+            burst_content_only: true,
             failures: 0,
             rate_limited_until: None,
             newer_format: false,
@@ -187,21 +202,30 @@ impl Scheduler {
                 self.auth_required = false;
                 self.deadline = None;
                 self.burst_since = None;
+                self.burst_content_only = true;
                 self.failures = 0;
                 sync_now = on;
             }
             SchedulerEvent::AppStarted | SchedulerEvent::ManualSync => sync_now = true,
             SchedulerEvent::LocalChange { pending_ops } => {
                 self.pending_ops = pending_ops;
+                self.burst_content_only = false;
                 if self.running {
                     self.rerun = true;
                 } else if self.failures == 0 {
                     let since = *self.burst_since.get_or_insert(now);
-                    let due =
-                        at(now, self.config.debounce_ms).min(at(since, self.config.max_wait_ms));
-                    self.deadline = Some(due);
+                    self.deadline = Some(self.burst_due(now, since));
                 }
             }
+            SchedulerEvent::ContentChange { pending_ops } => {
+                self.pending_ops = pending_ops;
+                // Während eines Laufs kein sofortiger Folgelauf: Der Debounce danach genügt.
+                let since = *self.burst_since.get_or_insert(now);
+                if !self.running && self.failures == 0 {
+                    self.deadline = Some(self.burst_due(now, since));
+                }
+            }
+            SchedulerEvent::Flush => sync_now = self.pending_ops > 0,
             SchedulerEvent::AppFocused => {
                 self.visible = true;
                 self.poll_next_ms = self.config.poll_min_ms.unwrap_or(0);
@@ -221,6 +245,7 @@ impl Scheduler {
                 self.online = false;
                 self.deadline = None;
                 self.burst_since = None;
+                self.burst_content_only = true;
             }
             SchedulerEvent::TimerFired => {
                 sync_now = self.deadline.is_some_and(|due| now >= due);
@@ -248,7 +273,10 @@ impl Scheduler {
                     self.poll_wait_ms = self.poll_next_ms;
                     self.poll_next_ms = (self.poll_next_ms * 2).min(self.config.poll_max_ms);
                 }
-                self.deadline = (self.pending_ops > 0).then(|| at(now, self.config.debounce_ms));
+                self.deadline = (self.pending_ops > 0).then(|| match self.burst_since {
+                    Some(since) => self.burst_due(now, since),
+                    None => at(now, self.config.debounce_ms),
+                });
                 self.status = SyncStatus::Idle {
                     last_success: self.last_success,
                 };
@@ -287,6 +315,19 @@ impl Scheduler {
         }
     }
 
+    /// Fälligkeit einer Serie lokaler Änderungen, die bei `since` begann.
+    fn burst_due(&self, now: Timestamp, since: Timestamp) -> Timestamp {
+        let (debounce, max_wait) = if self.burst_content_only {
+            (
+                self.config.content_debounce_ms,
+                self.config.content_max_wait_ms,
+            )
+        } else {
+            (self.config.debounce_ms, self.config.max_wait_ms)
+        };
+        at(now, debounce).min(at(since, max_wait))
+    }
+
     /// Setzt die gewünschte Aktion unter den aktuellen Bedingungen um.
     fn decide(&mut self, mut sync_now: bool, now: Timestamp) -> Actions {
         let blocked_until = self.rate_limited_until.filter(|until| now < *until);
@@ -307,6 +348,7 @@ impl Scheduler {
             self.running = true;
             self.deadline = None;
             self.burst_since = None;
+            self.burst_content_only = true;
             self.status = SyncStatus::Syncing;
         } else if !self.running && self.deadline.is_none() && self.wants_poll() {
             self.deadline = Some(at(now, self.poll_wait_ms));
@@ -536,6 +578,45 @@ mod tests {
             [5, 10],
             "je Serie ein Lauf, spätestens 5 s nach ihrem Beginn"
         );
+    }
+
+    /// ADR-029: Notiz-Inhalte warten 3 s nach der letzten Eingabe, höchstens 30 s nach der ersten.
+    #[test]
+    fn content_changes_use_the_longer_debounce_and_max_wait() {
+        let mut s = scheduler();
+        running(&mut s);
+        let first = s.handle(SchedulerEvent::ContentChange { pending_ops: 1 }, ts(1_000));
+        assert_eq!(first.timer_in_ms, Some(3_000));
+        let mut started = None;
+        for tick in 1..=80 {
+            let now = ts(1_000 + tick * 400);
+            if s.handle(SchedulerEvent::TimerFired, now).sync_now {
+                started = Some(tick * 400);
+                break;
+            }
+            s.handle(SchedulerEvent::ContentChange { pending_ops: 1 }, now);
+        }
+        assert_eq!(started, Some(30_000), "durchgehendes Tippen: nach 30 s");
+
+        // Eine Task-Änderung in der Serie macht sie zur normalen Serie.
+        s.handle(ok(0, quiet()), ts(40_000));
+        s.handle(SchedulerEvent::ContentChange { pending_ops: 1 }, ts(41_000));
+        let mixed = s.handle(SchedulerEvent::LocalChange { pending_ops: 2 }, ts(41_500));
+        assert_eq!(mixed.timer_in_ms, Some(1_500));
+    }
+
+    #[test]
+    fn flush_uploads_now_only_with_pending_ops() {
+        let mut s = scheduler();
+        running(&mut s);
+        assert!(!s.handle(SchedulerEvent::Flush, ts(1_000)).sync_now);
+        s.handle(SchedulerEvent::ContentChange { pending_ops: 1 }, ts(1_000));
+        assert!(s.handle(SchedulerEvent::Flush, ts(1_200)).sync_now);
+        // Während des Laufs getippt: danach wieder der Inhalts-Debounce, kein Sofortlauf.
+        s.handle(SchedulerEvent::ContentChange { pending_ops: 1 }, ts(1_300));
+        let after = s.handle(ok(1, quiet()), ts(1_500));
+        assert!(!after.sync_now);
+        assert_eq!(after.timer_in_ms, Some(3_000), "ab Ende des Laufs");
     }
 
     #[test]

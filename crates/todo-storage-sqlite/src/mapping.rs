@@ -5,7 +5,8 @@ use chrono::Datelike;
 use rusqlite::{named_params, Connection, Row};
 use todo_core::{
     domain::{
-        Due, NaiveDate, Priority, SortKey, TagId, Task, TaskId, TaskList, TaskListId,
+        Due, NaiveDate, Note, NoteFolder, NoteFolderId, NoteFolderParts, NoteId, NoteKind,
+        NoteParts, Priority, RevisionId, SortKey, TagId, Task, TaskId, TaskList, TaskListId,
         TaskListParts, TaskParts, TaskStatus, Timestamp,
     },
     ports::TaskSummary,
@@ -22,6 +23,29 @@ pub(crate) const LIST_COLUMNS: &str = "id, name, sort_key, created_at, updated_a
 /// Spalten für [`TaskSummary`] – ohne Notiztext, nur ob es einen gibt.
 pub(crate) const SUMMARY_COLUMNS: &str = "id, list_id, title, status, priority, due_date, due_at, \
      due_tz, notes <> '' AS has_notes, sort_key, completed_at";
+
+pub(crate) const NOTE_COLUMNS: &str = "id, folder_id, name, auto_name, kind, body, body_rev, \
+     sort_key, created_at, modified_at, trashed_at";
+
+pub(crate) const FOLDER_COLUMNS: &str = "id, parent_id, name, sort_key, created_at, trashed_at";
+
+const UPSERT_NOTE: &str = "\
+    INSERT INTO notes (id, folder_id, name, auto_name, kind, body, body_rev, size, sort_key,
+                       created_at, modified_at, trashed_at)
+    VALUES (:id, :folder_id, :name, :auto_name, :kind, :body, :body_rev, :size, :sort_key,
+            :created_at, :modified_at, :trashed_at)
+    ON CONFLICT (id) DO UPDATE SET
+        folder_id = excluded.folder_id, name = excluded.name, auto_name = excluded.auto_name,
+        kind = excluded.kind, body = excluded.body, body_rev = excluded.body_rev,
+        size = excluded.size, sort_key = excluded.sort_key, created_at = excluded.created_at,
+        modified_at = excluded.modified_at, trashed_at = excluded.trashed_at";
+
+const UPSERT_FOLDER: &str = "\
+    INSERT INTO note_folders (id, parent_id, name, sort_key, created_at, trashed_at)
+    VALUES (:id, :parent_id, :name, :sort_key, :created_at, :trashed_at)
+    ON CONFLICT (id) DO UPDATE SET
+        parent_id = excluded.parent_id, name = excluded.name, sort_key = excluded.sort_key,
+        created_at = excluded.created_at, trashed_at = excluded.trashed_at";
 
 const UPSERT_TASK: &str = "\
     INSERT INTO tasks (id, list_id, parent_id, title, notes, status, priority, due_date, due_at,
@@ -84,7 +108,106 @@ pub(crate) fn write_list(conn: &Connection, list: &TaskList) -> CoreResult<()> {
     Ok(())
 }
 
+/// Legt die Notiz an oder ersetzt sie vollständig.
+pub(crate) fn write_note(conn: &Connection, note: &Note) -> CoreResult<()> {
+    let mut stmt = conn.prepare_cached(UPSERT_NOTE).map_err(storage)?;
+    stmt.execute(named_params! {
+        ":id": note.id().to_string(),
+        ":folder_id": note.folder().map(|id| id.to_string()),
+        ":name": note.name().as_str(),
+        ":auto_name": note.auto_name(),
+        ":kind": encode_kind(note.kind()),
+        ":body": note.body(),
+        ":body_rev": note.body_rev().map(|rev| rev.to_string()),
+        ":size": i64::try_from(note.body().len()).unwrap_or(i64::MAX),
+        ":sort_key": note.sort_key().as_str(),
+        ":created_at": note.created_at().as_millis(),
+        ":modified_at": note.modified_at().as_millis(),
+        ":trashed_at": note.trashed_at().map(Timestamp::as_millis),
+    })
+    .map_err(storage)?;
+    Ok(())
+}
+
+/// Legt den Ordner an oder ersetzt ihn vollständig.
+pub(crate) fn write_folder(conn: &Connection, folder: &NoteFolder) -> CoreResult<()> {
+    let mut stmt = conn.prepare_cached(UPSERT_FOLDER).map_err(storage)?;
+    stmt.execute(named_params! {
+        ":id": folder.id().to_string(),
+        ":parent_id": folder.parent().map(|id| id.to_string()),
+        ":name": folder.name().as_str(),
+        ":sort_key": folder.sort_key().as_str(),
+        ":created_at": folder.created_at().as_millis(),
+        ":trashed_at": folder.trashed_at().map(Timestamp::as_millis),
+    })
+    .map_err(storage)?;
+    Ok(())
+}
+
 // --- Lesen -------------------------------------------------------------------------------------
+
+/// Liest eine Zeile mit [`NOTE_COLUMNS`].
+pub(crate) fn read_note(row: &Row<'_>) -> CoreResult<Note> {
+    let parts = NoteParts {
+        id: note_id(&get::<String>(row, 0)?)?,
+        folder: get::<Option<String>>(row, 1)?
+            .as_deref()
+            .map(folder_id)
+            .transpose()?,
+        name: get(row, 2)?,
+        auto_name: get(row, 3)?,
+        kind: decode_kind(get(row, 4)?)?,
+        body: get(row, 5)?,
+        body_rev: get::<Option<String>>(row, 6)?
+            .as_deref()
+            .map(|s| RevisionId::parse(s).map_err(|e| corrupt("revision id", e)))
+            .transpose()?,
+        sort_key: sort_key(&get::<String>(row, 7)?)?,
+        created_at: Timestamp::from_millis(get(row, 8)?),
+        modified_at: Timestamp::from_millis(get(row, 9)?),
+        trashed_at: get::<Option<i64>>(row, 10)?.map(Timestamp::from_millis),
+    };
+    Note::from_parts(parts).map_err(|e| corrupt("note", e))
+}
+
+/// Liest eine Zeile mit [`FOLDER_COLUMNS`].
+pub(crate) fn read_folder(row: &Row<'_>) -> CoreResult<NoteFolder> {
+    let parts = NoteFolderParts {
+        id: folder_id(&get::<String>(row, 0)?)?,
+        parent: get::<Option<String>>(row, 1)?
+            .as_deref()
+            .map(folder_id)
+            .transpose()?,
+        name: get(row, 2)?,
+        sort_key: sort_key(&get::<String>(row, 3)?)?,
+        created_at: Timestamp::from_millis(get(row, 4)?),
+        trashed_at: get::<Option<i64>>(row, 5)?.map(Timestamp::from_millis),
+    };
+    NoteFolder::from_parts(parts).map_err(|e| corrupt("note folder", e))
+}
+
+pub(crate) fn note_id(s: &str) -> CoreResult<NoteId> {
+    NoteId::parse(s).map_err(|e| corrupt("note id", e))
+}
+
+pub(crate) fn folder_id(s: &str) -> CoreResult<NoteFolderId> {
+    NoteFolderId::parse(s).map_err(|e| corrupt("note folder id", e))
+}
+
+pub(crate) fn encode_kind(kind: NoteKind) -> i64 {
+    match kind {
+        NoteKind::Text => 0,
+        NoteKind::Markdown => 1,
+    }
+}
+
+fn decode_kind(v: i64) -> CoreResult<NoteKind> {
+    match v {
+        0 => Ok(NoteKind::Text),
+        1 => Ok(NoteKind::Markdown),
+        _ => Err(corrupt("note kind", v)),
+    }
+}
 
 /// Liest eine Zeile mit [`TASK_COLUMNS`].
 pub(crate) fn read_task(row: &Row<'_>) -> CoreResult<Task> {

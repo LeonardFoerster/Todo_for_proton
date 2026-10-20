@@ -24,6 +24,7 @@
 mod auth;
 mod cipher;
 mod clock;
+mod note_repository;
 mod remote_store;
 mod repository;
 
@@ -32,6 +33,7 @@ pub use cipher::{Cipher, KeyStore, SecretBytes};
 pub use clock::Clock;
 #[cfg(any(test, feature = "test-support"))]
 pub use clock::{FixedClock, SteppingClock};
+pub use note_repository::NoteRepository;
 pub use remote_store::{
     RemoteChanges, RemoteCursor, RemoteDir, RemoteEntry, RemoteListing, RemotePath, RemoteStore,
     Revision,

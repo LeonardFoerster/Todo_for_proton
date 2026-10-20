@@ -89,6 +89,7 @@ fn kinds(ops: &[Op]) -> Vec<(EntityRef, &'static str)> {
                 OpKind::Create { .. } => "create",
                 OpKind::Set { .. } => "set",
                 OpKind::Delete => "delete",
+                OpKind::Revise { .. } => "revise",
             };
             (op.entity, kind)
         })

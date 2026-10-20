@@ -24,10 +24,13 @@ use crate::{
         RestoreTasks, RestoreTasksInput, SetDues, SetDuesInput, TaskPatch, UpdateTask,
         UpdateTaskInput,
     },
-    domain::{DeviceId, SortKey, Task, TaskId, TaskList, TaskListId, TaskParts},
+    domain::{
+        DeviceId, Note, NoteFolder, NoteFolderId, NoteId, SortKey, Task, TaskId, TaskList,
+        TaskListId, TaskParts,
+    },
     ports::{
-        ChangeSet, Clock, CommitReceipt, EntityRef, MaybeSend, MaybeSync, Page, PageRequest,
-        SearchQuery, TaskQuery, TaskRepository, TaskSummary,
+        ChangeSet, Clock, CommitReceipt, EntityRef, MaybeSend, MaybeSync, NoteRepository, Page,
+        PageRequest, SearchQuery, TaskQuery, TaskRepository, TaskSummary,
     },
     sync::{EntityState, Op, RemoteBatch, RemoteReceipt},
     CoreError, CoreResult,
@@ -40,6 +43,8 @@ pub enum CoreEvent {
     Changed {
         tasks: Vec<String>,
         lists: Vec<String>,
+        notes: Vec<String>,
+        note_folders: Vec<String>,
     },
 }
 
@@ -394,14 +399,22 @@ fn emit(sinks: &Sinks, changed: &[EntityRef]) {
     if changed.is_empty() {
         return;
     }
-    let (mut tasks, mut lists) = (Vec::new(), Vec::new());
+    let (mut tasks, mut lists, mut notes, mut note_folders) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for entity in changed {
         match entity {
             EntityRef::Task(id) => tasks.push(id.to_string()),
             EntityRef::TaskList(id) => lists.push(id.to_string()),
+            EntityRef::Note(id) => notes.push(id.to_string()),
+            EntityRef::NoteFolder(id) => note_folders.push(id.to_string()),
         }
     }
-    let event = CoreEvent::Changed { tasks, lists };
+    let event = CoreEvent::Changed {
+        tasks,
+        lists,
+        notes,
+        note_folders,
+    };
     let sinks = sinks
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -416,6 +429,18 @@ struct NotifyingRepository {
     inner: Arc<dyn TaskRepository>,
     clock: Arc<dyn Clock>,
     sinks: Sinks,
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+impl NoteRepository for NotifyingRepository {
+    async fn get_note(&self, id: NoteId) -> CoreResult<Option<Note>> {
+        self.inner.get_note(id).await
+    }
+
+    async fn get_note_folder(&self, id: NoteFolderId) -> CoreResult<Option<NoteFolder>> {
+        self.inner.get_note_folder(id).await
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
@@ -470,6 +495,18 @@ impl TaskRepository for NotifyingRepository {
 
     async fn mark_ops_pushed(&self, up_to: u64) -> CoreResult<()> {
         self.inner.mark_ops_pushed(up_to).await
+    }
+
+    async fn freeze_outbox(&self, up_to: u64) -> CoreResult<()> {
+        self.inner.freeze_outbox(up_to).await
+    }
+
+    async fn revision_ops(&self) -> CoreResult<Vec<Op>> {
+        self.inner.revision_ops().await
+    }
+
+    async fn prune_revisions(&self, acked: Vec<(DeviceId, u64)>) -> CoreResult<u32> {
+        self.inner.prune_revisions(acked).await
     }
 
     async fn apply_remote(&self, batch: RemoteBatch) -> CoreResult<RemoteReceipt> {
@@ -576,6 +613,8 @@ mod sync_tests {
             [CoreEvent::Changed {
                 tasks: vec![task.id().to_string()],
                 lists: Vec::new(),
+                notes: Vec::new(),
+                note_folders: Vec::new(),
             }]
         );
         assert_eq!(inbox.id, TaskListId::INBOX.to_string());
@@ -652,6 +691,8 @@ mod bulk_tests {
         vec![CoreEvent::Changed {
             tasks: ids.to_vec(),
             lists: Vec::new(),
+            notes: Vec::new(),
+            note_folders: Vec::new(),
         }]
     }
 
