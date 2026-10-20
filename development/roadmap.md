@@ -324,7 +324,8 @@ den Rand – wirkt wie ein Debug-Rahmen.
 **Fertig wenn:**
 - Screenshot mit langer Notiz ohne Griff; Vitest grün.
 
-### [ ] P5-08 · Eigenes Fälligkeitsfeld (`DueField`)
+### [x] P5-08 · Eigenes Fälligkeitsfeld (`DueField`) — 2026-10-21 · b857069
+> Notiz: Gemeinsamer `DuePicker` (Text, Schnellwahl, Raster, Uhrzeit, Entfernen; ein reiner Tag behält die Uhrzeit dort, nicht beim Aufrufer). `DueField` (Popover) nur im Detail; im Fenster „Neue Task“ klappt der Chip den Wähler inline auf (statt Popover), „Datum wählen…“ zeigt ihn im Dialog ohne Uhrzeit/Entfernen. Selbsttest `p4due`/`p708b` liest `#detail-due` über `data-value`/`data-time`. Nicht lazy: TaskDetail lädt ohnehin mit.
 **Lies vorher:** `features/due/DuePrompt.svelte`, `due-actions.ts`, `features/new-task/parse.ts` (`parseDue`),
 `lib/format-date.ts`, `components/Menu.svelte`, `NewTaskDialog.svelte` (Chip „Fällig"), `App.svelte` (Menü `D`).
 

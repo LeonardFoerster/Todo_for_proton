@@ -7,6 +7,7 @@
   import VirtualList from "../../components/VirtualList.svelte";
   import { ArrowDown, ArrowUp, CalendarDays, CircleCheck, FolderInput, Hash, Inbox, PanelRight, Plus, Trash, Undo } from "../../icons";
   import { useCoreClient } from "../../lib/context";
+  import { density } from "../../lib/density.svelte";
   import type { ListsState } from "../../lib/lists.svelte";
   import { localDay } from "../../lib/local-day";
   import type { Route } from "../../lib/router.svelte";
@@ -34,7 +35,8 @@
 
   let { route, lists, selectedId = $bindable(null), onopen, onready, onnewtask, ondue }: Props = $props();
 
-  const ROW = 36;
+  /** Zeilenhöhe: 36 px, bei Touch/schmal 44 px (P5-09). */
+  const ROW = $derived(density.rowHeight);
   const client = useCoreClient();
   // Pro Ansicht eine Instanz (App rendert TaskList per {#key}); Route ist hier fest.
   // svelte-ignore state_referenced_locally
@@ -607,6 +609,10 @@
       {#snippet overlay()}
         {#if dropLine !== null}<div class="drop-line" style:top="{dropLine - 1}px"></div>{/if}
       {/snippet}
+      {#snippet footer()}
+        <!-- Schmal: Platz unter der letzten Zeile für den runden Button „Neue Task“ (P5-09). -->
+        {#if density.narrow}<div class="fab-space"></div>{/if}
+      {/snippet}
     </VirtualList>
   {/if}
 </div>
@@ -630,6 +636,9 @@
 <style>
   .task-list {
     height: 100%;
+  }
+  .fab-space {
+    height: 80px;
   }
   .task-list.dragging {
     cursor: grabbing;

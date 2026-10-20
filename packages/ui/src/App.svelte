@@ -21,6 +21,7 @@
     List,
     ListChecks,
     PanelLeft,
+    Plus,
     Pencil,
     SquareKanban,
     Trash,
@@ -43,6 +44,7 @@
   import { routeHash, Router, type SmartViewKind } from "./lib/router.svelte";
   import { formatKeys, ShortcutRegistry, type Shortcut } from "./lib/shortcuts";
   import { AppMode, type Mode } from "./lib/app-mode.svelte";
+  import { density } from "./lib/density.svelte";
   import type * as NotesChunk from "./features/notes/index";
   import { SyncState } from "./lib/sync.svelte";
   import { todayPlus } from "./lib/format-date";
@@ -104,6 +106,8 @@
   let showNewList = $state(false);
   /** „Erledigte aufräumen“ (P4-06): Menü der Ansicht und Bestätigung. */
   let completedMenu = $state<{ x: number; y: number } | null>(null);
+  /** Menü der Kopfzeile im schmalen Fenster (P5-09). */
+  let viewMenu = $state<{ x: number; y: number; anchor: Element } | null>(null);
   let cleanup = $state<{ ids: string[]; cutoff: Date } | null>(null);
   /** Zuletzt geöffnete Tasks dieser Sitzung (neueste zuerst, nur im Speicher). */
   let recentTasks = $state.raw<RecentTask[]>([]);
@@ -511,6 +515,31 @@
   }
 
   const currentList = $derived(route.view === "list" ? lists.userLists.find((l) => l.id === route.listId) : undefined);
+
+  /** Einträge des Kopfzeilen-Menüs im schmalen Fenster: dasselbe wie die Icons der breiten Kopfzeile. */
+  function viewMenuItems(at: { x: number; y: number; anchor: Element }): MenuItem[] {
+    const items: MenuItem[] = [];
+    if (boardCapable) {
+      items.push(
+        layout === "list"
+          ? { label: "Als Kanban anzeigen", icon: SquareKanban, shortcut: "V", action: () => setLayout("board") }
+          : { label: "Als Liste anzeigen", icon: List, shortcut: "V", action: () => setLayout("list") },
+      );
+    }
+    items.push({
+      label: "Auswählen",
+      icon: ListChecks,
+      disabled: showBoard || !hasList(),
+      title: showBoard ? "Nur in der Listenansicht" : undefined,
+      action: () => taskList?.startSelection(),
+    });
+    const list = currentList;
+    if (list) items.push({ label: "Listenaktionen…", icon: Ellipsis, action: () => openListMenuAt(list, at.anchor) });
+    if (route.view === "completed") {
+      items.push({ label: "Aktionen für Erledigt…", icon: Ellipsis, action: () => (completedMenu = { x: at.x, y: at.y }) });
+    }
+    return items;
+  }
 
   function escape(e: KeyboardEvent) {
     const target = e.target as HTMLElement | null;
@@ -924,6 +953,18 @@
             />
           {/snippet}
         </SelectionBar>
+      {:else if density.narrow}
+        <!-- Schmal (P5-09): Darstellung, Auswählen und Listenaktionen in einem Menü statt Icon-Reihe. -->
+        <span class="header-actions">
+          <IconButton
+            label="Ansicht und Aktionen"
+            icon={Ellipsis}
+            onclick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              viewMenu = { x: r.left, y: r.bottom + 4, anchor: e.currentTarget };
+            }}
+          />
+        </span>
       {:else}
         <span class="header-actions">
           {#if boardCapable}
@@ -971,6 +1012,11 @@
         </span>
       {/if}
     </header>
+    {#if density.narrow && !selection?.active}
+      <button type="button" class="fab" aria-label="Neue Task" data-tooltip="Neue Task   N" data-tooltip-side="left" onclick={newTask}>
+        <Plus size={24} strokeWidth={2} aria-hidden="true" />
+      </button>
+    {/if}
     <div class="pane-body">
       {#if ready && (route.view !== "list" || lists.lists.some((l) => l.id === route.listId))}
         {#key routeHash(route)}
@@ -1047,6 +1093,10 @@
     onopennote={(id, hit) => void openNote(id, hit)}
     onclose={() => (showPalette = false)}
   />
+{/if}
+{#if viewMenu}
+  {@const at = viewMenu}
+  <Menu label="Ansicht und Aktionen" items={viewMenuItems(at)} x={at.x} y={at.y} onclose={() => (viewMenu = null)} />
 {/if}
 {#if completedMenu}
   <Menu
@@ -1207,6 +1257,29 @@
   .layout-switch :global(.icon-btn) {
     width: 28px;
     height: 28px;
+  }
+  /* Schmal (P5-09): „Neue Task“ als runder Button unten rechts, über der Liste. */
+  .fab {
+    position: fixed;
+    right: var(--space-4);
+    bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+    z-index: 25;
+    display: grid;
+    place-items: center;
+    width: 56px;
+    height: 56px;
+    border: 0;
+    border-radius: var(--radius-full);
+    background: var(--color-accent-fill);
+    color: var(--color-on-accent);
+    box-shadow: var(--shadow-popover);
+    cursor: pointer;
+  }
+  .fab:hover {
+    background: var(--color-accent-fill-hover);
+  }
+  .fab:focus-visible {
+    outline-offset: 3px;
   }
   .header-actions {
     display: flex;

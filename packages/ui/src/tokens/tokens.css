@@ -171,6 +171,13 @@ body {
   background: color-mix(in srgb, var(--violet-500) 28%, transparent);
 }
 
+/* Touch oder schmales Fenster: komfortable Zeilen (P5-09; gleiche Query wie `lib/density.svelte.ts`). */
+@media (pointer: coarse), (max-width: 699px) {
+  :root {
+    --row-height: 44px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   :root {
     --duration-fast: 0ms;
