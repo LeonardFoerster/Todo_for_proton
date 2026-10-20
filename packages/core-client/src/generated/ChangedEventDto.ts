@@ -3,4 +3,4 @@
 /**
  * Payload von `core://changed`: genau die geschriebenen Entities.
  */
-export type ChangedEventDto = { tasks: Array<string>, lists: Array<string>, };
+export type ChangedEventDto = { tasks: Array<string>, lists: Array<string>, notes: Array<string>, noteFolders: Array<string>, };

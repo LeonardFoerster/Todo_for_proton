@@ -4,15 +4,23 @@
 //! meldet die tatsächlich geschriebenen Entities als [`CoreEvent::Changed`] an alle [`EventSink`]s.
 
 pub mod dto;
+pub mod note_dto;
 
 use std::{
     fmt,
     sync::{Arc, RwLock},
 };
 
-use self::dto::{
-    list_id, task_id, CreateTaskDto, MoveListTargetDto, MoveTargetDto, PageDto, PageRequestDto,
-    TaskDto, TaskDueDto, TaskListDto, TaskPatchDto, TaskQueryDto, TaskSummaryDto,
+use self::{
+    dto::{
+        list_id, task_id, CreateTaskDto, MoveListTargetDto, MoveTargetDto, PageDto, PageRequestDto,
+        TaskDto, TaskDueDto, TaskListDto, TaskPatchDto, TaskQueryDto, TaskSummaryDto,
+    },
+    note_dto::{
+        folder_id, note_id, revision_id, ImportNoteFileDto, ImportReportDto, NoteConflictDto,
+        NoteDto, NoteFolderDto, NoteHitDto, NoteItemDto, NoteKindDto, NoteTargetDto,
+        NoteTrashEntryDto, NoteTreeItemDto,
+    },
 };
 use crate::{
     app::{
@@ -24,6 +32,15 @@ use crate::{
         RestoreTasks, RestoreTasksInput, SetDues, SetDuesInput, TaskPatch, UpdateTask,
         UpdateTaskInput,
     },
+    app::{
+        CreateNote, CreateNoteFolder, CreateNoteFolderInput, CreateNoteInput, DiscardEmptyNote,
+        DiscardEmptyNoteInput, EmptyNoteTrash, ImportNoteFile, ImportNotes, ImportNotesInput,
+        ListNoteTrash, MoveNote, MoveNoteFolder, MoveNoteFolderInput, MoveNoteInput, NoteItem,
+        PurgeExpiredNotes, PurgeNoteItems, PurgeNoteItemsInput, RenameNote, RenameNoteFolder,
+        RenameNoteFolderInput, RenameNoteInput, RestoreNoteItems, RestoreNoteItemsInput,
+        SetNoteKind, SetNoteKindInput, TrashNoteItems, TrashNoteItemsInput, UpdateNoteBody,
+        UpdateNoteBodyInput, NOTE_BULK_LIMIT_MAX,
+    },
     domain::{
         DeviceId, Note, NoteFolder, NoteFolderId, NoteId, SortKey, Task, TaskId, TaskList,
         TaskListId, TaskParts,
@@ -33,7 +50,7 @@ use crate::{
         NoteHit, NoteRepository, NoteSummary, NoteTreeItem, Page, PageRequest, SearchQuery,
         TaskQuery, TaskRepository, TaskSummary,
     },
-    sync::{EntityState, Op, RemoteBatch, RemoteReceipt},
+    sync::{EntityState, NoteConflict, Op, RemoteBatch, RemoteReceipt},
     CoreError, CoreResult,
 };
 
@@ -47,6 +64,8 @@ pub enum CoreEvent {
         notes: Vec<String>,
         note_folders: Vec<String>,
     },
+    /// Beim Zusammenlegen nebenläufiger Bearbeitungen entstanden Konfliktkopien (ADR-029).
+    NoteConflicts { conflicts: Vec<NoteConflictDto> },
 }
 
 /// Empfänger für [`CoreEvent`]s (z. B. Tauri-Event-Emitter, `postMessage` im Worker).
@@ -381,6 +400,327 @@ impl CoreApi {
     }
 }
 
+impl CoreApi {
+    // --- Notizen (ADR-029) ----------------------------------------------------------------------
+
+    /// Alle Ordner (auch im Papierkorb), nach `sortKey`. Wenige; Grundlage für Pfade und
+    /// „Verschieben nach…".
+    ///
+    /// # Errors
+    /// Fehler des Repositories.
+    pub async fn list_note_folders(&self) -> CoreResult<Vec<NoteFolderDto>> {
+        Ok(self
+            .deps
+            .repo
+            .list_note_folders()
+            .await?
+            .iter()
+            .map(NoteFolderDto::from)
+            .collect())
+    }
+
+    /// Eine Seite des Inhalts eines Ordners (`folderId = null` = Wurzel): Ordner und Notizen
+    /// gemischt nach `sortKey`, ohne Elemente im Papierkorb.
+    ///
+    /// # Errors
+    /// `Validation` (ID, Limit, Cursor).
+    pub async fn list_note_items(
+        &self,
+        folder: Option<String>,
+        page: PageRequestDto,
+    ) -> CoreResult<PageDto<NoteTreeItemDto>> {
+        let query = FolderItemsQuery {
+            folder: folder.as_deref().map(folder_id).transpose()?,
+            include_trashed: false,
+        };
+        let page = PageRequest {
+            cursor: page.cursor,
+            limit: page.limit,
+        };
+        Ok(self.deps.repo.list_folder_items(query, page).await?.into())
+    }
+
+    /// Vollständige Notiz (Editor).
+    ///
+    /// # Errors
+    /// `NotFound`, `Validation` (ID).
+    pub async fn get_note(&self, id: String) -> CoreResult<NoteDto> {
+        let id = note_id(&id)?;
+        let note = self
+            .deps
+            .repo
+            .get_note(id)
+            .await?
+            .ok_or_else(|| CoreError::NotFound(format!("note {id}")))?;
+        Ok((&note).into())
+    }
+
+    /// Neue, leere Notiz am Ende des Ordners.
+    ///
+    /// # Errors
+    /// `NotFound` (Ordner), `Validation` (Papierkorb, ID).
+    pub async fn create_note(
+        &self,
+        folder: Option<String>,
+        kind: NoteKindDto,
+    ) -> CoreResult<NoteDto> {
+        let input = CreateNoteInput {
+            folder: folder.as_deref().map(folder_id).transpose()?,
+            kind: kind.into(),
+        };
+        Ok((&CreateNote::new(self.deps.clone()).execute(input).await?).into())
+    }
+
+    /// Speichert den Inhalt auf der Basis `baseRev` (zuletzt geliefertes `bodyRev`). Die Antwort
+    /// trägt den aufgelösten Inhalt (weicht nur nach einem Merge mit einer Remote-Revision ab)
+    /// und das neue `bodyRev`.
+    ///
+    /// # Errors
+    /// `NotFound`, `Validation` (Größe, Papierkorb, IDs).
+    pub async fn update_note_body(
+        &self,
+        id: String,
+        text: String,
+        base_rev: Option<String>,
+    ) -> CoreResult<NoteDto> {
+        let input = UpdateNoteBodyInput {
+            id: note_id(&id)?,
+            text,
+            base_rev: base_rev.as_deref().map(revision_id).transpose()?,
+        };
+        Ok((&UpdateNoteBody::new(self.deps.clone())
+            .execute(input)
+            .await?)
+            .into())
+    }
+
+    /// Verwirft eine leer verlassene neue Notiz (leerer Inhalt, Auto-Name); `true` = verworfen.
+    ///
+    /// # Errors
+    /// `Validation` (ID).
+    pub async fn discard_empty_note(&self, id: String) -> CoreResult<bool> {
+        DiscardEmptyNote::new(self.deps.clone())
+            .execute(DiscardEmptyNoteInput { id: note_id(&id)? })
+            .await
+    }
+
+    /// # Errors
+    /// `NotFound`, `Validation` (Name, Papierkorb, ID).
+    pub async fn rename_note(&self, id: String, name: String) -> CoreResult<NoteDto> {
+        let input = RenameNoteInput {
+            id: note_id(&id)?,
+            name,
+        };
+        Ok((&RenameNote::new(self.deps.clone()).execute(input).await?).into())
+    }
+
+    /// `.txt` ↔ `.md`; der Inhalt bleibt.
+    ///
+    /// # Errors
+    /// `NotFound`, `Validation` (Papierkorb, ID).
+    pub async fn set_note_kind(&self, id: String, kind: NoteKindDto) -> CoreResult<NoteDto> {
+        let input = SetNoteKindInput {
+            id: note_id(&id)?,
+            kind: kind.into(),
+        };
+        Ok((&SetNoteKind::new(self.deps.clone()).execute(input).await?).into())
+    }
+
+    /// # Errors
+    /// `NotFound`, `Validation` (Nachbarn, Papierkorb, IDs).
+    pub async fn move_note(&self, id: String, target: NoteTargetDto) -> CoreResult<NoteDto> {
+        let input = MoveNoteInput {
+            id: note_id(&id)?,
+            target: (&target).try_into()?,
+        };
+        Ok((&MoveNote::new(self.deps.clone()).execute(input).await?).into())
+    }
+
+    /// # Errors
+    /// `NotFound` (Elternordner), `Validation` (Name, Tiefe, Papierkorb).
+    pub async fn create_note_folder(
+        &self,
+        parent_id: Option<String>,
+        name: String,
+    ) -> CoreResult<NoteFolderDto> {
+        let input = CreateNoteFolderInput {
+            parent: parent_id.as_deref().map(folder_id).transpose()?,
+            name,
+        };
+        Ok((&CreateNoteFolder::new(self.deps.clone())
+            .execute(input)
+            .await?)
+            .into())
+    }
+
+    /// # Errors
+    /// `NotFound`, `Validation` (Name, Papierkorb).
+    pub async fn rename_note_folder(&self, id: String, name: String) -> CoreResult<NoteFolderDto> {
+        let input = RenameNoteFolderInput {
+            id: folder_id(&id)?,
+            name,
+        };
+        Ok((&RenameNoteFolder::new(self.deps.clone())
+            .execute(input)
+            .await?)
+            .into())
+    }
+
+    /// Verschiebt einen Ordner samt Inhalt (`target.folderId` = neuer Elternordner).
+    ///
+    /// # Errors
+    /// `NotFound`, `Validation` (Zyklus, Tiefe, Nachbarn, Papierkorb).
+    pub async fn move_note_folder(
+        &self,
+        id: String,
+        target: NoteTargetDto,
+    ) -> CoreResult<NoteFolderDto> {
+        let input = MoveNoteFolderInput {
+            id: folder_id(&id)?,
+            target: (&target).try_into()?,
+        };
+        Ok((&MoveNoteFolder::new(self.deps.clone())
+            .execute(input)
+            .await?)
+            .into())
+    }
+
+    /// In den Papierkorb; liefert die tatsächlich geänderten (für „Rückgängig").
+    ///
+    /// # Errors
+    /// `Validation` (IDs, Obergrenze).
+    pub async fn trash_note_items(&self, items: Vec<NoteItemDto>) -> CoreResult<Vec<NoteItemDto>> {
+        let items = note_items(&items)?;
+        let changed = TrashNoteItems::new(self.deps.clone())
+            .execute(TrashNoteItemsInput { items })
+            .await?;
+        Ok(changed.into_iter().map(Into::into).collect())
+    }
+
+    /// Aus dem Papierkorb holen (bei fehlendem Elternordner in die Wurzel).
+    ///
+    /// # Errors
+    /// `Validation` (IDs, Obergrenze).
+    pub async fn restore_note_items(
+        &self,
+        items: Vec<NoteItemDto>,
+    ) -> CoreResult<Vec<NoteItemDto>> {
+        let items = note_items(&items)?;
+        let changed = RestoreNoteItems::new(self.deps.clone())
+            .execute(RestoreNoteItemsInput { items })
+            .await?;
+        Ok(changed.into_iter().map(Into::into).collect())
+    }
+
+    /// Endgültig löschen (samt Inhalt); liefert die Zahl gelöschter Elemente.
+    ///
+    /// # Errors
+    /// `Validation` (IDs, Obergrenze).
+    pub async fn purge_note_items(&self, items: Vec<NoteItemDto>) -> CoreResult<u32> {
+        let items = note_items(&items)?;
+        PurgeNoteItems::new(self.deps.clone())
+            .execute(PurgeNoteItemsInput { items })
+            .await
+    }
+
+    /// # Errors
+    /// Fehler des Repositories.
+    pub async fn empty_note_trash(&self) -> CoreResult<u32> {
+        EmptyNoteTrash::new(self.deps.clone()).execute().await
+    }
+
+    /// Löscht, was seit mehr als 30 Tagen im Papierkorb liegt (beim Start, höchstens täglich).
+    ///
+    /// # Errors
+    /// Fehler des Repositories.
+    pub async fn purge_expired_notes(&self) -> CoreResult<u32> {
+        PurgeExpiredNotes::new(self.deps.clone()).execute().await
+    }
+
+    /// Oberste Elemente im Papierkorb, neueste zuerst.
+    ///
+    /// # Errors
+    /// Fehler des Repositories.
+    pub async fn list_note_trash(&self) -> CoreResult<Vec<NoteTrashEntryDto>> {
+        Ok(ListNoteTrash::new(self.deps.clone())
+            .execute()
+            .await?
+            .iter()
+            .map(NoteTrashEntryDto::from)
+            .collect())
+    }
+
+    /// Suche über Name und Inhalt (wie `search_tasks`); mit Ordnerpfad und Ausschnitt.
+    ///
+    /// # Errors
+    /// `Validation` (Limit, Länge).
+    pub async fn search_notes(&self, text: String, limit: u32) -> CoreResult<Vec<NoteHitDto>> {
+        let repo = self.deps.repo.as_ref();
+        let hits = repo.search_notes(&SearchQuery { text, limit }).await?;
+        if hits.is_empty() {
+            return Ok(Vec::new());
+        }
+        let folders: std::collections::BTreeMap<_, _> = repo
+            .list_note_folders()
+            .await?
+            .into_iter()
+            .map(|f| (f.id(), f))
+            .collect();
+        let path = |mut folder: Option<NoteFolderId>| {
+            let mut names = Vec::new();
+            while let Some(id) = folder {
+                let Some(f) = folders.get(&id) else { break };
+                if names.len() > crate::domain::note_tree::NOTE_TREE_MAX_DEPTH {
+                    break;
+                }
+                names.push(f.name().to_string());
+                folder = f.parent();
+            }
+            names.reverse();
+            names
+        };
+        Ok(hits
+            .iter()
+            .map(|hit| NoteHitDto::new(hit, path(hit.note.folder)))
+            .collect())
+    }
+
+    /// Importiert eingelesene Dateien unter einem neuen Ordner `root` in der Wurzel (Commits zu
+    /// je ≤ 500 Elementen).
+    ///
+    /// # Errors
+    /// Fehler des Repositories (bis dahin importierte Blöcke bleiben).
+    pub async fn import_notes(
+        &self,
+        root: String,
+        files: Vec<ImportNoteFileDto>,
+    ) -> CoreResult<ImportReportDto> {
+        let input = ImportNotesInput {
+            root,
+            files: files
+                .into_iter()
+                .map(|f| ImportNoteFile {
+                    dirs: f.dirs,
+                    name: f.name,
+                    kind: f.kind.into(),
+                    text: f.text,
+                })
+                .collect(),
+        };
+        Ok((&ImportNotes::new(self.deps.clone()).execute(input).await?).into())
+    }
+}
+
+fn note_items(items: &[NoteItemDto]) -> CoreResult<Vec<NoteItem>> {
+    if items.len() > NOTE_BULK_LIMIT_MAX {
+        return Err(CoreError::Validation(format!(
+            "at most {NOTE_BULK_LIMIT_MAX} items per call, got {}",
+            items.len()
+        )));
+    }
+    items.iter().map(TryInto::try_into).collect()
+}
+
 fn task_ids(ids: &[String]) -> CoreResult<Vec<TaskId>> {
     check_bulk_len(ids.len())?;
     ids.iter().map(|id| task_id(id)).collect()
@@ -394,6 +734,27 @@ fn write_sinks(sinks: &Sinks) -> std::sync::RwLockWriteGuard<'_, Vec<Box<dyn Eve
     sinks
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn emit_conflicts(sinks: &Sinks, conflicts: &[NoteConflict]) {
+    if conflicts.is_empty() {
+        return;
+    }
+    let event = CoreEvent::NoteConflicts {
+        conflicts: conflicts
+            .iter()
+            .map(|c| NoteConflictDto {
+                note_id: c.note.to_string(),
+                copy_id: c.copy.to_string(),
+            })
+            .collect(),
+    };
+    let sinks = sinks
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    for sink in sinks.iter() {
+        sink.emit(event.clone());
+    }
 }
 
 fn emit(sinks: &Sinks, changed: &[EntityRef]) {
@@ -506,6 +867,7 @@ impl TaskRepository for NotifyingRepository {
         let changes = changes.at(self.clock.now());
         let receipt = self.inner.commit(changes).await?;
         emit(&self.sinks, &receipt.changed);
+        emit_conflicts(&self.sinks, &receipt.conflicts);
         Ok(receipt)
     }
 
@@ -540,6 +902,7 @@ impl TaskRepository for NotifyingRepository {
     async fn apply_remote(&self, batch: RemoteBatch) -> CoreResult<RemoteReceipt> {
         let receipt = self.inner.apply_remote(batch).await?;
         emit(&self.sinks, &receipt.changed);
+        emit_conflicts(&self.sinks, &receipt.conflicts);
         Ok(receipt)
     }
 
@@ -911,5 +1274,182 @@ mod tests {
                 limit: 10,
             },
         ));
+    }
+}
+
+#[cfg(test)]
+mod note_tests {
+    use std::sync::Mutex;
+
+    use futures::executor::block_on;
+
+    use super::*;
+    use crate::{
+        domain::Timestamp,
+        ports::SteppingClock,
+        sync::{OpKind, RemoteBatch},
+        testing::InMemoryTaskRepository,
+    };
+
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<CoreEvent>>);
+
+    impl EventSink for Recorder {
+        fn emit(&self, event: CoreEvent) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
+    fn api(start: i64) -> (CoreApi, Arc<Recorder>) {
+        let api = CoreApi::new(
+            Arc::new(InMemoryTaskRepository::new()),
+            Arc::new(SteppingClock::new(Timestamp::from_millis(start), 3)),
+        );
+        let recorder = Arc::new(Recorder::default());
+        api.subscribe(Box::new(recorder.clone()));
+        (api, recorder)
+    }
+
+    fn take(r: &Recorder) -> Vec<CoreEvent> {
+        std::mem::take(&mut *r.0.lock().unwrap())
+    }
+
+    /// Ops von `from` nach `to` „hochladen" (wie die Engine, mit Freeze).
+    fn send(from: &CoreApi, to: &CoreApi) {
+        let (a, b) = (from.repository(), to.repository());
+        let ops = block_on(a.pending_ops(1_000)).unwrap();
+        let Some(last) = ops.iter().map(|op| op.id.seq).max() else {
+            return;
+        };
+        block_on(a.freeze_outbox(last)).unwrap();
+        let device = block_on(a.device_id()).unwrap();
+        block_on(b.apply_remote(RemoteBatch {
+            ops,
+            cursors: vec![(device, last)],
+            now: Timestamp::from_millis(1_800_000_000_000),
+        }))
+        .unwrap();
+        block_on(a.mark_ops_pushed(last)).unwrap();
+    }
+
+    #[test]
+    fn note_lifecycle_emits_note_events() {
+        let (api, events) = api(1_700_000_000_000);
+        let folder = block_on(api.create_note_folder(None, "Uni".into())).unwrap();
+        let note =
+            block_on(api.create_note(Some(folder.id.clone()), NoteKindDto::Markdown)).unwrap();
+        take(&events);
+        let saved = block_on(api.update_note_body(
+            note.id.clone(),
+            "# Blatt 3\nAufgabe".into(),
+            note.body_rev.clone(),
+        ))
+        .unwrap();
+        assert_eq!(saved.name, "Blatt 3");
+        assert!(saved.body_rev.is_some());
+        assert_eq!(
+            take(&events),
+            [CoreEvent::Changed {
+                tasks: Vec::new(),
+                lists: Vec::new(),
+                notes: vec![note.id.clone()],
+                note_folders: Vec::new(),
+            }]
+        );
+        let page = block_on(api.list_note_items(
+            Some(folder.id.clone()),
+            PageRequestDto {
+                cursor: None,
+                limit: 10,
+            },
+        ))
+        .unwrap();
+        assert!(matches!(&page.items[..], [NoteTreeItemDto::Note(n)] if n.name == "Blatt 3"));
+        let hits = block_on(api.search_notes("aufgabe".into(), 10)).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].path, ["Uni"]);
+        assert_eq!(hits[0].snippet.as_ref().unwrap().offset, 10);
+
+        let item = NoteItemDto::Folder {
+            id: folder.id.clone(),
+        };
+        assert_eq!(
+            block_on(api.trash_note_items(vec![item.clone()])).unwrap(),
+            std::slice::from_ref(&item)
+        );
+        let trash = block_on(api.list_note_trash()).unwrap();
+        assert_eq!(trash.len(), 1);
+        assert!(block_on(api.search_notes("aufgabe".into(), 10))
+            .unwrap()
+            .is_empty());
+        block_on(api.restore_note_items(vec![item.clone()])).unwrap();
+        assert_eq!(block_on(api.purge_note_items(vec![item])).unwrap(), 2);
+        assert!(matches!(
+            block_on(api.get_note(note.id)),
+            Err(CoreError::NotFound(_))
+        ));
+    }
+
+    /// Speichern auf einer alten Basis nach einer Remote-Revision: Die Antwort trägt den
+    /// gemergten Text; ein Konflikt meldet die Kopie per Event.
+    #[test]
+    fn remote_merge_returns_the_merged_body_and_reports_conflicts() {
+        let (a, _) = api(1_700_000_000_000);
+        let (b, b_events) = api(1_700_000_000_500);
+        let note = block_on(a.create_note(None, NoteKindDto::Text)).unwrap();
+        let note = block_on(a.update_note_body(note.id, "eins\nzwei\ndrei".into(), note.body_rev))
+            .unwrap();
+        send(&a, &b);
+        let on_b = block_on(b.get_note(note.id.clone())).unwrap();
+        block_on(a.update_note_body(
+            note.id.clone(),
+            "eins\nzwei\ndrei A".into(),
+            note.body_rev.clone(),
+        ))
+        .unwrap();
+        send(&a, &b);
+        take(&b_events);
+        // B tippt noch auf dem alten Stand weiter.
+        let merged = block_on(b.update_note_body(
+            on_b.id.clone(),
+            "eins B\nzwei\ndrei".into(),
+            on_b.body_rev.clone(),
+        ))
+        .unwrap();
+        assert_eq!(merged.body, "eins B\nzwei\ndrei A");
+
+        let conflict = block_on(b.update_note_body(
+            merged.id.clone(),
+            "eins B\nzwei von B\ndrei A".into(),
+            merged.body_rev.clone(),
+        ))
+        .unwrap();
+        send(&b, &a);
+        let from_a = block_on(a.get_note(note.id.clone())).unwrap();
+        block_on(a.update_note_body(
+            note.id.clone(),
+            from_a.body.replace("zwei", "zwei von A"),
+            from_a.body_rev,
+        ))
+        .unwrap();
+        // B bearbeitet dieselbe Zeile erneut, bevor A ankommt.
+        block_on(b.update_note_body(
+            conflict.id.clone(),
+            "eins B\nzwei von B!\ndrei A".into(),
+            conflict.body_rev,
+        ))
+        .unwrap();
+        take(&b_events);
+        send(&a, &b);
+        let reported = take(&b_events)
+            .into_iter()
+            .any(|e| matches!(e, CoreEvent::NoteConflicts { conflicts } if conflicts.len() == 1));
+        assert!(reported, "Konflikt gemeldet");
+        let ops = block_on(b.repository().pending_ops(100)).unwrap();
+        assert!(
+            ops.iter()
+                .any(|op| matches!(op.kind, OpKind::Revise { .. })),
+            "Merge-Revision"
+        );
     }
 }

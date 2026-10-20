@@ -8,14 +8,27 @@
 //!   (abhaken/öffnen), `move_task` (Liste/Reihenfolge), `delete_task`
 //! - Sammelaktionen (ein Aufruf = eine Meldung): `complete_tasks`, `delete_tasks`, `move_tasks`,
 //!   `restore_tasks`, `set_dues`
+//! - Notizen (ADR-029): `create_note`, `discard_empty_note` (nur wenn verworfen), `rename_note`,
+//!   `set_note_kind`, `move_note`, `create_note_folder`, `rename_note_folder`, `move_note_folder`,
+//!   `trash_note_items`, `restore_note_items`, `purge_note_items`, `empty_note_trash`
+//! - **Inhalt:** `update_note_body` meldet `state.sync.content_change()` statt `local_change()`
+//!   (Debounce 3 s, höchstens 30 s, damit Tippen nicht alle paar Sekunden den ganzen Text lädt).
+//!   `sync_flush` lädt sofort hoch, wenn etwas wartet (Notiz- oder Moduswechsel in der UI).
 //!
-//! Lesende Commands (`list_*`, `get_task`, `search_tasks`, `ensure_inbox`, `auth_*`, `sync_*`,
-//! `app_ready`) melden nichts. Nachweis: `tests/commands.rs` (`only_writing_commands_trigger_a_sync`).
+//! Lesende Commands (`list_*`, `get_*`, `search_*`, `ensure_inbox`, `auth_*`, `sync_status`,
+//! `sync_now`, `app_ready`) melden nichts. Nachweis: `tests/commands.rs`
+//! (`only_writing_commands_trigger_a_sync`).
 
 use tauri::State;
-use todo_core::api::dto::{
-    CreateTaskDto, MoveListTargetDto, MoveTargetDto, PageDto, PageRequestDto, TaskDto, TaskDueDto,
-    TaskListDto, TaskPatchDto, TaskQueryDto, TaskSummaryDto,
+use todo_core::api::{
+    dto::{
+        CreateTaskDto, MoveListTargetDto, MoveTargetDto, PageDto, PageRequestDto, TaskDto,
+        TaskDueDto, TaskListDto, TaskPatchDto, TaskQueryDto, TaskSummaryDto,
+    },
+    note_dto::{
+        NoteDto, NoteFolderDto, NoteHitDto, NoteItemDto, NoteKindDto, NoteTargetDto,
+        NoteTrashEntryDto, NoteTreeItemDto,
+    },
 };
 use todo_sync::SchedulerEvent;
 
@@ -191,6 +204,169 @@ pub async fn search_tasks(
     Ok(state.api.search_tasks(text, limit).await?)
 }
 
+// --- Notizen (ADR-029) --------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn list_note_folders(state: State<'_, AppState>) -> Result<Vec<NoteFolderDto>> {
+    Ok(state.api.list_note_folders().await?)
+}
+
+#[tauri::command]
+pub async fn list_note_items(
+    state: State<'_, AppState>,
+    folder_id: Option<String>,
+    page: PageRequestDto,
+) -> Result<PageDto<NoteTreeItemDto>> {
+    Ok(state.api.list_note_items(folder_id, page).await?)
+}
+
+#[tauri::command]
+pub async fn get_note(state: State<'_, AppState>, id: String) -> Result<NoteDto> {
+    Ok(state.api.get_note(id).await?)
+}
+
+#[tauri::command]
+pub async fn create_note(
+    state: State<'_, AppState>,
+    folder_id: Option<String>,
+    kind: NoteKindDto,
+) -> Result<NoteDto> {
+    let note = state.api.create_note(folder_id, kind).await?;
+    state.sync.local_change();
+    Ok(note)
+}
+
+#[tauri::command]
+pub async fn update_note_body(
+    state: State<'_, AppState>,
+    id: String,
+    text: String,
+    base_rev: Option<String>,
+) -> Result<NoteDto> {
+    let note = state.api.update_note_body(id, text, base_rev).await?;
+    state.sync.content_change();
+    Ok(note)
+}
+
+#[tauri::command]
+pub async fn discard_empty_note(state: State<'_, AppState>, id: String) -> Result<bool> {
+    let discarded = state.api.discard_empty_note(id).await?;
+    if discarded {
+        state.sync.local_change();
+    }
+    Ok(discarded)
+}
+
+#[tauri::command]
+pub async fn rename_note(state: State<'_, AppState>, id: String, name: String) -> Result<NoteDto> {
+    let note = state.api.rename_note(id, name).await?;
+    state.sync.local_change();
+    Ok(note)
+}
+
+#[tauri::command]
+pub async fn set_note_kind(
+    state: State<'_, AppState>,
+    id: String,
+    kind: NoteKindDto,
+) -> Result<NoteDto> {
+    let note = state.api.set_note_kind(id, kind).await?;
+    state.sync.local_change();
+    Ok(note)
+}
+
+#[tauri::command]
+pub async fn move_note(
+    state: State<'_, AppState>,
+    id: String,
+    target: NoteTargetDto,
+) -> Result<NoteDto> {
+    let note = state.api.move_note(id, target).await?;
+    state.sync.local_change();
+    Ok(note)
+}
+
+#[tauri::command]
+pub async fn create_note_folder(
+    state: State<'_, AppState>,
+    parent_id: Option<String>,
+    name: String,
+) -> Result<NoteFolderDto> {
+    let folder = state.api.create_note_folder(parent_id, name).await?;
+    state.sync.local_change();
+    Ok(folder)
+}
+
+#[tauri::command]
+pub async fn rename_note_folder(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+) -> Result<NoteFolderDto> {
+    let folder = state.api.rename_note_folder(id, name).await?;
+    state.sync.local_change();
+    Ok(folder)
+}
+
+#[tauri::command]
+pub async fn move_note_folder(
+    state: State<'_, AppState>,
+    id: String,
+    target: NoteTargetDto,
+) -> Result<NoteFolderDto> {
+    let folder = state.api.move_note_folder(id, target).await?;
+    state.sync.local_change();
+    Ok(folder)
+}
+
+#[tauri::command]
+pub async fn trash_note_items(
+    state: State<'_, AppState>,
+    items: Vec<NoteItemDto>,
+) -> Result<Vec<NoteItemDto>> {
+    let changed = state.api.trash_note_items(items).await?;
+    state.sync.local_change();
+    Ok(changed)
+}
+
+#[tauri::command]
+pub async fn restore_note_items(
+    state: State<'_, AppState>,
+    items: Vec<NoteItemDto>,
+) -> Result<Vec<NoteItemDto>> {
+    let changed = state.api.restore_note_items(items).await?;
+    state.sync.local_change();
+    Ok(changed)
+}
+
+#[tauri::command]
+pub async fn purge_note_items(state: State<'_, AppState>, items: Vec<NoteItemDto>) -> Result<u32> {
+    let n = state.api.purge_note_items(items).await?;
+    state.sync.local_change();
+    Ok(n)
+}
+
+#[tauri::command]
+pub async fn empty_note_trash(state: State<'_, AppState>) -> Result<u32> {
+    let n = state.api.empty_note_trash().await?;
+    state.sync.local_change();
+    Ok(n)
+}
+
+#[tauri::command]
+pub async fn list_note_trash(state: State<'_, AppState>) -> Result<Vec<NoteTrashEntryDto>> {
+    Ok(state.api.list_note_trash().await?)
+}
+
+#[tauri::command]
+pub async fn search_notes(
+    state: State<'_, AppState>,
+    text: String,
+    limit: u32,
+) -> Result<Vec<NoteHitDto>> {
+    Ok(state.api.search_notes(text, limit).await?)
+}
+
 // --- Anmeldung ---------------------------------------------------------------------------------
 
 #[tauri::command]
@@ -248,6 +424,13 @@ pub async fn sync_now(state: State<'_, AppState>) -> Result<()> {
     Ok(())
 }
 
+/// Jetzt hochladen, falls etwas wartet (Notiz- oder Moduswechsel, `notes.md` §4.6).
+#[tauri::command]
+pub async fn sync_flush(state: State<'_, AppState>) -> Result<()> {
+    state.sync.event(SchedulerEvent::Flush);
+    Ok(())
+}
+
 /// `online`/`offline`-Ereignisse der WebView (die Shell hat keinen eigenen Netzwerk-Monitor).
 #[tauri::command]
 pub async fn set_online(state: State<'_, AppState>, online: bool) -> Result<()> {
@@ -264,6 +447,7 @@ pub async fn set_online(state: State<'_, AppState>, online: bool) -> Result<()> 
 pub async fn app_ready(state: State<'_, AppState>) -> Result<()> {
     crate::report_startup(STARTED.get().copied());
     state.sync.event(SchedulerEvent::AppStarted);
+    state.purge_expired_notes_daily();
     Ok(())
 }
 

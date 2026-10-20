@@ -1,5 +1,6 @@
 import type { CoreClient } from "./core-client";
 import { CoreClientError } from "./errors";
+import { FakeNotes } from "./fake-notes";
 import type {
   AuthStepDto,
   ChangedEventDto,
@@ -58,10 +59,19 @@ export class FakeCoreClient implements CoreClient {
   private readonly loginPolls: number;
   private readonly now: () => Date;
 
+  /** Notizen (ADR-029); `simulateRemoteBody`/`simulateConflict` für UI-Tests. */
+  readonly notes: FakeNotes;
+
   constructor(options: FakeOptions = {}) {
     this.latencyMs = options.latencyMs ?? 0;
     this.loginPolls = options.loginPolls ?? 1;
     this.now = options.now ?? (() => new Date());
+    this.notes = new FakeNotes({
+      run: (fn) => this.run(fn),
+      emit: (notes, noteFolders) => this.emitEvent({ tasks: [], lists: [], notes, noteFolders }),
+      now: () => this.now(),
+      newId: () => this.newId(),
+    });
   }
 
   // --- Listen --------------------------------------------------------------------------------
@@ -416,6 +426,7 @@ export class FakeCoreClient implements CoreClient {
       this.run(() => {
         if (this.session) this.setStatus({ ...this.syncStatus, state: "idle", lastSuccess: this.iso() });
       }),
+    flush: () => this.run(() => undefined),
   };
 
   ready = () => this.run(() => undefined);
@@ -446,7 +457,10 @@ export class FakeCoreClient implements CoreClient {
   }
 
   private emit(tasks: string[], lists: string[]) {
-    const event = { tasks, lists };
+    this.emitEvent({ tasks, lists, notes: [], noteFolders: [] });
+  }
+
+  private emitEvent(event: ChangedEventDto) {
     // Wie Tauri-Events: nach der Antwort des Aufrufs.
     queueMicrotask(() => {
       for (const cb of this.changeListeners) cb(event);

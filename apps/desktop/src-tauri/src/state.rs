@@ -6,7 +6,7 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicI64, Ordering},
         Arc, Mutex, PoisonError,
     },
     time::{SystemTime, UNIX_EPOCH},
@@ -78,6 +78,39 @@ pub struct AppState {
     pub api: Arc<CoreApi>,
     pub sync: SyncHandle,
     pub account: Arc<Account>,
+    /// Letztes automatisches Leeren des Notiz-Papierkorbs (Unix-ms; 0 = noch nie).
+    notes_purged_at: AtomicI64,
+}
+
+/// Höchstens so oft wird der Notiz-Papierkorb automatisch geleert (`notes.md` §4.7).
+const NOTE_PURGE_INTERVAL_MS: i64 = 24 * 60 * 60 * 1000;
+
+impl AppState {
+    /// Beim Start und bei Fokus aufrufen: löscht höchstens einmal täglich, was seit mehr als
+    /// 30 Tagen im Papierkorb liegt – ohne Timer im Leerlauf.
+    pub fn purge_expired_notes_daily(&self) {
+        let now = SystemClock.now().as_millis();
+        let last = self.notes_purged_at.load(Ordering::Relaxed);
+        if now - last < NOTE_PURGE_INTERVAL_MS
+            || self
+                .notes_purged_at
+                .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                .is_err()
+        {
+            return;
+        }
+        let (api, sync) = (Arc::clone(&self.api), self.sync.clone());
+        tauri::async_runtime::spawn(async move {
+            match api.purge_expired_notes().await {
+                Ok(0) => {}
+                Ok(n) => {
+                    tracing::info!(items = n, "expired notes purged");
+                    sync.local_change();
+                }
+                Err(err) => tracing::warn!(error = %err, "purging expired notes failed"),
+            }
+        });
+    }
 }
 
 /// Baut den State und registriert die Event-Emitter.
@@ -120,7 +153,12 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, options: &Options) -> Result<AppStat
         let (account, api, sync) = (Arc::clone(&account), Arc::clone(&api), sync.clone());
         tauri::async_runtime::spawn(async move { account.restore(&api, &sync).await });
     }
-    Ok(AppState { api, sync, account })
+    Ok(AppState {
+        api,
+        sync,
+        account,
+        notes_purged_at: AtomicI64::new(0),
+    })
 }
 
 /// Schlüsselbund + Anmeldung beim Sync-Backend. Wird beim ersten Zugriff (oder im Hintergrund

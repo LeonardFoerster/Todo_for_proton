@@ -41,6 +41,8 @@ pub type StatusSink = Box<dyn Fn(&SyncStatusDto) + Send + Sync>;
 enum Msg {
     Event(SchedulerEvent),
     LocalChange,
+    /// Nur Notiz-Inhalt gespeichert (längerer Debounce, ADR-029).
+    ContentChange,
     Runner(Option<Arc<dyn SyncRunner>>),
     Finished(Arc<dyn SyncRunner>, SyncOutcome),
 }
@@ -70,6 +72,12 @@ impl SyncHandle {
     pub fn local_change(&self) {
         self.local_changes.fetch_add(1, AtomicOrdering::Relaxed);
         let _ = self.tx.send(Msg::LocalChange);
+    }
+
+    /// Nach dem Speichern eines Notiz-Inhalts (Autosave): Debounce 3 s, höchstens 30 s.
+    pub fn content_change(&self) {
+        self.local_changes.fetch_add(1, AtomicOrdering::Relaxed);
+        let _ = self.tx.send(Msg::ContentChange);
     }
 
     /// Bisher gemeldete lokale Änderungen (Tests der Sync-Auslöser).
@@ -164,6 +172,12 @@ impl Driver {
                 Msg::LocalChange => {
                     self.pending_ops = self.repo.pending_op_count().await.unwrap_or(0);
                     SchedulerEvent::LocalChange {
+                        pending_ops: self.pending_ops,
+                    }
+                }
+                Msg::ContentChange => {
+                    self.pending_ops = self.repo.pending_op_count().await.unwrap_or(0);
+                    SchedulerEvent::ContentChange {
                         pending_ops: self.pending_ops,
                     }
                 }
@@ -363,6 +377,36 @@ mod tests {
         tokio::time::advance(Duration::from_millis(1_600)).await;
         settle().await;
         assert_eq!(runner.runs.load(Ordering::SeqCst), 2);
+    }
+
+    /// Notiz-Inhalte: 3 s Debounce statt 1,5 s; `Flush` lädt sofort hoch (ADR-029).
+    #[tokio::test(start_paused = true)]
+    async fn content_changes_wait_longer_and_flush_pushes_now() {
+        let (handle, _seen, api) = setup();
+        let runner = Arc::new(FakeRunner::default());
+        handle.set_runner(Some(runner.clone()));
+        settle().await;
+        let note = api
+            .create_note(None, todo_core::api::note_dto::NoteKindDto::Text)
+            .await
+            .unwrap();
+        api.update_note_body(note.id, "x".into(), None)
+            .await
+            .unwrap();
+        handle.content_change();
+        settle().await;
+        tokio::time::advance(Duration::from_millis(1_600)).await;
+        settle().await;
+        assert_eq!(runner.runs.load(Ordering::SeqCst), 1, "1,6 s reichen nicht");
+        tokio::time::advance(Duration::from_millis(1_500)).await;
+        settle().await;
+        assert_eq!(runner.runs.load(Ordering::SeqCst), 2, "nach 3 s");
+
+        handle.content_change();
+        settle().await;
+        handle.event(SchedulerEvent::Flush);
+        settle().await;
+        assert_eq!(runner.runs.load(Ordering::SeqCst), 3, "Flush sofort");
     }
 
     #[tokio::test]

@@ -406,9 +406,37 @@ impl CoreApi {
     pub async fn set_dues(&self, dues: Vec<TaskDueDto>) -> CoreResult<Vec<TaskDto>>;     // je Task eigener Wert (ADR-026)
     pub async fn search_tasks(&self, text: String, limit: u32) -> CoreResult<Vec<TaskSummaryDto>>; // ADR-027
     pub async fn list_tasks(&self, query: TaskQueryDto, page: PageRequestDto) -> CoreResult<PageDto<TaskSummaryDto>>;
+    // Notizen (N5-06, ADR-029; DTOs in `api::note_dto`). Elemente im Papierkorb sind nur lesbar.
+    pub async fn list_note_folders(&self) -> CoreResult<Vec<NoteFolderDto>>;              // alle, auch Papierkorb
+    pub async fn list_note_items(&self, folder: Option<String>, page: PageRequestDto) -> CoreResult<PageDto<NoteTreeItemDto>>;
+    pub async fn get_note(&self, id: String) -> CoreResult<NoteDto>;
+    pub async fn create_note(&self, folder: Option<String>, kind: NoteKindDto) -> CoreResult<NoteDto>;
+    pub async fn update_note_body(&self, id: String, text: String, base_rev: Option<String>) -> CoreResult<NoteDto>;
+    pub async fn discard_empty_note(&self, id: String) -> CoreResult<bool>;
+    pub async fn rename_note(&self, id: String, name: String) -> CoreResult<NoteDto>;    // Auto-Name aus
+    pub async fn set_note_kind(&self, id: String, kind: NoteKindDto) -> CoreResult<NoteDto>;
+    pub async fn move_note(&self, id: String, target: NoteTargetDto) -> CoreResult<NoteDto>;
+    pub async fn create_note_folder(&self, parent: Option<String>, name: String) -> CoreResult<NoteFolderDto>;
+    pub async fn rename_note_folder(&self, id: String, name: String) -> CoreResult<NoteFolderDto>;
+    pub async fn move_note_folder(&self, id: String, target: NoteTargetDto) -> CoreResult<NoteFolderDto>;
+    pub async fn trash_note_items(&self, items: Vec<NoteItemDto>) -> CoreResult<Vec<NoteItemDto>>;   // geänderte
+    pub async fn restore_note_items(&self, items: Vec<NoteItemDto>) -> CoreResult<Vec<NoteItemDto>>;
+    pub async fn purge_note_items(&self, items: Vec<NoteItemDto>) -> CoreResult<u32>;    // samt Nachfahren
+    pub async fn empty_note_trash(&self) -> CoreResult<u32>;
+    pub async fn purge_expired_notes(&self) -> CoreResult<u32>;                          // > 30 Tage
+    pub async fn list_note_trash(&self) -> CoreResult<Vec<NoteTrashEntryDto>>;          // oberste, neueste zuerst
+    pub async fn search_notes(&self, text: String, limit: u32) -> CoreResult<Vec<NoteHitDto>>; // Pfad + Ausschnitt
+    pub async fn import_notes(&self, root: String, files: Vec<ImportNoteFileDto>) -> CoreResult<ImportReportDto>;
 }
+// NoteTreeItemDto (tag = "type"): folder{…NoteFolderDto} | note{…NoteSummaryDto}   (kein Inhalt)
+// NoteItemDto (tag = "type"): note{id} | folder{id};  NoteTargetDto { folderId?, after?, before? }
+// NoteDto.bodyRev "<gerät>.<nummer>" → beim nächsten Speichern als baseRev (je Notiz nacheinander speichern)
+// NoteHitDto { note, path, nameHit, snippet?{ text, offset, length } } – offset/length in UTF-16 (Editor)
 
-pub enum CoreEvent { Changed { tasks: Vec<String>, lists: Vec<String> } }   // genau die committeten Entities
+pub enum CoreEvent {
+    Changed { tasks: Vec<String>, lists: Vec<String>, notes: Vec<String>, note_folders: Vec<String> }, // genau die committeten Entities
+    NoteConflicts { conflicts: Vec<NoteConflictDto> },   // N5-06: beim Zusammenlegen entstandene Konfliktkopien
+}
 pub trait EventSink: MaybeSend + MaybeSync { fn emit(&self, event: CoreEvent); }
 
 // ViewDto (tag = "kind"): inbox | list{listId} | today{day} | upcoming{day} | all | completed
@@ -424,9 +452,12 @@ kennen keine Events. Abweichung vom Entwurf: `Changed` trennt Tasks und Listen (
 Desktop-Shell (P7-03, `apps/desktop/src-tauri`): Commands `snake_case` gleichnamig zu `CoreApi` (Argumente in JS
 camelCase, z. B. `invoke("complete_task", { id, done })`), dazu `auth_info`, `auth_current`, `auth_begin_login`
 (öffnet den Browser selbst per `xdg-open`), `auth_open_browser(flow)`, `auth_poll_login(flow)`, `auth_cancel_login(flow)`,
-`auth_logout`, `sync_status`, `sync_now`, `set_online(online)`, `app_ready` (erster Frame → Startzeit + Scheduler
-`AppStarted`); nur Debug-Builds wirksam: `dev_selftest` (Suiten aus `TASKS_SELFTEST`), `dev_selftest_report(line, exit)`
-(stdout, optional beenden) – in `TauriCoreClient` als `devSelftest`, nicht Teil von `CoreClient`. Events: `core://changed` (`ChangedEventDto { tasks, lists }`), `core://sync-status` (`SyncStatusDto
+`auth_logout`, `sync_status`, `sync_now`, `sync_flush` (N5-06: sofort hochladen, wenn etwas wartet – Notiz-/Moduswechsel),
+`set_online(online)`, `app_ready` (erster Frame → Startzeit + Scheduler `AppStarted` + Auto-Leeren des
+Notiz-Papierkorbs, danach höchstens täglich bei Fokus); Notiz-Commands gleichnamig zu `CoreApi`
+(`update_note_body` meldet dem Scheduler `ContentChange` statt `LocalChange`); nur Debug-Builds wirksam: `dev_selftest` (Suiten aus `TASKS_SELFTEST`), `dev_selftest_report(line, exit)`
+(stdout, optional beenden) – in `TauriCoreClient` als `devSelftest`, nicht Teil von `CoreClient`. Events: `core://changed` (`ChangedEventDto { tasks, lists, notes, noteFolders }`), `core://note-conflicts`
+(`NoteConflictDto[] { noteId, copyId }`), `core://sync-status` (`SyncStatusDto
 { state, lastSuccess, pendingOps, message }`, `state` ∈ disabled|idle|syncing|offline|authRequired|rateLimited|
 newerFormat|error). Fehler: `ErrorDto { kind, message }`. Login-Schritte: `AuthStepDto` (tag `kind`: openBrowser{flow,
 url, pollIntervalS, expiresInS} | pending{flow} | done{session}); `AuthInfoDto { provider, notice, available }` liefert
@@ -457,13 +488,17 @@ export interface CoreClient {
   restoreTasks(tasks: TaskDto[]): Promise<TaskDto[]>;                // neue IDs, alter Sort-Key
   setDues(dues: TaskDueDto[]): Promise<TaskDto[]>;                   // {id, due|null} je Task (ADR-026)
   searchTasks(text: string, limit: number): Promise<TaskSummaryDto[]>; // Titel + Notiz, Teilwort (ADR-027)
+  notes: NotesClient; // N5-06: listFolders, listItems, get, create, updateBody(id, text, baseRev), discardIfEmpty,
+                      // rename, setKind, move, createFolder, renameFolder, moveFolder, trash, restore, purge,
+                      // emptyTrash, listTrash, search, onConflict
   auth: AuthClient;   // info, current, beginLogin, openBrowser(flow), pollLogin(flow), cancelLogin(flow), logout
-  sync: SyncClient;   // status, now
+  sync: SyncClient;   // status, now, flush
   ready(): Promise<void>;                                 // erste Ansicht gerendert (app_ready)
   onChange(cb: (e: ChangedEventDto) => void): () => void;      // gibt Unsubscribe zurück
   onSyncStatus(cb: (s: SyncStatusDto) => void): () => void;
 }
 // Nur TauriCoreClient (nicht im Interface): setOnline(online) – Netzwechsel der WebView an den Scheduler.
+// Nur FakeCoreClient: notes.simulateRemoteBody(id, text), notes.simulateConflict(conflicts) für UI-Tests.
 ```
 
 DTO-Typen werden aus Rust generiert (`ts-rs` als dev-dependency, ADR-019) nach `packages/core-client/src/generated/`.

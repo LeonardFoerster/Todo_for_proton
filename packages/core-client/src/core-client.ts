@@ -5,6 +5,15 @@ import type {
   CreateTaskDto,
   MoveListTargetDto,
   MoveTargetDto,
+  NoteConflictDto,
+  NoteDto,
+  NoteFolderDto,
+  NoteHitDto,
+  NoteItemDto,
+  NoteKindDto,
+  NoteTargetDto,
+  NoteTrashEntryDto,
+  NoteTreeItemDto,
   PageDto,
   PageRequestDto,
   SessionDto,
@@ -36,6 +45,48 @@ export interface SyncClient {
   status(): Promise<SyncStatusDto>;
   /** Sync sofort anstoßen (Ergebnis kommt über `onSyncStatus`). */
   now(): Promise<void>;
+  /** Hochladen, falls etwas wartet – beim Wechsel der Notiz oder des Modus (ADR-029). */
+  flush(): Promise<void>;
+}
+
+/**
+ * Notizen und Ordner (Modus „Notes", ADR-029). Schreibende Methoden lösen `onChange` mit den
+ * geschriebenen `notes`/`noteFolders` aus. Elemente im Papierkorb sind nur lesbar.
+ */
+export interface NotesClient {
+  /** Alle Ordner (auch im Papierkorb), nach `sortKey` – für Pfade und „Verschieben nach…". */
+  listFolders(): Promise<NoteFolderDto[]>;
+  /** Inhalt eines Ordners (`null` = Wurzel): Ordner und Notizen gemischt, ohne Papierkorb. */
+  listItems(folderId: string | null, page: PageRequestDto): Promise<PageDto<NoteTreeItemDto>>;
+  get(id: string): Promise<NoteDto>;
+  /** Leere Notiz „Unbenannt" am Ende des Ordners. */
+  create(folderId: string | null, kind: NoteKindDto): Promise<NoteDto>;
+  /**
+   * Autosave: `baseRev` = zuletzt geliefertes `bodyRev` (je Notiz nacheinander speichern).
+   * Die Antwort trägt den aufgelösten Inhalt – nach einem Remote-Merge weicht er vom Text ab.
+   */
+  updateBody(id: string, text: string, baseRev: string | null): Promise<NoteDto>;
+  /** Leer verlassene neue Notiz verwerfen; `true` = verworfen. */
+  discardIfEmpty(id: string): Promise<boolean>;
+  rename(id: string, name: string): Promise<NoteDto>;
+  setKind(id: string, kind: NoteKindDto): Promise<NoteDto>;
+  move(id: string, target: NoteTargetDto): Promise<NoteDto>;
+  createFolder(parentId: string | null, name: string): Promise<NoteFolderDto>;
+  renameFolder(id: string, name: string): Promise<NoteFolderDto>;
+  /** `target.folderId` = neuer Elternordner. */
+  moveFolder(id: string, target: NoteTargetDto): Promise<NoteFolderDto>;
+  /** In den Papierkorb; Ergebnis = tatsächlich geänderte (für „Rückgängig" per `restore`). */
+  trash(items: NoteItemDto[]): Promise<NoteItemDto[]>;
+  restore(items: NoteItemDto[]): Promise<NoteItemDto[]>;
+  /** Endgültig löschen (samt Inhalt); Zahl gelöschter Elemente. */
+  purge(items: NoteItemDto[]): Promise<number>;
+  emptyTrash(): Promise<number>;
+  /** Oberste Elemente im Papierkorb, neueste zuerst. */
+  listTrash(): Promise<NoteTrashEntryDto[]>;
+  /** Suche über Name und Inhalt (jedes Wort; nur Wörter < 3 Zeichen: nur Namen). */
+  search(text: string, limit: number): Promise<NoteHitDto[]>;
+  /** Beim Zusammenlegen nebenläufiger Bearbeitungen entstandene Konfliktkopien. */
+  onConflict(cb: (conflicts: NoteConflictDto[]) => void): () => void;
 }
 
 /**
@@ -75,6 +126,7 @@ export interface CoreClient {
   /** Je Task eine eigene Fälligkeit (`null` = entfernen); Tasks mit diesem Wert fehlen im Ergebnis. */
   setDues(dues: TaskDueDto[]): Promise<TaskDto[]>;
 
+  notes: NotesClient;
   auth: AuthClient;
   sync: SyncClient;
 

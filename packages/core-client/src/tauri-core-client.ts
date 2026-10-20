@@ -3,7 +3,7 @@ import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { CoreClient } from "./core-client";
 import { CoreClientError } from "./errors";
-import type { ChangedEventDto, SyncStatusDto } from "./types";
+import type { ChangedEventDto, NoteConflictDto, SyncStatusDto } from "./types";
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   try {
@@ -49,6 +49,28 @@ export class TauriCoreClient implements CoreClient {
   moveTasks: CoreClient["moveTasks"] = (ids, target) => invoke("move_tasks", { ids, target });
   restoreTasks: CoreClient["restoreTasks"] = (tasks) => invoke("restore_tasks", { tasks });
 
+  notes: CoreClient["notes"] = {
+    listFolders: () => invoke("list_note_folders"),
+    listItems: (folderId, page) => invoke("list_note_items", { folderId, page }),
+    get: (id) => invoke("get_note", { id }),
+    create: (folderId, kind) => invoke("create_note", { folderId, kind }),
+    updateBody: (id, text, baseRev) => invoke("update_note_body", { id, text, baseRev }),
+    discardIfEmpty: (id) => invoke("discard_empty_note", { id }),
+    rename: (id, name) => invoke("rename_note", { id, name }),
+    setKind: (id, kind) => invoke("set_note_kind", { id, kind }),
+    move: (id, target) => invoke("move_note", { id, target }),
+    createFolder: (parentId, name) => invoke("create_note_folder", { parentId, name }),
+    renameFolder: (id, name) => invoke("rename_note_folder", { id, name }),
+    moveFolder: (id, target) => invoke("move_note_folder", { id, target }),
+    trash: (items) => invoke("trash_note_items", { items }),
+    restore: (items) => invoke("restore_note_items", { items }),
+    purge: (items) => invoke("purge_note_items", { items }),
+    emptyTrash: () => invoke("empty_note_trash"),
+    listTrash: () => invoke("list_note_trash"),
+    search: (text, limit) => invoke("search_notes", { text, limit }),
+    onConflict: (cb) => subscribe<NoteConflictDto[]>("core://note-conflicts", cb),
+  };
+
   auth: CoreClient["auth"] = {
     info: () => invoke("auth_info"),
     current: () => invoke("auth_current"),
@@ -62,6 +84,7 @@ export class TauriCoreClient implements CoreClient {
   sync: CoreClient["sync"] = {
     status: () => invoke("sync_status"),
     now: () => invoke("sync_now"),
+    flush: () => invoke("sync_flush"),
   };
 
   ready: CoreClient["ready"] = () => invoke("app_ready");

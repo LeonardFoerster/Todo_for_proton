@@ -74,6 +74,8 @@ impl From<CoreError> for ErrorDto {
 pub struct ChangedEventDto {
     pub tasks: Vec<String>,
     pub lists: Vec<String>,
+    pub notes: Vec<String>,
+    pub note_folders: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

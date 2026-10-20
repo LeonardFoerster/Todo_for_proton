@@ -81,7 +81,7 @@ Commit: `TaskRepository` → `Repository` umbenennen (mechanisch).
 **Fertig wenn:** Contract-Tests für beide Implementierungen, `bench_storage` um Notizen erweitert (Budgets §9), `just
 check` grün. Commit `feat(storage): notes`.
 
-### [ ] N5-05 · Use-Cases
+### [x] N5-05 · Use-Cases — 2026-10-20 · 58ebafd
 **Lies vorher:** `notes.md` §3–4, `app/` (Muster `create_task.rs`, `move_task.rs`, ADR-024 Reihenfolge-Sperre).
 **Schritte:** alle Use-Cases aus `notes.md` §10 inkl. `UpdateNoteBody { id, text, base_rev }` → `{ rev, body }`,
 Leere neue Notiz beim Verlassen verwerfen, Auto-Leeren nach 30 Tagen, `ResolveNoteHeads`. `CoreEvent::Changed`

@@ -44,6 +44,24 @@ macro_rules! handlers {
             commands::set_dues,
             commands::list_tasks,
             commands::search_tasks,
+            commands::list_note_folders,
+            commands::list_note_items,
+            commands::get_note,
+            commands::create_note,
+            commands::update_note_body,
+            commands::discard_empty_note,
+            commands::rename_note,
+            commands::set_note_kind,
+            commands::move_note,
+            commands::create_note_folder,
+            commands::rename_note_folder,
+            commands::move_note_folder,
+            commands::trash_note_items,
+            commands::restore_note_items,
+            commands::purge_note_items,
+            commands::empty_note_trash,
+            commands::list_note_trash,
+            commands::search_notes,
             commands::auth_info,
             commands::auth_current,
             commands::auth_begin_login,
@@ -53,6 +71,7 @@ macro_rules! handlers {
             commands::auth_logout,
             commands::sync_status,
             commands::sync_now,
+            commands::sync_flush,
             commands::set_online,
             commands::app_ready,
             commands::dev_selftest,
@@ -84,6 +103,24 @@ macro_rules! handlers {
             commands::set_dues,
             commands::list_tasks,
             commands::search_tasks,
+            commands::list_note_folders,
+            commands::list_note_items,
+            commands::get_note,
+            commands::create_note,
+            commands::update_note_body,
+            commands::discard_empty_note,
+            commands::rename_note,
+            commands::set_note_kind,
+            commands::move_note,
+            commands::create_note_folder,
+            commands::rename_note_folder,
+            commands::move_note_folder,
+            commands::trash_note_items,
+            commands::restore_note_items,
+            commands::purge_note_items,
+            commands::empty_note_trash,
+            commands::list_note_trash,
+            commands::search_notes,
             commands::auth_info,
             commands::auth_current,
             commands::auth_begin_login,
@@ -93,6 +130,7 @@ macro_rules! handlers {
             commands::auth_logout,
             commands::sync_status,
             commands::sync_now,
+            commands::sync_flush,
             commands::set_online,
             commands::app_ready,
         ]
@@ -172,7 +210,10 @@ fn window_event<R: Runtime>(window: &Window<R>, event: &WindowEvent) {
     };
     let hidden = || window.is_minimized().unwrap_or(false) || !window.is_visible().unwrap_or(true);
     match event {
-        WindowEvent::Focused(true) => state.sync.event(SchedulerEvent::AppFocused),
+        WindowEvent::Focused(true) => {
+            state.sync.event(SchedulerEvent::AppFocused);
+            state.purge_expired_notes_daily();
+        }
         WindowEvent::Focused(false) | WindowEvent::Resized(_) if hidden() => {
             state.sync.event(SchedulerEvent::AppHidden);
         }
