@@ -16,8 +16,8 @@ Proton Drive ist abgenommen (automatisierter Zwei-Geräte-Lauf; Live-Teil über 
 Listen & Kanban-Board) und P3 (Fenster „Neue Task" mit Texterkennung) umgesetzt (Archiv:
 `development/archive/roadmap-interim.md`). P4 (Bedienung: Uhrzeit im Detail, Heute/Überfällig, Geplant
 nach Tagen, Fälligkeit per Kürzel, Suche & Befehlspalette, Erledigt nach Tagen) umgesetzt; P4-07 wartet auf den User.
-Als Nächstes N0 (Prototyp abrunden), danach N5 (Modus „Notes“: `.txt`/`.md`-Notizen in Ordnern, Entwurf in
-`development/notes.md`, wartet auf Freigabe), N4 (wiederkehrende Tasks), dann die Web-App (`development/roadmap-next.md`);
+In Arbeit: N5 (Modus „Notes“: `.txt`/`.md`-Notizen in Ordnern, `development/notes.md`, freigegeben und vor N0
+gezogen), danach N0 (Prototyp abrunden), N4 (wiederkehrende Tasks), dann die Web-App (`development/roadmap-next.md`);
 langfristige Ideen (Verknüpfungen, Kalender, GitHub) stehen dort unter N3.
 
 ## 2. Wo was liegt
@@ -116,8 +116,9 @@ Serde-JSON über IPC, SQLite ohne WAL/Indizes, unbegrenzte Op-Logs).
   `Cipher`, `Clock`), Implementierungen das Mittel (`SqliteTaskRepository`, `ProtonDriveRemoteStore`).
 - **TS/Svelte:** Dateien `kebab-case.ts`, Komponenten `PascalCase.svelte`, Stores/Runes-Module `*.svelte.ts`.
 - **IDs:** UUIDv7 als String an allen Grenzen. Zeitstempel: HLC für Sync, UTC-ISO-8601 für Anzeige-Daten.
-- **Domain-Sprache (verbindlich):** `Task`, `TaskList`, `Tag`, `Op`, `Device`, `Snapshot`.
-  Nicht mischen mit „Todo", „Item", „Project" im Code.
+- **Domain-Sprache (verbindlich):** `Task`, `TaskList`, `Tag`, `Op`, `Device`, `Snapshot`, `Note`, `NoteFolder`.
+  Nicht mischen mit „Todo", „Item", „Project" im Code. „Notes" ist auch der UI-Name des Modus; sonst bleiben
+  UI-Texte Deutsch („Neue Notiz", „Ordner").
 - **Kein „Proton" im Produkt-/Paketnamen** (Markenrecht). „Proton" nur in Adapter-Namen.
 - Commits: Conventional Commits (`feat(core): …`, `fix(sync): …`).
 

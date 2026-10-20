@@ -32,17 +32,17 @@ stabiler Messreihe (3 Läufe je Variante) erneut prüfen. Kein X11-Zwang (nur al
   Adapter-Logs ankommen (Lücke laut `architecture.md` §5).~~ erledigt 2026-10-18 · 95ff2bf (`TODO_LOG`, vor N0-01
   gezogen, damit die Live-Abnahme Adapter-Logs hat).
 
-## N5 · Notes (Entwurf 2026-10-20 – wartet auf Freigabe)
+## N5 · Notes (freigegeben 2026-10-20)
 
-> **Status:** Entwurf, vom User angefragt. Die Fragen sind in der Fragerunde vom 2026-10-20 geklärt (`notes.md` §0).
-> Alle Aufgaben stehen auf `[~]`, bis der User `notes.md` freigibt (alle Fragen inkl. zweiter Runde geklärt); dann auf
-> `[ ]` setzen. Reihenfolge laut User: **N0 → N5 → N4 → N1** (das Web bringt Notes direkt mit).
+> **Status:** Vom User am 2026-10-20 freigegeben und vor N0 gezogen (N0-01 braucht den Menschen am Rechner).
+> Entscheidungen dabei: Konfliktkopie heißt „<Name> (Konflikt <TT.MM.JJJJ>)" ohne Gerätenamen (Datum der unterlegenen
+> Revision, UTC, auf allen Geräten gleich); `ResolveNoteHeads` läuft **in** `apply_remote` (eine Transaktion). Reihenfolge laut User: **N0 → N5 → N4 → N1** (das Web bringt Notes direkt mit).
 
 **Ziel:** Zweiter Modus „Notes": `.txt`/`.md`-Notizen in verschachtelten Ordnern, gleiche Seitenleiste, großer
 Editor, Wechsel per Klick auf „Tasks"/„Notes" bzw. `Strg+1/2`, Sync im Op-Log mit 3-Wege-Merge (ADR-029).
 **Vorab-Lektüre für alle N5-Aufgaben:** `notes.md` vollständig, ADR-015, ADR-016, ADR-022, ADR-027.
 
-### [~] N5-01 · ADR-029 + Domain `Note`, `NoteFolder`, Baum-Regeln
+### [ ] N5-01 · ADR-029 + Domain `Note`, `NoteFolder`, Baum-Regeln
 **Lies vorher:** `notes.md` §3, `domain/task.rs`, `domain/task_list.rs`, `domain/sort_key.rs`, `domain/ids.rs`.
 **Schritte:** IDs, `NoteName` (Validierung), `NoteKind`, `Note`/`NoteFolder` mit `*Parts`/`from_parts`, Auto-Name aus
 erster Zeile, reine Baum-Funktionen (Waisen → Wurzel, Zyklus-Bruch per höchster HLC, wirksamer Papierkorb, Tiefe ≤ 32).
@@ -50,7 +50,7 @@ erster Zeile, reine Baum-Funktionen (Waisen → Wurzel, Zyklus-Bruch per höchst
 **Fertig wenn:** Unit- und Property-Tests (Baum ist immer zyklenfrei, jedes Element erreichbar), `just check` grün.
 Commit `feat(core): note domain`.
 
-### [~] N5-02 · Revisionen + 3-Wege-Merge
+### [ ] N5-02 · Revisionen + 3-Wege-Merge
 **Lies vorher:** `notes.md` §4.2–4.5, `sync/merge.rs`, `sync/hlc.rs`.
 **Schritte:** `sync/revision.rs`: `RevisionSet` (Vereinigung, Köpfe, jüngster gemeinsamer Vorfahr), `merge3`,
 `resolve_body` (Ergebnis: Text + optional unterlegener Kopf), deterministische Konfliktkopie-ID (UUIDv5). diff3-Crate
@@ -59,7 +59,7 @@ benachbarte Zeilen festlegen und testen.
 **Fertig wenn:** Property-Tests aus `notes.md` §4.8 (Konvergenz, merge3-Eigenschaften), `just check` + `just wasm`
 grün, Größen im Commit genannt. Commit `feat(core): note revisions and three-way merge`.
 
-### [~] N5-03 · Sync-Format, Outbox-Zusammenfassen, Engine
+### [ ] N5-03 · Sync-Format, Outbox-Zusammenfassen, Engine
 **Lies vorher:** `sync/op.rs`, `sync/replica.rs`, `todo-sync` (Push, Scheduler, Snapshot), ADR-017, ADR-022.
 **Schritte:** `EntityRef::Note`/`NoteFolder`, neue `FieldName`-Codes, `OpKind::Revise` (alles angehängt);
 Snapshot-Format um Revisionen erweitert (Köpfe + gemeinsame Vorfahren); Outbox ersetzt eine ungepushte `Revise` derselben
@@ -68,7 +68,7 @@ nach `apply_remote` `ResolveNoteHeads` auslösen. Golden File `ops_v1_notes.bin`
 **Fertig wenn:** Szenario-Tests aus `notes.md` §4.8 grün; Test „unbekannte Variante → Segment übersprungen, kein
 Absturz"; `just check` grün. Commit `feat(sync): notes in the op log`.
 
-### [~] N5-04 · SQLite: Tabellen, `NoteRepository`, FTS, Aufräumen
+### [ ] N5-04 · SQLite: Tabellen, `NoteRepository`, FTS, Aufräumen
 **Lies vorher:** `notes.md` §3.5, §4.5, §7, Migrationen, `mapping.rs`, Repository-Contract, ADR-014, ADR-027.
 **Schritte:** Migration (`note_folders`, `notes`, `note_revisions`, `notes_fts` mit `WHEN`-Triggern); `ChangeSet` um
 Notiz-/Ordner-Änderungen erweitern; Lese-Port `NoteRepository` (Ordnerinhalt seitenweise, Notiz laden, Papierkorb,
@@ -77,7 +77,7 @@ Commit: `TaskRepository` → `Repository` umbenennen (mechanisch).
 **Fertig wenn:** Contract-Tests für beide Implementierungen, `bench_storage` um Notizen erweitert (Budgets §9), `just
 check` grün. Commit `feat(storage): notes`.
 
-### [~] N5-05 · Use-Cases
+### [ ] N5-05 · Use-Cases
 **Lies vorher:** `notes.md` §3–4, `app/` (Muster `create_task.rs`, `move_task.rs`, ADR-024 Reihenfolge-Sperre).
 **Schritte:** alle Use-Cases aus `notes.md` §10 inkl. `UpdateNoteBody { id, text, base_rev }` → `{ rev, body }`,
 Leere neue Notiz beim Verlassen verwerfen, Auto-Leeren nach 30 Tagen, `ResolveNoteHeads`. `CoreEvent::Changed`
@@ -85,7 +85,7 @@ um `notes`/`noteFolders` erweitern.
 **Fertig wenn:** Unit-Tests je Use-Case, Zwei-Geräte-Szenarien (gleichzeitige Bearbeitung mit sauberem Merge und mit
 Konflikt, Papierkorb vs. Bearbeitung, Leeren vs. neue Notiz), `just check` grün. Commit `feat(core): note use cases`.
 
-### [~] N5-06 · API, Shell, `CoreClient`
+### [ ] N5-06 · API, Shell, `CoreClient`
 **Lies vorher:** `api/dto.rs`, `commands.rs` (Auslöser-Liste), `core-client.ts`, `fake-core-client.ts`, `interfaces.md` §7.
 **Schritte:** DTOs (`NoteSummaryDto` ohne Inhalt, `NoteDto`, `NoteFolderDto`, `NoteTreePageDto`), Methoden je
 Use-Case, Commands + Auslöser + Capabilities, Fake-Client mit gleicher Semantik, `just types`; `todo-wasm` kompiliert
@@ -93,7 +93,7 @@ weiter.
 **Fertig wenn:** IPC-Tests (Speichern → `onChange`; Remote-Merge liefert geänderten `body`), Auslöser-Test, Vitest
 für den Fake, `interfaces.md` §7 ergänzt, `just check` grün. Commit `feat(desktop): note commands`.
 
-### [~] N5-07 · UI: Modus-Umschalter + Notiz-Baum + Papierkorb
+### [ ] N5-07 · UI: Modus-Umschalter + Notiz-Baum + Papierkorb
 **Lies vorher:** `notes.md` §5, `Sidebar.svelte`, `App.svelte`, `VirtualList.svelte`, ui-guidelines §2/§5/§7.
 **Schritte:** `lib/app-mode.svelte.ts` (Modus, Persistenz), Brand-Button mit `Strg+1/2` und Palette-Einträgen,
 Notes-Lazy-Chunk, Tasks-Teilbaum bleibt gemountet; `NotesSidebar`/`NoteTree` (virtualisiert, lazy Ordner,
@@ -101,7 +101,7 @@ Tastatur, Drag & Drop, Kontextmenü, Umbenennen inline, Neue Notiz/Ordner); Papi
 **Fertig wenn:** Vitest (Umschalten behält Zustand beider Modi, Baum-Tastatur, Verschieben, Papierkorb +
 Rückgängig), ui-guidelines §2/§5 ergänzt, `just check` grün. Commit `feat(ui): notes mode and note tree`.
 
-### [~] N5-08 · UI: Editor
+### [ ] N5-08 · UI: Editor
 **Lies vorher:** `notes.md` §6.1–6.4, §6.6.
 **Schritte:** `NoteEditor` (textarea, Schrift je Typ, Zeilenbreite), Autosave (§6.2), Remote-Änderung in den Puffer
 (§6.3), `editor-commands.ts` (Listen, Einrücken, Format-Kurzbefehle über `insertText`; WebKitGTK prüfen),
@@ -109,27 +109,27 @@ Statuszeile, Zen-Modus, Einstellungsabschnitt „Notizen".
 **Fertig wenn:** Vitest für `editor-commands` (Tabelle mit Cursor-Positionen) und Autosave/Remote-Fälle,
 Interaktion < 16 ms (p95 im Selbsttest), `just check` grün. Commit `feat(ui): note editor`.
 
-### [~] N5-09 · UI: Markdown-Vorschau
+### [ ] N5-09 · UI: Markdown-Vorschau
 **Lies vorher:** `notes.md` §6.5.
 **Schritte:** `markdown/render.ts` (Umfang laut §6.5, DOM statt `innerHTML`), anklickbare Checklisten,
 Links extern über die Shell, Scroll-Abgleich, `Strg+E`.
 **Fertig wenn:** Vitest mit Spezifikationsfällen + XSS-Fällen, Größe des Renderers ≤ 15 KB gzip, Render-Budget
 gemessen, `just check` grün. Commit `feat(ui): markdown preview`.
 
-### [~] N5-10 · Gemeinsame Suche
+### [ ] N5-10 · Gemeinsame Suche
 **Lies vorher:** `notes.md` §7, `features/palette/`, ADR-027.
 **Schritte:** Palette fragt `searchTasks` und `searchNotes` parallel ab, Gruppen, Ausschnitt, Öffnen im Notes-Modus
 mit Sprung zum Treffer.
 **Fertig wenn:** Vitest, Messung p95 bei 2 000 Notizen, `just check` grün. Commit `feat(ui): search notes`.
 
-### [~] N5-11 · Ordner-Import (Desktop)
+### [ ] N5-11 · Ordner-Import (Desktop)
 **Lies vorher:** `notes.md` §8.
 **Schritte:** Ordnerauswahl (Portal vs. `tauri-plugin-dialog`, Größe prüfen, im Commit begründen), Einlesen in der
 Shell, `ImportNotes` in Blöcken, Ergebnis-Dialog.
 **Fertig wenn:** Integrationstest mit Testordner (Unterordner, versteckt, Nicht-UTF-8, zu groß, Symlink, CRLF/BOM),
 `just check` grün. Commit `feat(desktop): import notes from a folder`.
 
-### [~] N5-12 · Selbsttest, Messung, Abnahme, Doku
+### [ ] N5-12 · Selbsttest, Messung, Abnahme, Doku
 **Schritte:** WebView-Selbsttest `notes` (umschalten, Notiz anlegen, tippen, Autosave, Vorschau, zurück zu Tasks mit
 erhaltenem Zustand, Interaktion bis Repaint); Abnahmeskript „Notiz auf zwei Geräten" (sauberer Merge + Konflikt);
 `tools/measure-desktop.sh` im Notes-Modus (RAM-Zuwachs, Start im Notes-Modus) → `architecture.md` §6; Doku

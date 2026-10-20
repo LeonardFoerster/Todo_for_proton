@@ -146,6 +146,28 @@ define_id!(
     /// ID eines Geräts (eine Installation der App).
     DeviceId
 );
+define_id!(
+    /// ID einer Notiz ([`Note`](crate::domain::Note)).
+    NoteId
+);
+define_id!(
+    /// ID eines Notiz-Ordners ([`NoteFolder`](crate::domain::NoteFolder)).
+    NoteFolderId
+);
+
+impl NoteId {
+    /// Deterministische ID (UUIDv5 im Namensraum der Notiz-IDs) – z. B. für Konfliktkopien, die
+    /// mehrere Geräte unabhängig voneinander anlegen und die zu einer zusammenlaufen müssen
+    /// (ADR-029).
+    #[must_use]
+    pub fn derived(parts: &[&[u8]]) -> Self {
+        let name: Vec<u8> = parts.concat();
+        Self(Uuid::new_v5(&NOTE_ID_NAMESPACE, &name))
+    }
+}
+
+/// Fester Namensraum für [`NoteId::derived`]. **Nie ändern** (sonst entstehen neue Kopien).
+const NOTE_ID_NAMESPACE: Uuid = Uuid::from_u128(0x6e6f_7465_2d63_6f70_7900_0000_0000_0001);
 
 #[cfg(test)]
 mod tests {
@@ -197,6 +219,19 @@ mod tests {
         let b = DeviceId::new();
         assert_eq!(DeviceId::from_bytes(a.to_bytes()), a);
         assert_eq!(a.to_bytes() < b.to_bytes(), a < b);
+    }
+
+    #[test]
+    fn derived_note_ids_are_stable_and_distinct() {
+        let a = NoteId::derived(&[b"x", b"y"]);
+        assert_eq!(a, NoteId::derived(&[b"x", b"y"]));
+        assert_ne!(a, NoteId::derived(&[b"x", b"z"]));
+        assert_eq!(a.to_string(), NoteId::derived(&[b"xy"]).to_string());
+        assert_eq!(
+            NoteId::derived(&[b"probe"]).to_string(),
+            "fc60b84d-5926-5d3f-99c2-a9440cb1a4f9",
+            "Namensraum unverändert"
+        );
     }
 
     #[test]

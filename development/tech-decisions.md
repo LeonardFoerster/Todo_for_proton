@@ -625,7 +625,7 @@ eine eigene Antwort (Standard-Implementierung oder SQLite-WASM mit FTS5).
 
 ## ADR-029 · Notes: Notizen im Op-Log, Inhalt als Revisions-DAG mit deterministischem 3-Wege-Merge
 
-**Status:** vorgeschlagen (2026-10-20, Entwurf mit dem User geklärt; wird mit N5-01/N5-02 akzeptiert). Details:
+**Status:** akzeptiert (2026-10-20, User-Freigabe zur Umsetzung; Domain mit N5-01, Merge mit N5-02). Details:
 `notes.md`.
 **Kontext:** Die App bekommt einen zweiten Modus „Notes" mit `.txt`- und `.md`-Notizen in verschachtelten Ordnern,
 offline-first und über Proton Drive synchronisiert. Feld-LWW für den Inhalt (wie `Task.notes`) verliert bei
