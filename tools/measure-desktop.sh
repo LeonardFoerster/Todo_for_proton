@@ -11,6 +11,8 @@
 #           MODE=tasks|notes: startet in diesem Modus (N5). Dafür läuft die App in einem eigenen,
 #           leeren Profil (XDG_DATA_HOME im Temp-Ordner), dessen WebView-localStorage `tasks.mode`
 #           vorbelegt ist – das echte Profil bleibt unberührt. Ohne MODE: das vorhandene Profil.
+#           NOTES_OPEN=<id>: zusätzlich diese Notiz offen (mit TODO_DATA_DIR eines Profils, das sie enthält,
+#           z. B. aus der Selbsttest-Suite `n5seed`).
 # Fenster öffnen sich sichtbar – der Compositor drosselt verdeckte/versteckte Fenster.
 set -euo pipefail
 
@@ -31,10 +33,14 @@ if [[ -n ${MODE:-} ]]; then
     # WebKitGTK legt localStorage je Ursprung als SQLite ab (Schlüssel/Wert als UTF-16LE).
     store=$XDG_DATA_HOME/dev.tasks.app/localstorage
     mkdir -p "$store"
-    hex=$(printf '%s' "$MODE" | iconv -f UTF-8 -t UTF-16LE | od -An -tx1 | tr -d ' \n')
+    utf16() { printf '%s' "$1" | iconv -f UTF-8 -t UTF-16LE | od -An -tx1 | tr -d ' \n'; }
     sqlite3 "$store/tauri_localhost_0.localstorage" \
         "CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB NOT NULL ON CONFLICT FAIL);
-         INSERT INTO ItemTable VALUES ('tasks.mode', X'$hex');"
+         INSERT INTO ItemTable VALUES ('tasks.mode', X'$(utf16 "$MODE")');"
+    if [[ -n ${NOTES_OPEN:-} ]]; then
+        sqlite3 "$store/tauri_localhost_0.localstorage" \
+            "INSERT INTO ItemTable VALUES ('notes.open', X'$(utf16 "\"$NOTES_OPEN\"")');"
+    fi
     echo "== Modus: $MODE (eigenes Profil $XDG_DATA_HOME)"
 fi
 

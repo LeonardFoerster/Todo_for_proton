@@ -2045,6 +2045,65 @@ const notes: Step[] = [
   ["Zurück zu Tasks (Ausgangszustand für andere Suiten)", async () => void (await toMode("tasks"))],
 ];
 
+// N5-12: Budgets aus `notes.md` §9 mit Daten – Ordner mit 500 Notizen, eine 20-KB-Notiz. Das Profil dient
+// danach `MODE=notes NOTES_OPEN=<id> tools/measure-desktop.sh` (RAM mit offener Notiz, Release).
+const n5seed: Step[] = [
+  ["App startet im Eingang", async () => void (await until("h1 Eingang", () => heading() === "Eingang"))],
+  [
+    "Ordner „Masse“ mit 500 Notizen, Notiz „Groß“ mit 20 KB (IPC)",
+    async (client) => {
+      const folder = await client.notes.createFolder(null, "Masse");
+      for (let i = 0; i < 500; i += 50) {
+        await Promise.all(
+          Array.from({ length: 50 }, async (_, j) => {
+            const note = await client.notes.create(folder.id, "text");
+            await client.notes.updateBody(note.id, `M${String(i + j + 1).padStart(3, "0")}\nInhalt`, null);
+          }),
+        );
+      }
+      const chunk = "## Abschnitt\n\nText mit **fett**, `code` und [Link](https://example.org).\n\n- [ ] Punkt\n- Punkt 2\n\n";
+      const big = await client.notes.create(null, "markdown");
+      await client.notes.updateBody(big.id, `# Groß\n\n${chunk.repeat(Math.ceil(20_000 / chunk.length))}`, null);
+    },
+  ],
+  ["Umschalten nach Notes", async () => `${(await toMode("notes")).toFixed(0)} ms`],
+  [
+    "Ordner mit 500 Einträgen aufklappen (< 30 ms)",
+    async () => {
+      const row = await until("Masse", () => byRole("treeitem", "Masse"));
+      const t0 = performance.now();
+      row.click();
+      await until("erste Notiz", () => byRole("treeitem", "M001.txt"));
+      await frame();
+      const ms = performance.now() - t0;
+      const rows = document.querySelectorAll('[role="treeitem"]').length;
+      if (ms > 100) throw new Error(`${ms.toFixed(0)} ms`);
+      return `${ms.toFixed(0)} ms bis gezeichnet, ${rows} Zeilen im DOM (virtualisiert)`;
+    },
+  ],
+  [
+    "Notiz mit 20 KB öffnen bis Text sichtbar (< 50 ms)",
+    async () => {
+      byRole("treeitem", "Masse")!.click(); // zuklappen – sonst liegt „Groß" außerhalb des virtualisierten Bereichs
+      const row = await until("Groß", () => byRole("treeitem", "Groß.md"));
+      const t0 = performance.now();
+      row.click();
+      await until("Text", () => (editor()?.value.length ?? 0) > 20_000 && editor()!.getAttribute("aria-label") === "Inhalt von Groß");
+      await frame();
+      const ms = performance.now() - t0;
+      if (ms > 150) throw new Error(`${ms.toFixed(0)} ms`);
+      return `${ms.toFixed(0)} ms`;
+    },
+  ],
+  [
+    "Zustand",
+    async (client) => {
+      await toMode("tasks");
+      return (await noteNamed(client, "Groß")).id;
+    },
+  ],
+];
+
 // N5-12: „Notiz auf zwei Geräten" (`tools/acceptance-two-devices.sh`, Abschnitt 8). A legt zwei
 // Notizen an; beide ändern offline – „Zwei Geräte" in verschiedenen Zeilen (sauberer Merge),
 // „Streit" in derselben Zeile (Konfliktkopie); danach n5sync auf A, B, A.
@@ -2123,7 +2182,7 @@ const n5sync: Step[] = [
 ];
 
 const SUITES: Record<string, Step[]> = { p002, p3new, p4due, p4today, p4upcoming, p4keys, p4search, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
-  p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth, notes, n5create, n5offA, n5offB, n5sync };
+  p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth, notes, n5seed, n5create, n5offA, n5offB, n5sync };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */
 export async function runSelftest(
