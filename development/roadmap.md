@@ -300,7 +300,8 @@ den Rand – wirkt wie ein Debug-Rahmen.
 - Vitest: Klick auf „Suchen" öffnet die Palette; `layout-switch`, `multi-select`, `list-management`,
   `SettingsDialog` grün.
 
-### [ ] P5-06 · Zähler in der Seitenleiste
+### [x] P5-06 · Zähler in der Seitenleiste — 2026-10-21 · cc6aa15
+> Notiz: Pille nur bei Überfälligen; Tooltip „3 offen, davon 1 überfällig“, Name „3, davon 1 überfällig“.
 **Lies vorher:** `features/sidebar/SidebarItem.svelte`, `Sidebar.svelte` (`countFor`).
 
 **Schritte:**

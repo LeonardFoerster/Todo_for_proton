@@ -221,7 +221,6 @@
               value={dueToInputTime(task.due)}
               onchange={(e) => setTime((e.currentTarget as HTMLInputElement).value)}
             />
-            {#if due}<span class="due-text {due.tone}">{due.text}</span>{/if}
           </div>
           <div class="chips">
             <button type="button" class="chip" onclick={() => setDay(todayPlus(0))}>Heute</button>
@@ -242,7 +241,7 @@
                 aria-checked={task.priority === p.value}
                 onclick={() => void save({ priority: p.value })}
               >
-                {#if p.value !== "none"}<Flag size={12} strokeWidth={2} aria-hidden="true" />{/if}{p.label}
+                {#if p.value !== "none"}<span class="ring" aria-hidden="true"></span>{/if}{p.label}
               </button>
             {/each}
           </div>
@@ -253,11 +252,12 @@
           <ListPicker id="detail-list" {lists} value={task.listId} onchange={(id) => void moveTo(id)} />
         </dd>
       </dl>
-    </div>
 
-    <footer>
-      Erstellt {DATE.format(new Date(task.createdAt))} · Geändert {DATE.format(new Date(task.updatedAt))}
-    </footer>
+      <!-- Direkt unter dem Inhalt statt fest am unteren Rand (P5-07). -->
+      <p class="stamp">
+        Erstellt {DATE.format(new Date(task.createdAt))} · Geändert {DATE.format(new Date(task.updatedAt))}
+      </p>
+    </div>
   {/if}
 </section>
 
@@ -338,10 +338,11 @@
   .notes {
     margin: var(--space-3) calc(-1 * var(--space-2)) 0;
     width: calc(100% + 2 * var(--space-2));
+    /* Wächst mit dem Text (P5-07), ohne Griff; die Fläche scrollt als Ganzes. */
+    field-sizing: content;
     min-height: 96px;
     padding: var(--space-2);
     line-height: 1.55;
-    resize: vertical;
   }
   .notes::placeholder {
     color: var(--color-text-muted);
@@ -382,16 +383,6 @@
     display: flex;
     align-items: center;
     gap: var(--space-3);
-  }
-  .due-text {
-    color: var(--color-text-muted);
-    font-size: var(--text-sm);
-  }
-  .due-text.overdue {
-    color: var(--color-danger);
-  }
-  .due-text.today {
-    color: var(--color-accent-text);
   }
   .chips {
     display: flex;
@@ -449,19 +440,23 @@
     font-weight: var(--weight-medium);
     box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
   }
-  .segment.high :global(svg) {
-    color: var(--color-danger);
+  /* Ring wie der Haken in der Liste – die Priorität hat überall dieselbe Form (P5-07). */
+  .ring {
+    --ring: var(--color-accent);
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid var(--ring);
+    border-radius: var(--radius-full);
+    background: color-mix(in srgb, var(--ring) 12%, transparent);
   }
-  .segment.medium :global(svg) {
-    color: var(--color-warning);
+  .segment.high .ring {
+    --ring: var(--color-danger);
   }
-  .segment.low :global(svg) {
-    color: var(--color-accent);
+  .segment.medium .ring {
+    --ring: var(--color-warning);
   }
-  footer {
-    flex: none;
-    padding: var(--space-3) var(--space-5);
-    border-top: 1px solid var(--color-border);
+  .stamp {
+    margin: var(--space-8) 0 0;
     color: var(--color-text-muted);
     font-size: var(--text-xs);
     font-variant-numeric: tabular-nums;
