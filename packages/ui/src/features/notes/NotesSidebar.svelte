@@ -11,6 +11,7 @@
   import { Ellipsis, FileCode, FilePlus, FileText, FolderInput, FolderPlus, Import, Pencil, Plus, Trash } from "../../icons";
   import type { ShortcutRegistry } from "../../lib/shortcuts";
   import FolderPicker from "./FolderPicker.svelte";
+  import ImportResultDialog from "./ImportResultDialog.svelte";
   import { move, newFolder, rename, setKind, trashWithUndo } from "./notes-actions";
   import type { NotesState } from "./notes-state.svelte";
   import NoteTree from "./NoteTree.svelte";
@@ -20,12 +21,12 @@
     notes: NotesState;
     shortcuts: ShortcutRegistry;
     collapsed: boolean;
-    /** Ordner importieren (nur Desktop); fehlt = nicht verfügbar. */
-    onimport?: () => void;
     onnavigate?: () => void;
   }
 
-  let { notes, shortcuts, collapsed, onimport, onnavigate }: Props = $props();
+  let { notes, shortcuts, collapsed, onnavigate }: Props = $props();
+  /** Ordner importieren gibt es nur, wo die Shell es kann (Desktop). */
+  const canImport = $derived(!!notes.client.notes.importFolder);
 
   let tree = $state<NoteTree>();
   let renaming = $state<string | null>(null);
@@ -131,7 +132,7 @@
   function openMoreMenu(e: MouseEvent) {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const items: MenuItem[] = [{ label: "Neuer Ordner", icon: FolderPlus, action: () => void createFolderIn(null) }];
-    if (onimport) items.push({ label: "Ordner importieren…", icon: Import, action: onimport });
+    if (canImport) items.push({ label: "Ordner importieren…", icon: Import, action: () => void notes.importFolder() });
     menu = { items, label: "Weitere Aktionen", x: r.left, y: r.bottom + 4 };
   }
 
@@ -222,6 +223,18 @@
           openRowMenu(row, r?.left ?? 0, (r?.bottom ?? 0) + 4);
         },
       },
+      ...(canImport
+        ? [
+            {
+              keys: [],
+              description: "Ordner importieren…",
+              group: "Notizen",
+              scope: "notes",
+              palette: "Ordner importieren…",
+              run: () => void notes.importFolder(),
+            },
+          ]
+        : []),
       {
         keys: [],
         description: "Neuer Ordner",
@@ -306,6 +319,9 @@
 
 {#if menu}
   <Menu label={menu.label} items={menu.items} x={menu.x} y={menu.y} onclose={() => (menu = null)} />
+{/if}
+{#if notes.importReport}
+  <ImportResultDialog report={notes.importReport} onclose={() => (notes.importReport = null)} />
 {/if}
 {#if picker}
   {@const row = picker.row}

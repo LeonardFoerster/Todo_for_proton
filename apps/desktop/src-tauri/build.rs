@@ -50,6 +50,7 @@ const COMMANDS: &[&str] = &[
     "sync_flush",
     "close_ready",
     "open_external",
+    "import_notes_folder",
     "set_online",
     "app_ready",
     "dev_selftest",

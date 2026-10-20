@@ -69,6 +69,7 @@ export class TauriCoreClient implements CoreClient {
     listTrash: () => invoke("list_note_trash"),
     search: (text, limit) => invoke("search_notes", { text, limit }),
     onConflict: (cb) => subscribe<NoteConflictDto[]>("core://note-conflicts", cb),
+    importFolder: () => invoke("import_notes_folder"),
   };
 
   auth: CoreClient["auth"] = {

@@ -173,6 +173,24 @@ export class NotesState {
     this.editorFocus++;
   }
 
+  /** Ergebnis des letzten Imports (Dialog); `null` = keiner offen. */
+  importReport = $state.raw<import("@tasks/core-client").ImportReportDto | null>(null);
+
+  /** „Ordner importieren…" (nur Desktop): wählen, importieren, Ergebnis zeigen, Ordner zeigen. */
+  async importFolder() {
+    if (!this.client.notes.importFolder) return;
+    try {
+      const report = await this.client.notes.importFolder();
+      if (!report) return;
+      await this.reload();
+      await this.expand(report.folderId);
+      this.cursor = `f:${report.folderId}`;
+      this.importReport = report;
+    } catch (e) {
+      toasts.show({ message: `Import fehlgeschlagen: ${(e as Error).message}`, tone: "danger" });
+    }
+  }
+
   setZen(on: boolean) {
     this.zen = on;
     writeZen(on);

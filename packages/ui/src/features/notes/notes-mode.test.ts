@@ -144,3 +144,44 @@ describe("Notes mode", () => {
     await waitFor(async () => expect((await client.notes.listItems(null, { limit: 10 })).items).toHaveLength(1));
   });
 });
+
+describe("Ordner importieren", () => {
+  it("is offered only where the shell can, and shows the result with reasons", async () => {
+    const { user } = await setup(async (c) => {
+      c.notes.importFolder = async () => {
+        const vault = await c.notes.createFolder(null, "Vault");
+        const sub = await c.notes.createFolder(vault.id, "Uni");
+        const note = await c.notes.create(sub.id, "markdown");
+        await c.notes.rename(note.id, "Analysis");
+        return {
+          folderId: vault.id,
+          notes: 1,
+          folders: 1,
+          skipped: [
+            { path: "bild.png", reason: "andere Endung" },
+            { path: ".obsidian", reason: "versteckt" },
+          ],
+        };
+      };
+    });
+    await toNotes(user);
+    await user.click(await screen.findByRole("button", { name: "Weitere Aktionen" }));
+    await user.click(screen.getByRole("menuitem", { name: /Ordner importieren/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Ordner importiert" });
+    expect(dialog.textContent).toContain("1 Notiz in 2 Ordnern importiert, 2 übersprungen.");
+    await user.click(within(dialog).getByText("Übersprungen (2)"));
+    expect(within(dialog).getByText("bild.png")).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: "Fertig" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // Der neue Ordner ist aufgeklappt und markiert.
+    expect(await screen.findByRole("treeitem", { name: "Uni" })).toBeTruthy();
+  });
+
+  it("has no import entry without shell support", async () => {
+    const { user } = await setup();
+    await toNotes(user);
+    await user.click(await screen.findByRole("button", { name: "Weitere Aktionen" }));
+    expect(screen.getByRole("menuitem", { name: "Neuer Ordner" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: /Ordner importieren/ })).toBeNull();
+  });
+});

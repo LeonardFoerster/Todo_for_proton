@@ -57,6 +57,7 @@
     "allow-sync-flush",
     "allow-close-ready",
     "allow-open-external",
+    "allow-import-notes-folder",
     "allow-set-online",
     "allow-app-ready",
     "allow-dev-selftest",

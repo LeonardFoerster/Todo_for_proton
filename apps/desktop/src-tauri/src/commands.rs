@@ -26,8 +26,8 @@ use todo_core::api::{
         TaskDueDto, TaskListDto, TaskPatchDto, TaskQueryDto, TaskSummaryDto,
     },
     note_dto::{
-        NoteDto, NoteFolderDto, NoteHitDto, NoteItemDto, NoteKindDto, NoteTargetDto,
-        NoteTrashEntryDto, NoteTreeItemDto,
+        ImportReportDto, NoteDto, NoteFolderDto, NoteHitDto, NoteItemDto, NoteKindDto,
+        NoteTargetDto, NoteTrashEntryDto, NoteTreeItemDto,
     },
 };
 use todo_sync::SchedulerEvent;
@@ -448,6 +448,21 @@ pub fn is_external_url(url: &str) -> bool {
     (lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:"))
         && url.len() <= 2048
         && !url.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+
+/// „Ordner importieren…" (`notes.md` §8): Ordner im Portal wählen, einlesen, importieren.
+/// `None`, wenn die Auswahl abgebrochen wurde.
+#[tauri::command]
+pub async fn import_notes_folder(state: State<'_, AppState>) -> Result<Option<ImportReportDto>> {
+    let Some(root) = crate::import::pick_folder()
+        .await
+        .map_err(ErrorDto::unavailable)?
+    else {
+        return Ok(None);
+    };
+    let report = crate::import::import_path(&state.api, root).await?;
+    state.sync.local_change();
+    Ok(Some(report))
 }
 
 /// Die UI hat vor dem Schließen gespeichert (Antwort auf `app://close-requested`).

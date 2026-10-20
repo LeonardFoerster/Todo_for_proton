@@ -32,6 +32,10 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
 
 [target.'cfg(target_os = "linux")'.dependencies]
 todo-keystore-secret-service.workspace = true
+# Ordnerauswahl für „Ordner importieren…" über das XDG-Desktop-Portal. ashpd ist über oo7 (Secret
+# Service) schon im Binary; nur das Feature `file_chooser` kommt dazu (serde_repr, ebenfalls schon
+# da) – statt tauri-plugin-dialog + rfd (N5-11).
+ashpd = { version = "0.13.13", default-features = false, features = ["tokio", "file_chooser"] }
 
 [dev-dependencies]
 tauri = { version = "2.12.4", features = ["test"] }

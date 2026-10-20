@@ -1,6 +1,7 @@
 import type { NotesClient } from "./core-client";
 import { CoreClientError } from "./errors";
 import type {
+  ImportReportDto,
   NoteConflictDto,
   NoteDto,
   NoteFolderDto,
@@ -341,6 +342,9 @@ export class FakeNotes implements NotesClient {
     this.conflictListeners.add(cb);
     return () => void this.conflictListeners.delete(cb);
   };
+
+  /** Wie im Web: kein Ordner-Import, außer ein Test setzt ihn. */
+  importFolder?: () => Promise<ImportReportDto | null>;
 
   /** Test-Hilfe: eine Revision „von einem anderen Gerät" kommt an (neuer Text, neues `bodyRev`). */
   simulateRemoteBody(id: string, text: string) {

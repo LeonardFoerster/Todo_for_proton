@@ -3,6 +3,7 @@ import type {
   AuthStepDto,
   ChangedEventDto,
   CreateTaskDto,
+  ImportReportDto,
   MoveListTargetDto,
   MoveTargetDto,
   NoteConflictDto,
@@ -87,6 +88,8 @@ export interface NotesClient {
   search(text: string, limit: number): Promise<NoteHitDto[]>;
   /** Beim Zusammenlegen nebenläufiger Bearbeitungen entstandene Konfliktkopien. */
   onConflict(cb: (conflicts: NoteConflictDto[]) => void): () => void;
+  /** Nur Desktop: Ordner wählen (System-Dialog) und als Kopie importieren; `null` = abgebrochen. */
+  importFolder?(): Promise<ImportReportDto | null>;
 }
 
 /**
