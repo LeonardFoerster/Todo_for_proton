@@ -16,8 +16,9 @@ Proton Drive ist abgenommen (automatisierter Zwei-Geräte-Lauf; Live-Teil über 
 Listen & Kanban-Board) und P3 (Fenster „Neue Task" mit Texterkennung) umgesetzt (Archiv:
 `development/archive/roadmap-interim.md`). P4 (Bedienung: Uhrzeit im Detail, Heute/Überfällig, Geplant
 nach Tagen, Fälligkeit per Kürzel, Suche & Befehlspalette, Erledigt nach Tagen) umgesetzt; P4-07 wartet auf den User.
-Als Nächstes N0 (Prototyp abrunden), danach die Web-App (`development/roadmap-next.md`); langfristige Ideen
-(Notizen, Kalender, GitHub) stehen dort unter N3.
+Als Nächstes N0 (Prototyp abrunden), danach N5 (Modus „Notes“: `.txt`/`.md`-Notizen in Ordnern, Entwurf in
+`development/notes.md`, wartet auf Freigabe), N4 (wiederkehrende Tasks), dann die Web-App (`development/roadmap-next.md`);
+langfristige Ideen (Verknüpfungen, Kalender, GitHub) stehen dort unter N3.
 
 ## 2. Wo was liegt
 
@@ -46,7 +47,8 @@ Detaildokumente in `development/`:
 mit Notizen liegt in `archive/roadmap-prototype.md`, die abgeschlossenen Zwischenphasen P0–P2 in
 `archive/roadmap-interim.md`), `prototype-acceptance.md`,
 `architecture.md`, `module-structure.md`, `interfaces.md`, `ui-guidelines.md`,
-`sync-strategy.md`, `tech-decisions.md` (ADR-Log + offene Spikes), `future-android.md`.
+`sync-strategy.md`, `tech-decisions.md` (ADR-Log + offene Spikes), `future-android.md`,
+`notes.md` (Notes-Modus: Datenmodell, Sync mit 3-Wege-Merge, UI-Flow, Editor – ADR-029).
 
 **Session-Start:** Zuerst in `development/roadmap.md` (eingeschobene Zwischenphasen), wenn dort nichts offen ist in
 `development/roadmap-next.md` die erste offene Aufgabe (`[ ]`) suchen – `[~]` heißt „wartet auf den User" und wird

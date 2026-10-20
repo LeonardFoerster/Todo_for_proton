@@ -134,6 +134,9 @@ features/task-list/
 
 Regel: Container-Komponenten sprechen mit `CoreClient`; Präsentationskomponenten bekommen nur Props.
 
+Geplant (N5): `features/notes/` (Baum, Editor, Vorschau, Papierkorb) als Lazy-Chunk, Modus in
+`lib/app-mode.svelte.ts` – Dateiliste in `notes.md` §10.
+
 ## 4. Namenskonventionen (Ergänzung zu AGENTS.md)
 
 - Use-Case-Dateien = Verb + Objekt: `complete_task.rs`, `move_task.rs`.

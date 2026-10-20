@@ -325,6 +325,9 @@ App-Ordner-Pfade liegen unter „Meine Dateien" (Haupt-Share). Tatsächliche Abb
 Implementierungen: `ProtonDriveRemoteStore` (`proton-adapter`), `FsRemoteStore` (lokales Verzeichnis –
 Entwicklung & Integrationstests), `InMemoryRemoteStore` (Unit-Tests, inkl. Fehler-/Latenz-Injektion).
 
+> **Notes (N5, Entwurf):** `RemoteStore` bleibt für Notizen unverändert – sie sind nur neue Op-Inhalte. Neuer
+> Lese-Port `NoteRepository` und erweitertes `ChangeSet`: `notes.md` §2/§3.5/§7.
+
 ## 5. Cipher + KeyStore (Encryption)
 
 Stand P5-07 (`crates/todo-core/src/ports/cipher.rs`, ADR-017):

@@ -42,6 +42,12 @@ pub enum OpKind {
 - **Hierarchie**: Subtask, deren Parent gelöscht wurde → wird mit gelöscht (Kaskade beim Materialisieren,
   nicht als eigene Ops).
 
+### Notes (N5, Entwurf – `notes.md` §4, ADR-029)
+- `EntityRef::Note`/`NoteFolder` und neue Felder angehängt. Der Inhalt einer Notiz ist **kein** LWW-Feld, sondern
+  ein DAG unveränderlicher Revisionen (`OpKind::Revise { parents, text }`), aufgelöst per deterministischem diff3,
+  bei Überlappung Konfliktkopie mit deterministischer ID. Papierkorb = LWW-Feld `Trashed`, endgültig = `Delete`.
+- Upload für Inhalte: Debounce 3 s, höchstens 30 s, sofort bei Notiz-/Moduswechsel, Fokusverlust, Schließen.
+
 ### Lokale Tabellen (Auszug)
 | Tabelle | Zweck |
 |---|---|

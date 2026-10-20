@@ -12,11 +12,15 @@ Stand: 2026-10-18 · Status: Prototyp (Desktop umgesetzt; Web-Pfad geplant, nich
 
 **Nicht-Ziele (v1)**
 - Kollaboration / geteilte Listen mit anderen Personen.
-- Echtzeit-Co-Editing von Notizen (Notizen sind v1 Last-Writer-Wins).
+- Echtzeit-Co-Editing von Notizen (Task-Notizen sind v1 Last-Writer-Wins; eigenständige Notizen im Modus „Notes“
+  mergen zeilenbasiert mit Konfliktkopie, kein Text-CRDT – `notes.md`, ADR-029).
 - Eigener Server. Es gibt kein Backend außer Proton Drive (ggf. reiner CORS-Proxy, siehe Risiken).
 - Kalender-, Mail- oder CalDAV-Integration.
 
 ## 2. Überblick
+
+> **Notes (N5, Entwurf):** Notizen und Ordner sind weitere Entitäten in denselben Schichten (Domain, Op-Log,
+> SQLite, `CoreClient`), kein eigenes Subsystem. Erweiterung und Begründung: `notes.md` §2.
 
 ```
 ┌──────────────────────────────── UI-Schicht (TypeScript) ─────────────────────────────────┐

@@ -53,6 +53,10 @@ ohne Protons Code, Assets oder Marke zu übernehmen.
 └───────────────┘ └────────────────────┘ └────────────────────┘
 ```
 
+**Notes-Modus (N5, Entwurf – `notes.md` §5/§6):** Klick auf den Namen neben dem Logo („Tasks“ ⇄ „Notes“) bzw.
+`Strg+1`/`Strg+2` wechselt den Modus. Die Seitenleiste bleibt, ihr Inhalt wird zum Ordnerbaum mit Notizen
+(2 Spalten: Baum + Editor, kein Detail-Panel). Jeder Modus behält seinen Zustand.
+
 ## 3. Design-Tokens
 
 Als CSS Custom Properties in `packages/ui/src/tokens/tokens.css`. Komponenten nutzen **nur** semantische Tokens.

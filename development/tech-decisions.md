@@ -623,6 +623,42 @@ eine eigene Antwort (Standard-Implementierung oder SQLite-WASM mit FTS5).
 
 ---
 
+## ADR-029 · Notes: Notizen im Op-Log, Inhalt als Revisions-DAG mit deterministischem 3-Wege-Merge
+
+**Status:** vorgeschlagen (2026-10-20, Entwurf mit dem User geklärt; wird mit N5-01/N5-02 akzeptiert). Details:
+`notes.md`.
+**Kontext:** Die App bekommt einen zweiten Modus „Notes" mit `.txt`- und `.md`-Notizen in verschachtelten Ordnern,
+offline-first und über Proton Drive synchronisiert. Feld-LWW für den Inhalt (wie `Task.notes`) verliert bei
+Offline-Bearbeitung auf zwei Geräten einen Stand. Ein Text-CRDT (`yrs`) kostet ~200–400 KB WASM, RAM und eine
+wachsende Historie, und für einen einzelnen Nutzer ist echtes Co-Editing kein Ziel. Lesbare Dateien in Drive würden
+einen zweiten, veränderlichen Sync-Pfad brauchen und brächen „jedes Gerät schreibt nur eigene Dateien".
+**Entscheidung:**
+1. Notizen und Ordner sind Entitäten im **bestehenden Op-Log** (`EntityRef::Note`/`NoteFolder` angehängt). Name,
+   Ordner, Typ, Reihenfolge und Papierkorb sind LWW-Felder. `RemoteStore` bleibt unverändert.
+2. Der **Inhalt** ist eine wachsende Menge unveränderlicher Revisionen (`OpKind::Revise { parents, text }`, ID =
+   `OpId`). Eine lokale Bearbeitung verweist auf die Revision, die der Editor geladen hatte.
+3. Mehrere Köpfe werden mit `resolve_body` aufgelöst: nach HLC sortiert gefaltet, Basis = jüngster gemeinsamer
+   Vorfahr, zeilenbasierter **diff3**. Das ist eine reine Funktion, also kommt jedes Gerät mit derselben Menge zum
+   selben Text (Konvergenz).
+4. Überlappende Hunks oder eine fehlende Basis: Der Kopf mit der höheren HLC gewinnt, der andere wird
+   **Konfliktkopie** mit deterministischer ID (UUIDv5 aus Notiz-ID + Revisions-ID, wie ADR-028).
+5. Nach jedem Pull legt ein Folge-Commit (`ResolveNoteHeads`) die Köpfe in einer Merge-Revision zusammen.
+6. Papierkorb = LWW-Feld `Trashed` statt Tombstone. Endgültiges Löschen = `Delete` (Delete gewinnt). Waisen eines
+   gelöschten Ordners landen in der Wurzel, Ordner-Zyklen werden beim Materialisieren deterministisch gebrochen.
+7. In der Outbox ersetzt eine neue ungepushte Revision derselben Notiz die vorige. Für Inhalte gilt eine
+   Upload-Höchstwartezeit von 30 s (Nachtrag zu ADR-022), sofort bei Notiz-/Moduswechsel, Fokusverlust und Schließen.
+   Segmente werden auf 2 MiB Klartext begrenzt.
+8. Editor = natives `textarea` + eigener Markdown-Renderer (kein CodeMirror), im Lazy-Chunk.
+**Alternativen:** Feld-LWW (Datenverlust), immer Konfliktkopie (Kopien auch bei harmlosen Änderungen), `yrs`
+(Budgets), echte Dateien in Drive (zweiter Sync-Pfad, Konflikte auf Drive-Ebene), CodeMirror 6 (~150 KB gzip).
+**Konsequenzen:** Neue Formatteile (alle angehängt), ältere Apps überspringen Notiz-Segmente mit „App aktualisieren".
+Alle Geräte müssen gleichzeitig aktualisieren. diff3-Crate (Kandidat `diffy`) wird in N5-02 nach Größe und wasm32
+geprüft. Revisionen werden lokal aufgeräumt, sobald alle aktiven Geräte einen Nachfahren gesehen haben. Fehlt eine
+Basis trotzdem, entsteht eine Konfliktkopie, kein Verlust. Gleichzeitiges Bearbeiten und endgültiges Löschen verliert
+die Bearbeitung (bewusst, User-Entscheidung 2026-10-20).
+
+---
+
 ## Spikes
 
 | ID | Frage | Ergebnis entscheidet | Stand |
