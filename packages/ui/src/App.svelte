@@ -218,12 +218,19 @@
     }
   });
 
-  /** Erste Liste steht: Startzeit melden und Sync anstoßen (einmal). */
+  /** Die Task-Liste rendert auch versteckt; als Start zählt die sichtbare Ansicht des Modus. */
+  let taskListReady = $state(false);
   function listReady() {
+    taskListReady = true;
+  }
+
+  // Erste Liste bzw. Notizbaum steht: Startzeit melden und Sync anstoßen (einmal).
+  $effect(() => {
     if (reportedReady) return;
+    if (appMode.mode === "tasks" ? !taskListReady : !notes?.loaded) return;
     reportedReady = true;
     void client.ready();
-  }
+  });
 
   function toggleCollapse() {
     if (matchMedia("(max-width: 699px)").matches) {
