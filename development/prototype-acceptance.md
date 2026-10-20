@@ -233,3 +233,6 @@ um den Eindruck – siehe `ui-guidelines.md` §9.
 | 6 | Detail: Fälligkeit anklicken – „fr 14:00", ein Tag im Raster, Pfeiltasten/Bild↓, Uhrzeit leeren, Entfernen | Popover unter dem Feld; Uhrzeit bleibt beim Tageswechsel; `Esc` schließt nur das Popover | |
 | 7 | Lange Notiz im Detail | Feld wächst mit, kein Griff; „Erstellt · Geändert" direkt darunter | |
 | 8 | Fenster schmaler als 700 px | 44-px-Zeilen, runder Button „Neue Task" unten rechts, `⋯` mit Darstellung/Auswählen/Listenaktionen | |
+| 9 | „Neue Task" (`N`): „Bericht bis fr 14:00 !1 @Arbeit" tippen | Fenster oben, ohne Kopf; „bis fr 14:00", „!1", „@Arbeit" im Text getönt; Chips „Fr, … 14:00", „Hoch", „Arbeit" getönt mit × | |
+| 10 | Chip „Fällig" anklicken, `Esc`; × an „Hoch"; `Tab` in die Notiz, `Strg+Enter` | Popover am Chip, `Esc` schließt nur das Popover; Markierung von „!1" verschwindet; Task mit Notiz angelegt | |
+| 11 | „Weitere anlegen" an, zwei Tasks nacheinander; schmales Fenster | Bestätigungszeile im Fenster; schmal geht das Fenster unten auf, Chips scrollen waagerecht | |

@@ -19,7 +19,8 @@ nach Tagen, Fälligkeit per Kürzel, Suche & Befehlspalette, Erledigt nach Tagen
 N5 (Modus „Notes“: `.txt`/`.md`-Notizen in Ordnern mit Revisions-Sync und Konfliktkopien, Markdown-Vorschau,
 gemeinsame Suche, Ordner-Import; `development/notes.md`, ADR-029) umgesetzt und automatisiert abgenommen; die
 Abnahme durch den User (`prototype-acceptance.md` E) ist offen. P5 (Feinschliff der Oberfläche nach dem Design-Review
-2026-10-21: Inter, Lesespalte, Priorität im Ring, Suche, eigenes Datumsfeld, Touch) umgesetzt; Sichtprüfung durch den
+2026-10-21: Inter, Lesespalte, Priorität im Ring, Suche, eigenes Datumsfeld, Touch) und P6 (Fenster „Neue Task“ als
+Schnelleingabe) umgesetzt; Sichtprüfung durch den
 User offen (`prototype-acceptance.md` F). Als Nächstes N0 (Prototyp abrunden), N4
 (wiederkehrende Tasks), dann die Web-App (`development/roadmap-next.md`); langfristige Ideen (Verknüpfungen,
 Kalender, GitHub) stehen dort unter N3.

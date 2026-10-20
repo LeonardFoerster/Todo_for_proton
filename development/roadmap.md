@@ -6,7 +6,7 @@ Etappen aus `roadmap-next.md` eingeschoben werden. Erledigte Phasen werden entfe
 anderen Dokumenten beziehen sich auf diese Archivdatei. Die abgeschlossenen Zwischenphasen P0–P3 (Mehrfachauswahl,
 Upload ≤ 5 s, Listen & Kanban, Fenster „Neue Task") liegen in `archive/roadmap-interim.md`.
 
-**Reihenfolge:** Erst die offenen Phasen hier (P6; P5 umgesetzt, Sichtprüfung offen), danach weiter mit `roadmap-next.md` (N0-01).
+**Reihenfolge:** Erst die offenen Phasen hier (P5/P6 umgesetzt, Sichtprüfung offen), danach weiter mit `roadmap-next.md` (N0-01).
 
 ## Wie diese Liste benutzt wird
 
@@ -29,7 +29,7 @@ Upload ≤ 5 s, Listen & Kanban, Fenster „Neue Task") liegen in `archive/roadm
 | ~~P3~~ | Kanban: Umschalt + Mausrad · Fenster „Neue Task" – **abgeschlossen** 2026-10-18 | → `archive/roadmap-interim.md` |
 | P4 | Bedienung: Uhrzeit im Detail · Heute/Überfällig · Geplant nach Tagen · Fälligkeit per Kürzel · Suche & Befehlspalette · Erledigt nach Tagen – **umgesetzt** 2026-10-19 (P4-01–06); P4-07 wartet auf den User | UX-Review 2026-10-19; die häufigsten Handgriffe (finden, verschieben, Woche überblicken) vor der Web-Etappe |
 | P5 | Feinschliff der Oberfläche: Schrift · Lesespalte · Priorität/Überfällig · Cursor · Kopfzeile & Suche · Zähler · Detail · eigenes Datumsfeld · Touch – **umgesetzt** 2026-10-21; Sichtprüfung durch den User offen (`prototype-acceptance.md` F) | Design-Review 2026-10-21; vor der Web-Etappe, damit Web und Android das neue Bild erben |
-| P6 | Fenster „Neue Task“ als Schnelleingabe: oben verankert ohne Kopf · erkannte Wörter im Text markiert · Chips mit zwei Zuständen und Datums-Popover · Notiz als zweite Zeile · Fußleiste mit Kürzeln · unten aufgehender Bereich im schmalen Fenster | Design-Review 2026-10-21 (Fenster „Neue Task“); direkt nach P5 |
+| P6 | Fenster „Neue Task“ als Schnelleingabe: oben verankert ohne Kopf · erkannte Wörter im Text markiert · Chips mit zwei Zuständen und Datums-Popover · Notiz als zweite Zeile · Fußleiste mit Kürzeln · unten aufgehender Bereich im schmalen Fenster – **umgesetzt** 2026-10-21; Sichtprüfung mit P5 (`prototype-acceptance.md` F 9–11) | Design-Review 2026-10-21 (Fenster „Neue Task“); direkt nach P5 |
 
 ## P4 · Bedienung: schneller finden, verschieben, überblicken
 
@@ -384,7 +384,8 @@ Punkte, die Notiz also als feste zweite Zeile.
 bleiben, wo möglich („Neue Task", „Priorität: …", „Liste: …", „Notiz", „Fällig am", „Weitere anlegen"). Selbsttest
 `p3new`, `p002` und Tooltip-Schritt anpassen. Nach jeder Aufgabe `just desktop-install`.
 
-### [ ] P6-01 · Erkannte Wörter im Text markieren
+### [x] P6-01 · Erkannte Wörter im Text markieren — 2026-10-21 · 3f82186
+> Notiz: Parser in d3a716c (`recognizedMarks`, eigene Funktion statt Feld in `ParsedNewTask`, damit die bestehenden Tests unverändert bleiben); Markierung im Fenster in 3f82186.
 **Lies vorher:** `features/new-task/parse.ts`, `parse.test.ts`, `NewTaskDialog.svelte` (`.hint`).
 
 **Schritte:**
@@ -397,7 +398,8 @@ bleiben, wo möglich („Neue Task", „Priorität: …", „Liste: …", „Not
 
 **Fertig wenn:** Vitest (`marks` mit Positionen, Zusammenfassen, Übersteuern); Screenshot zeigt die Markierung.
 
-### [ ] P6-02 · Oben verankert, ohne Kopf; Notiz als zweite Zeile; Fußleiste
+### [x] P6-02 · Oben verankert, ohne Kopf; Notiz als zweite Zeile; Fußleiste — 2026-10-21 · 3f82186
+> Notiz: `Dialog` `bare`/`placement="top"` in eb72422. Zusätzlich gefunden: Menüs und Popover lagen in der echten WebView hinter einem modalen Dialog bzw. während seiner Einblend-Animation falsch → `Menu` und `DuePopover` über die Popover-API (`lib/popover.ts`, nur wo vorhanden – jsdom versteckt `[popover]` sonst); Selbsttest-Schritt prüft per `elementFromPoint`.
 **Lies vorher:** `components/Dialog.svelte`, `NewTaskDialog.svelte`, `features/palette/CommandPalette.svelte` (Platzierung).
 
 **Schritte:**
@@ -412,7 +414,8 @@ bleiben, wo möglich („Neue Task", „Priorität: …", „Liste: …", „Not
 
 **Fertig wenn:** Vitest (Notiz ohne Chip, Bestätigungszeile, Name des Dialogs); Selbsttest `p3new`, `p002`.
 
-### [ ] P6-03 · Chips mit zwei Zuständen, Datum als Popover
+### [x] P6-03 · Chips mit zwei Zuständen, Datum als Popover — 2026-10-21 · 3f82186
+> Notiz: `DuePopover` aus `DueField` ausgelagert (eb72422). Chip-Text „Heute/Morgen“ wie in der Zeile, sonst „Fr, 23. Okt. 14:00“.
 **Lies vorher:** `features/due/DueField.svelte`, `DuePicker.svelte`, `features/lists/ListPicker.svelte`.
 
 **Schritte:**
@@ -424,7 +427,8 @@ bleiben, wo möglich („Neue Task", „Priorität: …", „Liste: …", „Not
 
 **Fertig wenn:** Vitest (×-Buttons, Popover am Chip, `Alt+D`); Screenshot hell/dunkel/420 px.
 
-### [ ] P6-04 · Doku und Abnahme
+### [x] P6-04 · Doku und Abnahme — 2026-10-21 · 3f82186
+> Notiz: Selbsttest `base`, `p002`, `p2board`, `p3new` (neu: Popover/Menü oben) bestanden. Hinweis: Der Budget-Test des Markdown-Renderers (`render.test.ts`, < 80 ms in jsdom) reißt im vollen `just check` auf stark ausgelastetem Rechner (115–130 ms, allein ~37 ms) – einzelne Commits brauchten einen zweiten Anlauf; nicht geändert.
 **Schritte:** `ui-guidelines.md` §4 (`NewTaskDialog`, `Dialog`-Varianten) und §9; `prototype-acceptance.md` F um das
 Fenster ergänzen; Selbsttest-Suiten `p3new`, `p002`, `p2perf`-Tooltip, `base` grün.
 
