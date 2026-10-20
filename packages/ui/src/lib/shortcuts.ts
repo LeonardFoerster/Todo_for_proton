@@ -31,9 +31,14 @@ export interface Shortcut {
 const SEQUENCE_TIMEOUT_MS = 1500;
 
 /** Normalisiert ein Ereignis zu `ctrl+alt+shift+meta+taste` (Taste klein, Leertaste = `space`). */
-export function comboOf(e: Pick<KeyboardEvent, "key" | "ctrlKey" | "altKey" | "shiftKey" | "metaKey">): string {
+export function comboOf(
+  e: Pick<KeyboardEvent, "key" | "ctrlKey" | "altKey" | "shiftKey" | "metaKey"> & { code?: string },
+): string {
   let key = e.key === " " ? "space" : e.key.toLowerCase();
   if (key === "del") key = "delete";
+  // Strg+Alt (= AltGr auf deutscher Tastatur) liefert bei Ziffern andere Zeichen („¹“): Ziffer
+  // über die Taste bestimmen (Überschriften-Kürzel, `notes.md` §6.4).
+  if (e.ctrlKey && e.altKey && e.code && /^Digit\d$/.test(e.code)) key = e.code.slice(5);
   const mods = [e.ctrlKey && "ctrl", e.altKey && "alt", e.metaKey && "meta"].filter(Boolean) as string[];
   // Shift bei Nicht-Zeichen-Tasten und Buchstaben (`shift+t`); bei Satzzeichen nicht – „?“ ist je
   // nach Layout schon „shift+ß“ o. ä.

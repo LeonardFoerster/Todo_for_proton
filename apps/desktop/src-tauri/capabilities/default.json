@@ -55,6 +55,7 @@
     "allow-sync-status",
     "allow-sync-now",
     "allow-sync-flush",
+    "allow-close-ready",
     "allow-set-online",
     "allow-app-ready",
     "allow-dev-selftest",

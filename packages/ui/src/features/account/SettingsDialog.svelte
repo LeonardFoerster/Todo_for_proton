@@ -12,6 +12,7 @@
   import { toasts } from "../../components/toasts.svelte";
   import { Cloud, CloudOff, Copy, ExternalLink, Keyboard, LogIn, LogOut, RefreshCw, ShieldCheck } from "../../icons";
   import { useCoreClient } from "../../lib/context";
+  import { defaultKind, limitWidth, setDefaultKind, setLimitWidth } from "../../lib/note-preferences";
   import type { SyncState } from "../../lib/sync.svelte";
 
   interface Props {
@@ -33,6 +34,9 @@
   let info = $state<AuthInfoDto | null>(null);
   let step = $state<Step>({ kind: "idle" });
   let confirmLogout = $state(false);
+  /** Notizen (N5, pro Gerät). */
+  let noteKind = $state(defaultKind());
+  let noteWidth = $state(limitWidth());
   let now = $state(Date.now());
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
   let clock: ReturnType<typeof setInterval> | undefined;
@@ -242,6 +246,39 @@
     <ThemeSwitch />
   </section>
 
+  <section aria-labelledby="notes-title">
+    <h3 id="notes-title">Notizen</h3>
+    <div class="note-prefs">
+      <span class="pref-label" id="note-kind-label">Typ neuer Notizen</span>
+      <div class="kind-switch" role="radiogroup" aria-labelledby="note-kind-label">
+        {#each [["markdown", "Markdown (.md)"], ["text", "Text (.txt)"]] as const as [value, label] (value)}
+          <button
+            type="button"
+            role="radio"
+            aria-checked={noteKind === value}
+            onclick={() => {
+              noteKind = value;
+              setDefaultKind(value);
+            }}
+          >
+            {label}
+          </button>
+        {/each}
+      </div>
+      <label class="check">
+        <input
+          type="checkbox"
+          checked={noteWidth}
+          onchange={(e) => {
+            noteWidth = e.currentTarget.checked;
+            setLimitWidth(noteWidth);
+          }}
+        />
+        Zeilenbreite begrenzen (72 Zeichen)
+      </label>
+    </div>
+  </section>
+
   <section aria-labelledby="keys-title">
     <h3 id="keys-title">Tastatur</h3>
     <Button variant="ghost" icon={Keyboard} onclick={onshortcuts}>Alle Tastaturkürzel anzeigen</Button>
@@ -251,6 +288,45 @@
 <style>
   section + section {
     margin-top: var(--space-6);
+  }
+  .note-prefs {
+    display: grid;
+    gap: var(--space-3);
+    justify-items: start;
+  }
+  .pref-label {
+    font-size: var(--text-sm);
+  }
+  .kind-switch {
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    border-radius: var(--radius-md);
+    background: var(--color-bg-hover);
+  }
+  .kind-switch button {
+    height: 28px;
+    padding: 0 var(--space-3);
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--color-text-muted);
+    font: inherit;
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+  .kind-switch button[aria-checked="true"] {
+    background: var(--color-bg);
+    color: var(--color-text);
+  }
+  .kind-switch button:focus-visible {
+    outline: 2px solid var(--color-focus-outline);
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
   }
   h3 {
     margin: 0 0 var(--space-3);

@@ -1,6 +1,9 @@
 <script lang="ts">
   /** Hauptbereich im Modus „Notes" (`notes.md` §5.4): Editor, Papierkorb oder leerer Zustand. */
+  import type { SyncStatusDto } from "@tasks/core-client";
+  import { onMount } from "svelte";
   import Button from "../../components/Button.svelte";
+  import type { ShortcutRegistry } from "../../lib/shortcuts";
   import IconButton from "../../components/IconButton.svelte";
   import { FileText, PanelLeft, Plus } from "../../icons";
   import NoteEditor from "./NoteEditor.svelte";
@@ -9,12 +12,28 @@
 
   interface Props {
     notes: NotesState;
+    shortcuts: ShortcutRegistry;
+    sync: () => SyncStatusDto;
     /** Schmale Fenster: Navigation (Schublade) öffnen. */
     onopennav: () => void;
   }
 
-  let { notes, onopennav }: Props = $props();
+  let { notes, shortcuts, sync, onopennav }: Props = $props();
   let editor = $state<NoteEditor>();
+  /** Zen: Statuszeile nur kurz nach einer Mausbewegung (oder mit Fokus darin). */
+  let pointerActive = $state(false);
+  let pointerTimer: ReturnType<typeof setTimeout> | null = null;
+
+  onMount(() => () => {
+    if (pointerTimer) clearTimeout(pointerTimer);
+  });
+
+  function moved() {
+    if (!notes.zen) return;
+    pointerActive = true;
+    if (pointerTimer) clearTimeout(pointerTimer);
+    pointerTimer = setTimeout(() => (pointerActive = false), 2000);
+  }
 
   /** Ausstehende Eingaben sofort speichern (Modus-/Notizwechsel, Schließen). */
   export async function flush() {
@@ -22,7 +41,7 @@
   }
 </script>
 
-<div class="notes-main">
+<div class="notes-main" class:zen={notes.zen} class:pointer-active={pointerActive} onpointermove={moved} role="presentation">
   <span class="nav-button">
     <IconButton label="Navigation öffnen" icon={PanelLeft} onclick={onopennav} />
   </span>
@@ -30,7 +49,7 @@
     <NoteTrash {notes} onread={(id) => notes.open(id)} />
   {:else if notes.openId}
     {#key notes.openId}
-      <NoteEditor bind:this={editor} {notes} id={notes.openId} />
+      <NoteEditor bind:this={editor} {notes} id={notes.openId} {shortcuts} {sync} />
     {/key}
   {:else}
     <div class="empty">
@@ -49,6 +68,13 @@
     flex-direction: column;
     flex: 1;
     min-height: 0;
+  }
+  .zen :global(.status) {
+    opacity: 0;
+  }
+  .zen.pointer-active :global(.status),
+  .zen :global(.status:focus-within) {
+    opacity: 1;
   }
   .nav-button {
     display: none;

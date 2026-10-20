@@ -424,6 +424,13 @@ pub async fn sync_now(state: State<'_, AppState>) -> Result<()> {
     Ok(())
 }
 
+/// Die UI hat vor dem Schließen gespeichert (Antwort auf `app://close-requested`).
+#[tauri::command]
+pub async fn close_ready<R: tauri::Runtime>(window: tauri::Window<R>) -> Result<()> {
+    let _ = window.destroy();
+    Ok(())
+}
+
 /// Jetzt hochladen, falls etwas wartet (Notiz- oder Moduswechsel, `notes.md` §4.6).
 #[tauri::command]
 pub async fn sync_flush(state: State<'_, AppState>) -> Result<()> {

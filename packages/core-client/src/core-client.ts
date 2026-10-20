@@ -133,6 +133,12 @@ export interface CoreClient {
   /** Erste Ansicht ist gerendert (Startzeitmessung, Sync-Start). */
   ready(): Promise<void>;
 
+  /**
+   * Nur Shells mit eigenem Fenster: Vor dem Schließen läuft `cb` (z. B. offene Notiz speichern),
+   * danach schließt die Shell – spätestens nach ihrem Timeout.
+   */
+  onCloseRequested?(cb: () => Promise<void>): () => void;
+
   /** Gibt die Abmeldung zurück. */
   onChange(cb: (e: ChangedEventDto) => void): () => void;
   onSyncStatus(cb: (s: SyncStatusDto) => void): () => void;

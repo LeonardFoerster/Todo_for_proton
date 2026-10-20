@@ -80,6 +80,8 @@ pub struct AppState {
     pub account: Arc<Account>,
     /// Letztes automatisches Leeren des Notiz-Papierkorbs (Unix-ms; 0 = noch nie).
     notes_purged_at: AtomicI64,
+    /// Schließen läuft (das zweite `CloseRequested` schließt sofort).
+    pub closing: AtomicBool,
 }
 
 /// Höchstens so oft wird der Notiz-Papierkorb automatisch geleert (`notes.md` §4.7).
@@ -158,6 +160,7 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, options: &Options) -> Result<AppStat
         sync,
         account,
         notes_purged_at: AtomicI64::new(0),
+        closing: AtomicBool::new(false),
     })
 }
 

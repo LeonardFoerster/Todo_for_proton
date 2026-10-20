@@ -48,6 +48,7 @@ const COMMANDS: &[&str] = &[
     "sync_status",
     "sync_now",
     "sync_flush",
+    "close_ready",
     "set_online",
     "app_ready",
     "dev_selftest",

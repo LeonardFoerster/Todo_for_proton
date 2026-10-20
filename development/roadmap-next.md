@@ -104,7 +104,7 @@ weiter.
 **Fertig wenn:** IPC-Tests (Speichern → `onChange`; Remote-Merge liefert geänderten `body`), Auslöser-Test, Vitest
 für den Fake, `interfaces.md` §7 ergänzt, `just check` grün. Commit `feat(desktop): note commands`.
 
-### [ ] N5-07 · UI: Modus-Umschalter + Notiz-Baum + Papierkorb
+### [x] N5-07 · UI: Modus-Umschalter + Notiz-Baum + Papierkorb — 2026-10-20 · 10b4ceb
 **Lies vorher:** `notes.md` §5, `Sidebar.svelte`, `App.svelte`, `VirtualList.svelte`, ui-guidelines §2/§5/§7.
 **Schritte:** `lib/app-mode.svelte.ts` (Modus, Persistenz), Brand-Button mit `Strg+1/2` und Palette-Einträgen,
 Notes-Lazy-Chunk, Tasks-Teilbaum bleibt gemountet; `NotesSidebar`/`NoteTree` (virtualisiert, lazy Ordner,
@@ -119,6 +119,12 @@ Rückgängig), ui-guidelines §2/§5 ergänzt, `just check` grün. Commit `feat(
 Statuszeile, Zen-Modus, Einstellungsabschnitt „Notizen".
 **Fertig wenn:** Vitest für `editor-commands` (Tabelle mit Cursor-Positionen) und Autosave/Remote-Fälle,
 Interaktion < 16 ms (p95 im Selbsttest), `just check` grün. Commit `feat(ui): note editor`.
+> Notiz: `insertText` in WebKitGTK und die Interaktionszeit prüft der Selbsttest in N5-12 (jsdom kennt
+> `execCommand` nicht; dort greift der Ersatz über `setRangeText`). Wird während eines Speicherns weitergetippt und
+> liefert der Core einen gemergten Text, überträgt `rebase` die eigene Änderung (ein Bereich); überschneiden sich
+> beide, wird von der alten Basis aus erneut gespeichert (Core mergt oder legt eine Kopie an, nichts geht verloren).
+> Schließen: Die Shell hält `CloseRequested` an, sendet `app://close-requested`, die UI speichert und meldet
+> `close_ready` (sonst schließt das Fenster nach 1,5 s). `Strg+Alt+Ziffer` über `KeyboardEvent.code` (AltGr).
 
 ### [ ] N5-09 · UI: Markdown-Vorschau
 **Lies vorher:** `notes.md` §6.5.

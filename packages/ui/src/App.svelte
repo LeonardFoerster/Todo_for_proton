@@ -157,6 +157,14 @@
     return inScope("notes", [
       { keys: ["n"], description: "Neue Notiz", group: "Notizen", palette: "Neue Notiz", run: create },
       { keys: ["ctrl+n"], description: "Neue Notiz (auch beim Tippen)", group: "Notizen", inInputs: true, run: create },
+      {
+        keys: ["ctrl+shift+f"],
+        description: "Zen-Modus an/aus",
+        group: "Notizen",
+        palette: "Zen-Modus an/aus",
+        inInputs: true,
+        run: () => state.setZen(!state.zen),
+      },
     ]);
   }
 
@@ -185,6 +193,11 @@
       notesStop?.();
       notesShortcutsStop?.();
     });
+    // Vor dem Schließen die offene Notiz speichern (die Shell wartet darauf, `notes.md` §6.2).
+    const offClose = client.onCloseRequested?.(async () => {
+      await notesMain?.flush();
+    });
+    if (offClose) stops.push(offClose);
     if (appMode.mode === "notes") void loadNotes();
     void (async () => {
       try {
@@ -483,6 +496,7 @@
     if (showPalette) showPalette = false;
     else if (showShortcuts) showShortcuts = false;
     else if (showSettings) showSettings = false;
+    else if (appMode.mode === "notes" && notes?.zen) notes.setZen(false);
     else if (target && target.matches("input, textarea, select")) target.blur();
     else if (appMode.mode === "notes") drawerOpen = false;
     else if (openId) closeDetail();
@@ -779,6 +793,7 @@
   class:drawer-open={drawerOpen}
   class:detail-open={openId !== null && appMode.mode === "tasks"}
   class:notes-mode={appMode.mode === "notes"}
+  class:zen={appMode.mode === "notes" && !!notes?.zen}
 >
   <aside class="sidebar-slot">
     <Sidebar
@@ -820,7 +835,13 @@
 
   {#if notesChunk && notes}
     <main class="pane notes-pane" aria-label="Notes" hidden={appMode.mode !== "notes"}>
-      <notesChunk.NotesMain bind:this={notesMain} {notes} onopennav={() => (drawerOpen = true)} />
+      <notesChunk.NotesMain
+        bind:this={notesMain}
+        {notes}
+        {shortcuts}
+        sync={() => sync.status}
+        onopennav={() => (drawerOpen = true)}
+      />
     </main>
   {/if}
   <main class="pane" aria-labelledby="view-title" hidden={appMode.mode !== "tasks"}>
@@ -1185,6 +1206,19 @@
   .list-slot {
     flex: 1;
     min-height: 0;
+  }
+
+  /* Zen (Notes): keine Seitenleiste, der Editor füllt das Fenster. */
+  .app.zen {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .app.zen .sidebar-slot {
+    display: none;
+  }
+  .app.zen .notes-pane {
+    margin: 0;
+    border: 0;
+    border-radius: 0;
   }
 
   /* Detail: ≥ 1100 px eigene Spalte, darunter schwebend */

@@ -80,6 +80,18 @@ Verschieben nach…, In den Papierkorb). Gleichnamige Elemente im selben Ordner 
 Name, Herkunft, „gelöscht vor 3 Tagen“, Wiederherstellen, Endgültig löschen und „Papierkorb leeren“ (je mit
 Bestätigung); Notizen darin sind nur lesbar.
 
+Editor (N5-08, `NoteEditor`): natives `<textarea>` über die volle Fläche, `.md` in `--font-sans`, `.txt` in
+`--font-mono`, 15 px / Zeilenhöhe 1,6, Textspalte 72ch zentriert (Einstellung „Zeilenbreite begrenzen“),
+Rechtschreibprüfung aus. Autosave 400 ms nach der letzten Eingabe, sofort bei Blur, Fenster verborgen, Notiz- und
+Moduswechsel und vor dem Schließen (die Shell wartet bis 1,5 s); je Notiz ein Speichern nach dem anderen.
+Remote-Revisionen kommen in den Puffer (gemeinsamer Anfang/Ende, `setRangeText`, Cursor und Scroll bleiben); mit
+ungespeicherten Eingaben wird sofort gespeichert und der gemergte Text übernommen. Statuszeile 28 px: Pfad › Name.ext
+(Klick benennt um) · Gespeichert/Speichert…/Nicht synchronisiert/Synchronisiert · Wörter · Zeichen · ausgewählt
+(gezählt 300 ms nach der Eingabe), ab 256 KB „Große Notiz“, `⋯` (Umbenennen, Typ, Verschieben nach…, Papierkorb, Zen).
+Zen (`Strg+Umschalt+F`): ohne Seitenleiste, Statuszeile nur nach Mausbewegung oder mit Fokus; das erste `Esc`
+beendet Zen. Konfliktkopien melden ein Toast „Konflikt – Kopie „…“ angelegt“ mit „Anzeigen“. Einstellungen →
+„Notizen“: Typ neuer Notizen (Markdown/Text), Zeilenbreite begrenzen.
+
 ## 3. Design-Tokens
 
 Als CSS Custom Properties in `packages/ui/src/tokens/tokens.css`. Komponenten nutzen **nur** semantische Tokens.
@@ -238,6 +250,13 @@ Auswahl (Auswahlfarbe) getrennt. Kontextmenü auf einer ausgewählten Zeile wirk
 | Baum: umbenennen / in den Papierkorb (Rückgängig) / verschieben nach… | `F2` / `Entf` / `M` |
 | Baum: unter Geschwistern nach oben/unten | `Alt+↑/↓` |
 | Baum: Aktionen | `Umschalt+F10` bzw. Menütaste |
+| Editor: Liste fortsetzen (`- `, `* `, `1.` → `2.`, `- [ ] `, `> `; leerer Punkt beendet) | `Enter` am Ende des Punkts |
+| Editor: ein-/ausrücken (Auswahl zeilenweise; `.md` 2 Leerzeichen, `.txt` Tab) | `Tab` / `Umschalt+Tab` |
+| Editor verlassen (statt Tab) | `Esc`, dann `Tab` |
+| `.md`: Fett / Kursiv / Durchgestrichen / Link / Checkbox | `Strg+B` / `Strg+I` / `Strg+Umschalt+S` / `Strg+L` / `Strg+Umschalt+X` |
+| `.md`: Überschrift 1–3 / Absatz (Ziffer über die Taste, auch mit AltGr) | `Strg+Alt+1…3` / `Strg+Alt+0` |
+| `.md`: Adresse über markiertem Text einfügen → Link | `Strg+V` |
+| Zen-Modus | `Strg+Umschalt+F` |
 
 Bewusst kein „Keine auswählen" auf `Strg+Umschalt+A`. Seit P4-04 erkennt die Kürzel-Registry Shift bei **Buchstaben**
 (`shift+t`), bei Satzzeichen weiterhin nicht (`?` ist je nach Layout schon Shift); Feststelltaste zählt nicht als Shift.

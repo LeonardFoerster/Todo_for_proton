@@ -9,6 +9,8 @@ use crate::dto::ChangedEventDto;
 pub const CHANGED_EVENT: &str = "core://changed";
 /// Payload `Vec<NoteConflictDto>`: beim Zusammenlegen entstandene Konfliktkopien.
 pub const NOTE_CONFLICTS_EVENT: &str = "core://note-conflicts";
+/// Ohne Payload: Das Fenster soll schließen – UI speichert und meldet `close_ready`.
+pub const CLOSE_REQUESTED_EVENT: &str = "app://close-requested";
 /// Payload [`crate::dto::SyncStatusDto`].
 pub const SYNC_STATUS_EVENT: &str = "core://sync-status";
 

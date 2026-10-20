@@ -14,7 +14,7 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-use tauri::{Manager, Runtime, Window, WindowEvent};
+use tauri::{Emitter, Manager, Runtime, Window, WindowEvent};
 use todo_sync::SchedulerEvent;
 
 use crate::state::{AppState, Options};
@@ -72,6 +72,7 @@ macro_rules! handlers {
             commands::sync_status,
             commands::sync_now,
             commands::sync_flush,
+            commands::close_ready,
             commands::set_online,
             commands::app_ready,
             commands::dev_selftest,
@@ -131,11 +132,15 @@ macro_rules! handlers {
             commands::sync_status,
             commands::sync_now,
             commands::sync_flush,
+            commands::close_ready,
             commands::set_online,
             commands::app_ready,
         ]
     };
 }
+
+/// So lange wartet das Schließen höchstens auf die UI (letztes Speichern einer Notiz).
+const CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1_500);
 
 /// Startzeitpunkt des Prozesses (so früh wie möglich in [`run`] gesetzt).
 static STARTED: OnceLock<Instant> = OnceLock::new();
@@ -217,8 +222,24 @@ fn window_event<R: Runtime>(window: &Window<R>, event: &WindowEvent) {
         WindowEvent::Focused(false) | WindowEvent::Resized(_) if hidden() => {
             state.sync.event(SchedulerEvent::AppHidden);
         }
-        // Vor dem Schließen noch ausstehende Änderungen hochladen (best effort).
-        WindowEvent::CloseRequested { .. } => state.sync.event(SchedulerEvent::AppHidden),
+        // Vor dem Schließen noch ausstehende Änderungen hochladen (best effort) und der UI Zeit
+        // geben, eine offene Notiz zu speichern (`notes.md` §6.2): Sie meldet `close_ready`,
+        // spätestens nach `CLOSE_TIMEOUT` schließt das Fenster trotzdem.
+        WindowEvent::CloseRequested { api, .. } => {
+            state.sync.event(SchedulerEvent::AppHidden);
+            if !state
+                .closing
+                .swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                api.prevent_close();
+                let _ = window.emit(events::CLOSE_REQUESTED_EVENT, ());
+                let window = window.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(CLOSE_TIMEOUT).await;
+                    let _ = window.destroy();
+                });
+            }
+        }
         _ => {}
     }
 }

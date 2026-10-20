@@ -9,16 +9,15 @@ import type {
   CoreClient,
   NoteDto,
   NoteFolderDto,
-  NoteKindDto,
   NoteTrashEntryDto,
   NoteTreeItemDto,
 } from "@tasks/core-client";
-import { readChoice, writeChoice } from "../../lib/preferences";
+import { toasts } from "../../components/toasts.svelte";
+import { defaultKind, readZen, writeZen } from "../../lib/note-preferences";
 import { flatten, ROOT, type TreeRow } from "./tree-model";
 
 export const OPEN_KEY = "notes.open";
 export const EXPANDED_KEY = "notes.expanded";
-export const DEFAULT_KIND_KEY = "notes.default-kind";
 const PAGE = 500;
 
 function readJson<T>(key: string, fallback: T): T {
@@ -38,15 +37,6 @@ function writeJson(key: string, value: unknown) {
   }
 }
 
-/** Standardtyp neuer Notizen (Einstellung, pro Gerät; `notes.md` §6.6). */
-export function defaultKind(): NoteKindDto {
-  return readChoice(DEFAULT_KIND_KEY, ["markdown", "text"] as const, "markdown");
-}
-
-export function setDefaultKind(kind: NoteKindDto) {
-  writeChoice(DEFAULT_KIND_KEY, kind);
-}
-
 export class NotesState {
   /** Alle Ordner (auch im Papierkorb) – für Pfade und „Verschieben nach…". */
   folders = $state.raw<NoteFolderDto[]>([]);
@@ -64,6 +54,8 @@ export class NotesState {
   fresh = $state<string | null>(null);
   /** Zählt Bitten, den Editor zu fokussieren (Enter im Baum, neue Notiz). */
   editorFocus = $state(0);
+  /** Zen-Modus: Seitenleiste aus, Statuszeile nur bei Bewegung (`notes.md` §6.1). */
+  zen = $state(readZen());
   readonly rows: TreeRow[] = $derived(flatten(this.children, this.expanded));
 
   private pending: Promise<void> | null = null;
@@ -75,7 +67,30 @@ export class NotesState {
   /** Erste Ladung und Abo auf Änderungen; gibt die Abmeldung zurück. */
   start(): () => void {
     void this.reload();
-    return this.client.onChange((e) => this.changed(e));
+    const offChange = this.client.onChange((e) => this.changed(e));
+    const offConflict = this.client.notes.onConflict((conflicts) => void this.conflicted(conflicts));
+    return () => {
+      offChange();
+      offConflict();
+    };
+  }
+
+  /** Konfliktkopie angelegt (Sync oder eigenes Speichern): Hinweis mit „Anzeigen" (§6.3). */
+  private async conflicted(conflicts: { noteId: string; copyId: string }[]) {
+    await this.reload();
+    for (const { copyId } of conflicts) {
+      const copy = await this.client.notes.get(copyId).catch(() => null);
+      if (!copy) continue;
+      toasts.show({
+        message: `Konflikt – Kopie „${copy.name}“ angelegt`,
+        actionLabel: "Anzeigen",
+        timeoutMs: 8000,
+        onAction: () => {
+          void this.reveal(copy.folderId);
+          this.open(copy.id);
+        },
+      });
+    }
   }
 
   folder(id: string | null): NoteFolderDto | undefined {
@@ -154,6 +169,11 @@ export class NotesState {
 
   focusEditor() {
     this.editorFocus++;
+  }
+
+  setZen(on: boolean) {
+    this.zen = on;
+    writeZen(on);
   }
 
   /** Neue Notiz im Ordner der offenen Notiz (sonst der Wurzel); öffnet sie. */
