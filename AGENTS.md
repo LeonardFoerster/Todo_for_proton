@@ -16,9 +16,11 @@ Proton Drive ist abgenommen (automatisierter Zwei-Geräte-Lauf; Live-Teil über 
 Listen & Kanban-Board) und P3 (Fenster „Neue Task" mit Texterkennung) umgesetzt (Archiv:
 `development/archive/roadmap-interim.md`). P4 (Bedienung: Uhrzeit im Detail, Heute/Überfällig, Geplant
 nach Tagen, Fälligkeit per Kürzel, Suche & Befehlspalette, Erledigt nach Tagen) umgesetzt; P4-07 wartet auf den User.
-In Arbeit: N5 (Modus „Notes“: `.txt`/`.md`-Notizen in Ordnern, `development/notes.md`, freigegeben und vor N0
-gezogen), danach N0 (Prototyp abrunden), N4 (wiederkehrende Tasks), dann die Web-App (`development/roadmap-next.md`);
-langfristige Ideen (Verknüpfungen, Kalender, GitHub) stehen dort unter N3.
+N5 (Modus „Notes“: `.txt`/`.md`-Notizen in Ordnern mit Revisions-Sync und Konfliktkopien, Markdown-Vorschau,
+gemeinsame Suche, Ordner-Import; `development/notes.md`, ADR-029) umgesetzt und automatisiert abgenommen; die
+Abnahme durch den User (`prototype-acceptance.md` E) ist offen. Als Nächstes N0 (Prototyp abrunden), N4
+(wiederkehrende Tasks), dann die Web-App (`development/roadmap-next.md`); langfristige Ideen (Verknüpfungen,
+Kalender, GitHub) stehen dort unter N3.
 
 ## 2. Wo was liegt
 
@@ -140,8 +142,8 @@ Die Rust-Toolchain ist über `rust-toolchain.toml` fixiert.
 | `just desktop-build` | Release-Binary der Desktop-App (`target/release/todo-desktop`) |
 | `just ts` | TS/Svelte: ESLint, Typecheck, Vitest (alle pnpm-Pakete) |
 | `just types` | TS-Typen der DTOs neu erzeugen (`packages/core-client/src/generated/`, läuft auch in `just test`) |
-| `tools/measure-desktop.sh` | Start, PSS, Leerlauf-CPU, Binary-Größe des Release-Builds (Budgets §4) |
-| `tools/acceptance-two-devices.sh` | Zwei-Geräte-Abnahme mit zwei Profilen über ein lokales Sync-Verzeichnis (Debug-Build) |
+| `tools/measure-desktop.sh` | Start, PSS, Leerlauf-CPU, Binary-Größe des Release-Builds (Budgets §4); `MODE=notes` startet im Modus „Notes“ (eigenes Profil) |
+| `tools/acceptance-two-devices.sh` | Zwei-Geräte-Abnahme mit zwei Profilen über ein lokales Sync-Verzeichnis (Debug-Build); `ONLY=notes` nur „Notiz auf zwei Geräten“ |
 
 Umgebung der Desktop-App: `TODO_DATA_DIR` (eigenes Profil inkl. eigenem Schlüsselbund-Eintrag),
 `TODO_WEBKIT_COMPOSITING=1` (WebKit-Compositing wieder an), `TODO_LOG` (Log-Filter auf stderr, `Targets`-Syntax,

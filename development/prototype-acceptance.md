@@ -192,3 +192,25 @@ Installierte App (`tasks-app` bzw. Starter „Tasks", Stand nach P2). Automatisc
 | 11 | Spaltenkopf ziehen bzw. fokussieren und `Alt+←/→` | Spaltenreihenfolge ändert sich – auch in der Seitenleiste | ✔ |
 | 12 | Hell/Dunkel und schmales Fenster im Board | Spalten, Karten, Hervorhebung gut lesbar; Board scrollt horizontal | ✔ |
 
+
+## E · Modus „Notes" (N5-12) – Abnahme durch den User am Desktop: **offen**
+
+Installierte App (`tasks-app` bzw. Starter „Tasks", Stand nach N5). Automatisch geprüft ist das schon (Selbsttest
+`notes` in der WebView, Abnahmeskript Abschnitt 8 „Notiz auf zwei Geräten": sauberer Merge + Konfliktkopie, beide
+Profile identisch; Messung `MODE=notes tools/measure-desktop.sh`, siehe `architecture.md` §6) – hier geht es um
+Gefühl, Optik und Bedienbarkeit. Live über Proton zusätzlich B-Schritte mit einer Notiz (zwei Profile).
+
+| # | Schritt | Erwartung | Ergebnis |
+|---|---|---|---|
+| 1 | Name oben in der Seitenleiste bzw. `Strg+2` / `Strg+1` | Wechsel ohne Flackern; geöffnete Task bzw. Notiz bleibt; nach Neustart der zuletzt benutzte Modus | |
+| 2 | „Neue Notiz", sofort tippen: `# Einkauf`, Zeilen | Cursor steht im Editor; Name folgt der ersten Zeile; Statuszeile „Speichert…" → „Gespeichert" | |
+| 3 | Neue Notiz anlegen und leer wieder verlassen | Leere Notiz verschwindet von selbst | |
+| 4 | `- Punkt` + `Enter`, `Tab`/`Umschalt+Tab`, `Strg+B/I/L`, `Strg+Alt+1`, `Strg+Umschalt+X` | Liste setzt sich fort, Einrücken, Formatieren; `Strg+Z` macht jeden Schritt rückgängig | |
+| 5 | `Strg+E` bzw. „Bearbeiten \| Vorschau" | Vorschau sauber gesetzt (hell/dunkel), Checkbox anklickbar, Link öffnet den Browser | |
+| 6 | Ordner anlegen, Notizen hineinziehen, `Alt+↑/↓`, `F2`, `M` (Verschieben nach…) | Baum folgt, Tastatur im Baum wie in den Listen | |
+| 7 | Notiz/Ordner löschen → Papierkorb unten → Wiederherstellen; „Rückgängig" im Hinweis | Kommt am alten Platz zurück | |
+| 8 | `Strg+K`: Wort aus dem Inhalt einer Notiz | Gruppe „Notizen" mit Ausschnitt; `Enter` öffnet die Notiz mit markiertem Treffer | |
+| 9 | Zen (`Strg+Umschalt+F`), `Esc`; Einstellungen → „Notizen" | Ohne Seitenleiste; Zeilenbreite/Typ neuer Notizen wirken | |
+| 10 | `⋯` → „Ordner importieren…" mit einem Ordner voller `.md`-Dateien | Portal-Dialog; Ergebnis „… Notizen in … Ordnern importiert, … übersprungen" mit Gründen; Baum zeigt den Ordner | |
+| 11 | Zwei Profile (`TODO_DATA_DIR`) mit Sync: dieselbe Notiz offline in verschiedenen bzw. derselben Zeile ändern | Verschiedene Zeilen: beide Änderungen da; dieselbe Zeile: Hinweis „Konflikt – Kopie … angelegt", nichts verloren | |
+| 12 | Während des Tippens schließen (Fenster-X) | Nach Neustart ist der letzte Buchstabe da | |

@@ -92,6 +92,10 @@ Zen (`Strg+Umschalt+F`): ohne Seitenleiste, Statuszeile nur nach Mausbewegung od
 beendet Zen. Konfliktkopien melden ein Toast „Konflikt – Kopie „…“ angelegt“ mit „Anzeigen“. Einstellungen →
 „Notizen“: Typ neuer Notizen (Markdown/Text), Zeilenbreite begrenzen.
 
+Ordner importieren (N5-11, nur Desktop, `⋯` und Palette): System-Dialog des Portals, danach Dialog „Ordner
+importiert“ mit „412 Notizen in 37 Ordnern importiert, 9 übersprungen.“ und aufklappbarer Liste der übersprungenen
+Pfade mit Grund; der neue Ordner wird aufgeklappt und markiert. Im Web fehlt der Eintrag.
+
 Vorschau (N5-09, `.md`): `Strg+E` bzw. „Bearbeiten | Vorschau“ in der Statuszeile, je Notiz gemerkt
 (`notes.view`). Eigener Renderer (`markdown/render.ts`, ~4 KB gzip) erzeugt DOM-Knoten, nie `innerHTML` aus dem
 Text; Links nur `http:`/`https:`/`mailto:`, ein Klick öffnet den Standardbrowser (`open_external`), nie die

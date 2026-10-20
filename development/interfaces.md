@@ -455,7 +455,9 @@ camelCase, z. B. `invoke("complete_task", { id, done })`), dazu `auth_info`, `au
 `auth_logout`, `sync_status`, `sync_now`, `sync_flush` (N5-06: sofort hochladen, wenn etwas wartet – Notiz-/Moduswechsel),
 `set_online(online)`, `app_ready` (erster Frame → Startzeit + Scheduler `AppStarted` + Auto-Leeren des
 Notiz-Papierkorbs, danach höchstens täglich bei Fokus); Notiz-Commands gleichnamig zu `CoreApi`
-(`update_note_body` meldet dem Scheduler `ContentChange` statt `LocalChange`); nur Debug-Builds wirksam: `dev_selftest` (Suiten aus `TASKS_SELFTEST`), `dev_selftest_report(line, exit)`
+(`update_note_body` meldet dem Scheduler `ContentChange` statt `LocalChange`), dazu `import_notes_folder` (N5-11:
+Ordner über das XDG-Desktop-Portal wählen, in der Shell einlesen, `import_notes` aufrufen; `null` bei Abbruch) und
+`open_external(url)` (nur http/https/mailto); nur Debug-Builds wirksam: `dev_selftest` (Suiten aus `TASKS_SELFTEST`), `dev_selftest_report(line, exit)`
 (stdout, optional beenden) – in `TauriCoreClient` als `devSelftest`, nicht Teil von `CoreClient`. Events: `core://changed` (`ChangedEventDto { tasks, lists, notes, noteFolders }`), `core://note-conflicts`
 (`NoteConflictDto[] { noteId, copyId }`), `core://sync-status` (`SyncStatusDto
 { state, lastSuccess, pendingOps, message }`, `state` ∈ disabled|idle|syncing|offline|authRequired|rateLimited|
@@ -490,10 +492,11 @@ export interface CoreClient {
   searchTasks(text: string, limit: number): Promise<TaskSummaryDto[]>; // Titel + Notiz, Teilwort (ADR-027)
   notes: NotesClient; // N5-06: listFolders, listItems, get, create, updateBody(id, text, baseRev), discardIfEmpty,
                       // rename, setKind, move, createFolder, renameFolder, moveFolder, trash, restore, purge,
-                      // emptyTrash, listTrash, search, onConflict
+                      // emptyTrash, listTrash, search, onConflict; optional importFolder() (nur Desktop,
+                      // N5-11: Ordnerwahl im System-Dialog → ImportReportDto | null bei Abbruch)
   auth: AuthClient;   // info, current, beginLogin, openBrowser(flow), pollLogin(flow), cancelLogin(flow), logout
   sync: SyncClient;   // status, now, flush
-  ready(): Promise<void>;                                 // erste Ansicht gerendert (app_ready)
+  ready(): Promise<void>;                                 // erste Ansicht des Modus gerendert (app_ready)
   onChange(cb: (e: ChangedEventDto) => void): () => void;      // gibt Unsubscribe zurück
   onSyncStatus(cb: (s: SyncStatusDto) => void): () => void;
 }

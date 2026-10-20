@@ -8,6 +8,9 @@
 # Aufruf:  tools/measure-desktop.sh [BINARY]
 # Umgebung: RUNS=5 IDLE_S=60 CPU_S=30; alles Weitere (z. B. XDG_DATA_HOME für eine
 #           Testdatenbank, GDK_BACKEND) wird an die App durchgereicht.
+#           MODE=tasks|notes: startet in diesem Modus (N5). Dafür läuft die App in einem eigenen,
+#           leeren Profil (XDG_DATA_HOME im Temp-Ordner), dessen WebView-localStorage `tasks.mode`
+#           vorbelegt ist – das echte Profil bleibt unberührt. Ohne MODE: das vorhandene Profil.
 # Fenster öffnen sich sichtbar – der Compositor drosselt verdeckte/versteckte Fenster.
 set -euo pipefail
 
@@ -20,6 +23,20 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 [[ -x $BIN ]] || { echo "Binary fehlt: $BIN (zuerst: just desktop-build)" >&2; exit 1; }
+
+if [[ -n ${MODE:-} ]]; then
+    [[ $MODE == tasks || $MODE == notes ]] || { echo "MODE=tasks|notes" >&2; exit 1; }
+    command -v sqlite3 >/dev/null || { echo "MODE braucht sqlite3" >&2; exit 1; }
+    export XDG_DATA_HOME=$TMP/xdg
+    # WebKitGTK legt localStorage je Ursprung als SQLite ab (Schlüssel/Wert als UTF-16LE).
+    store=$XDG_DATA_HOME/dev.tasks.app/localstorage
+    mkdir -p "$store"
+    hex=$(printf '%s' "$MODE" | iconv -f UTF-8 -t UTF-16LE | od -An -tx1 | tr -d ' \n')
+    sqlite3 "$store/tauri_localhost_0.localstorage" \
+        "CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB NOT NULL ON CONFLICT FAIL);
+         INSERT INTO ItemTable VALUES ('tasks.mode', X'$hex');"
+    echo "== Modus: $MODE (eigenes Profil $XDG_DATA_HOME)"
+fi
 
 now_ms() { date +%s%3N; }
 

@@ -54,6 +54,16 @@ iOS folgen (siehe [Plattformen](#plattformen) und [Roadmap](#roadmap)).
 - Sammelaktionen für die Auswahl: erledigen, verschieben, löschen, als Block umsortieren – jeweils als **ein**
   Vorgang mit Rückgängig.
 
+**Notes**
+- Zweiter Modus neben den Tasks (`Strg+1` / `Strg+2` oder der Umschalter oben in der Seitenleiste): Notizen als
+  `.md` oder `.txt` in einem Ordnerbaum, beliebig tief, mit Drag & Drop, Papierkorb (30 Tage) und Rückgängig.
+- Editor mit Autosave, Markdown-Hilfen (Listen fortsetzen, Einrücken, `Strg+B/I/L`, Überschriften, Checkboxen),
+  Vorschau (`Strg+E`) mit anklickbaren Checklisten, Zen-Modus und Wort-/Zeichenzählung.
+- Die Befehlspalette (`Strg+K`) durchsucht Tasks und Notizen (Namen und Inhalt) gemeinsam.
+- Gleichzeitige Bearbeitung auf mehreren Geräten wird zeilenweise zusammengeführt; ändern zwei Geräte dieselbe
+  Stelle, bleibt die andere Fassung als Kopie „… (Konflikt TT.MM.JJJJ)" erhalten – nichts geht verloren.
+- Desktop: „Ordner importieren…" übernimmt einen vorhandenen Notizordner (z. B. ein Obsidian-Vault) als Kopie.
+
 **Allgemein**
 - Komplett per Tastatur bedienbar (Übersicht mit `?`), Fokus immer sichtbar, Screenreader-Beschriftungen.
 - Funktioniert ohne Netz und ohne Konto; der Sync ist optional.
@@ -82,6 +92,11 @@ gebaut.
   Drive; die Geräte führen die Änderungen feldweise zusammen (Hybrid Logical Clocks, „letzte Änderung je Feld gewinnt",
   Löschen gewinnt gegen Bearbeiten, Reihenfolge per Fractional Index). Zwei Geräte, die offline unterschiedliche
   Felder derselben Task ändern, behalten beide Änderungen. Snapshots halten das Protokoll klein.
+- **Notizen** synchronisieren als Folge unveränderlicher Revisionen; parallele Änderungen werden zeilenweise
+  zusammengeführt (diff3), Überschneidungen landen in einer Konfliktkopie.
+- **Alle Geräte gleichzeitig aktualisieren:** Neue Versionen können neue Arten von Änderungen schreiben (z. B. die
+  Notizen ab N5), die ältere Versionen nicht lesen können. Ein Gerät mit alter Version stockt dann beim Sync, bis
+  es aktualisiert ist – lokale Daten bleiben erhalten.
 - **Zeitnah:** Nach einer Änderung wird nach ~1,5 s hochgeladen, bei vielen Änderungen hintereinander spätestens nach
   5 s; andere Geräte holen beim Fokuswechsel und periodisch ab. Keine Timer im Leerlauf, Backoff bei Fehlern.
 - **Ende-zu-Ende-verschlüsselt:** Zusätzlich zu Protons eigener Verschlüsselung sind alle Sync-Daten mit
@@ -211,6 +226,10 @@ Planungs- und Entscheidungsdokumente (ADRs, Roadmap) stehen in `development/`.
 | Board: Spalte wechseln / Karte in Nachbarspalte | `←/→` bzw. `H/L` / `Alt+←/→` |
 | Auswahl: alle / erweitern / umschalten | `Strg+A` / `Umschalt+↑/↓` / `X` |
 | Ansichten | `G` dann `I` (Eingang), `T` (Heute), `U` (Geplant) |
+| Modus Tasks / Notes | `Strg+1` / `Strg+2` |
+| Befehlspalette und Suche (Tasks + Notizen) | `Strg+K` |
+| Notes: neue Notiz / Umbenennen / Verschieben | `N` bzw. `Strg+N` / `F2` / `M` |
+| Notes: Bearbeiten ↔ Vorschau / Zen | `Strg+E` / `Strg+Umschalt+F` |
 | Alle Kürzel | `?` |
 
 ## Performance
@@ -225,13 +244,15 @@ Budgets (Release-Build, Mittelklasse-Laptop) und gemessene Werte:
 | Abhaken bis Neuzeichnen | < 16 ms | nächster Frame |
 | Kanban mit 10 Listen à 200 Tasks zeichnen | – | ~75 ms (Debug-Build) |
 | 1 000 Tasks löschen bzw. verschieben (eine Aktion) | < 50 ms | 17–28 ms |
+| Start im Modus Notes / Mehrspeicher | < 400 ms | 355 ms / +2 MB |
+| Notes: Tippen bis Neuzeichnen | < 16 ms | nächster Frame (1 ms Arbeit) |
 
 Listen sind virtualisiert, der Austausch zwischen Oberfläche und Kern ist grob-granular (Seiten statt einzelner Tasks,
 eine Sammelaktion = ein Aufruf), und im Leerlauf läuft nichts.
 
 ## Roadmap
 
-1. **Linux-Desktop** – ✅ Prototyp fertig (lokal, Sync, Listen, Kanban, Mehrfachauswahl).
+1. **Linux-Desktop** – ✅ Prototyp fertig (lokal, Sync, Listen, Kanban, Mehrfachauswahl); ✅ Modus Notes.
 2. **Abschluss Prototyp** – Live-Abnahme über Proton Drive, kleinere Nachträge.
 3. **Web-App** – Kern als WebAssembly im Web Worker, Speicher im Browser, Sync aus dem Browser.
 4. **Windows** – Tauri 2 mit WebView2, Installer, Schlüsselablage im Windows-Anmeldeinformationsspeicher.

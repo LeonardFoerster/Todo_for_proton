@@ -267,6 +267,29 @@ Unterschied liegt im Rauschen der Debug-/Dev-Grundlast (Release: 0,02 %, P8-03).
   `wasm-opt -Oz`, `opt-level = "z"` nur für das WASM-Crate, Features minimieren.
 - WASM auf dem Main-Thread initialisieren → Jank beim Start.
 
+### Notes (N5-12, 2026-10-20)
+Release-Build, `MODE=tasks|notes tools/measure-desktop.sh` (je eigenes leeres Profil mit vorbelegtem `tasks.mode`,
+nicht angemeldet), sonst wie P8-03. WebView-Abläufe: Selbsttest `notes` (Debug-Build + Vite-Dev, pessimistisch).
+
+| Messung | Tasks | Notes | Budget | |
+|---|---|---|---|---|
+| Kaltstart bis erste interaktive Ansicht (Median 5) | 369 ms | 355 ms (Notizbaum) | < 400 / < 800 ms | ✔ |
+| PSS gesamt nach 60 s Leerlauf | 305 MB | 307 MB (+2 MB) | < 250 / < 320 MB | ✔ hart, ✘ Ziel (FIX-07) |
+| Leerlauf-CPU über 30 s | 0,03 % | 0,00 % | ~0 % | ✔ |
+
+| Selbsttest `notes` | Ergebnis | Budget | |
+|---|---|---|---|
+| Strg+2 bis Baum gezeichnet (lädt den Notes-Chunk) / später | 28–155 ms / 29–32 ms | < 400 ms | ✔ |
+| Tippen: Arbeit je Zeichen (200 Zeichen, natives `insertText`) | p50/p95 1 ms (Timer-Auflösung) | < 16 / < 50 ms | ✔ |
+| Tippen: Bild im nächsten Frame | 0 von 200 verpasst (60 Hz) | – | ✔ |
+| Autosave bis im Core (inkl. 400 ms Pause) | 412–415 ms | – | ✔ |
+| Strg+E Quelltext → Vorschau | 26 ms | – | ✔ |
+| Strg+1 zurück zu Tasks (geöffnete Task bleibt) | 32–33 ms | – | ✔ |
+
+WebKitGTK unterstützt `execCommand("insertText")` im `<textarea>`: Editor-Befehle bleiben rückgängig machbar (natives
+Rückgängig gruppiert Eingaben). Zwei Geräte (`ONLY=notes tools/acceptance-two-devices.sh`): verschiedene Zeilen →
+sauber zusammengeführt, dieselbe Zeile → Konfliktkopie „Streit (Konflikt TT.MM.JJJJ)", beide Profile identisch.
+
 ## 7. Risiken
 
 | # | Risiko | Auswirkung | Gegenmaßnahme |

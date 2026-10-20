@@ -4,7 +4,7 @@
  * oben rechts (PASS/FAIL je Schritt). In normalen Builds nicht enthalten.
  */
 
-import type { CoreClient, TaskSummaryDto } from "@tasks/core-client";
+import type { CoreClient, NoteSummaryDto, TaskSummaryDto } from "@tasks/core-client";
 
 /** Ein Schritt; ein zurückgegebener Text erscheint als Messwert hinter PASS. */
 type Step = [name: string, run: (client: CoreClient) => Promise<string | void>];
@@ -1881,8 +1881,249 @@ const p4search: Step[] = [
   ],
 ];
 
+// N5-12: Modus „Notes" in der echten WebView – umschalten, anlegen, tippen (natives `insertText`
+// von WebKitGTK), Autosave, Vorschau, zurück zu Tasks mit erhaltenem Zustand, Eingabe bis Repaint.
+const editor = () => document.querySelector<HTMLTextAreaElement>('textarea[aria-label^="Inhalt"]');
+const saveLabel = () => document.querySelector('footer[aria-label="Status der Notiz"]')?.textContent ?? "";
+const toMode = async (mode: "tasks" | "notes") => {
+  const t0 = performance.now();
+  key(document.activeElement ?? document.body, mode === "tasks" ? "1" : "2", { ctrlKey: true, code: mode === "tasks" ? "Digit1" : "Digit2" });
+  await until(`Modus ${mode}`, () => byRole("button", mode === "tasks" ? /Zu Notes wechseln/ : /Zu Tasks wechseln/));
+  await frame();
+  return performance.now() - t0;
+};
+
+async function allNotes(client: CoreClient, folderId: string | null = null): Promise<NoteSummaryDto[]> {
+  const out: NoteSummaryDto[] = [];
+  let cursor: string | null = null;
+  do {
+    const page = await client.notes.listItems(folderId, { cursor, limit: 500 });
+    for (const item of page.items) {
+      if (item.type === "note") out.push(item);
+      else out.push(...(await allNotes(client, item.id)));
+    }
+    cursor = page.nextCursor;
+  } while (cursor);
+  return out;
+}
+
+async function noteNamed(client: CoreClient, name: string) {
+  const summary = (await allNotes(client)).find((n) => n.name === name);
+  if (!summary) throw new Error(`Notiz ${name} fehlt`);
+  return client.notes.get(summary.id);
+}
+
+/** Wie getippt: natives `insertText` (Rückgängig bleibt), sonst Fehler – genau das prüft der Schritt. */
+function typeNative(el: HTMLTextAreaElement, text: string) {
+  el.focus();
+  for (const ch of text) {
+    if (!document.execCommand("insertText", false, ch)) throw new Error("execCommand(insertText) nicht unterstützt");
+  }
+}
+
+const NOTE_TEXT = "# Selbsttest Notiz\n\n- [ ] Punkt eins\n- Punkt zwei\n\nText mit **fett**.";
+
+const notes: Step[] = [
+  ["App startet im Eingang", async () => void (await until("h1 Eingang", () => heading() === "Eingang"))],
+  [
+    "Eine Task auswählen (Zustand für später)",
+    async (client) => {
+      await client.createTask({ title: "Bleibt offen" });
+      await click("option", /^Bleibt offen/);
+      await until("Detail", () => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Titel"]')?.value === "Bleibt offen");
+    },
+  ],
+  ["Umschalten nach Notes (Strg+2)", async () => `${(await toMode("notes")).toFixed(0)} ms (lädt den Notes-Teil)`],
+  [
+    "Neue Notiz → Editor hat den Fokus",
+    async () => {
+      await click("button", "Neue Notiz");
+      await until("Editor fokussiert", () => document.activeElement === editor());
+    },
+  ],
+  [
+    "Tippen mit nativem insertText (WebKitGTK)",
+    async () => {
+      const el = editor()!;
+      typeNative(el, NOTE_TEXT);
+      if (el.value !== NOTE_TEXT) throw new Error(`Inhalt ${JSON.stringify(el.value.slice(0, 60))}`);
+      document.execCommand("undo");
+      const undone = el.value === NOTE_TEXT.slice(0, -1);
+      document.execCommand("redo");
+      if (el.value !== NOTE_TEXT) throw new Error("Wiederholen stellt den Text nicht her");
+      return `Rückgängig ${undone ? "zeichenweise" : "in Gruppen"} (nativ)`;
+    },
+  ],
+  [
+    "Autosave: Core hat den Text, Name aus der ersten Zeile",
+    async (client) => {
+      const t0 = performance.now();
+      await untilAsync("gespeichert", async () => (await allNotes(client)).some((n) => n.name === "Selbsttest Notiz"), 5000);
+      const note = await noteNamed(client, "Selbsttest Notiz");
+      if (note.body !== NOTE_TEXT) throw new Error("Inhalt im Core weicht ab");
+      await until("Statuszeile Gespeichert", () => saveLabel().includes("Gespeichert"), 3000);
+      return `nach ${Math.round(performance.now() - t0)} ms`;
+    },
+  ],
+  [
+    "Vorschau (Strg+E): Überschrift, Checkliste anklickbar",
+    async (client) => {
+      const t0 = performance.now();
+      key(editor()!, "e", { ctrlKey: true, code: "KeyE" });
+      const h1 = await until("Vorschau h1", () => document.querySelector(".preview h1")).catch(() => {
+        const sw = document.querySelector('[aria-label="Ansicht"]');
+        throw new Error(`keine Vorschau; Umschalter ${sw ? "da" : "fehlt"}, Fokus ${document.activeElement?.tagName}, preview-Elemente ${document.querySelectorAll(".preview").length}, pressed ${sw?.querySelector("[aria-pressed=true]")?.textContent}`);
+      });
+      const ms = performance.now() - t0;
+      if (h1.textContent !== "Selbsttest Notiz") throw new Error(`h1 ${h1.textContent}`);
+      document.querySelector<HTMLInputElement>(".preview input[type=checkbox]")!.click();
+      await untilAsync("Haken gespeichert", async () => (await noteNamed(client, "Selbsttest Notiz")).body.includes("- [x] Punkt eins"), 5000);
+      key(document.querySelector(".preview")!, "e", { ctrlKey: true, code: "KeyE" });
+      await until("Quelltext", () => editor() && !editor()!.hidden);
+      return `Umschalten ${ms.toFixed(0)} ms`;
+    },
+  ],
+  [
+    "Eingabe bis Repaint (200 Zeichen): Arbeit p95 < 16 ms, Bild im nächsten Frame",
+    async () => {
+      const el = editor()!;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+      document.execCommand("insertText", false, "\n");
+      // Bildrate dieses Bildschirms (rAF wartet bis zum nächsten vsync).
+      let last = await frame();
+      const intervals: number[] = [];
+      for (let i = 0; i < 30; i++) intervals.push(-last + (last = await frame()));
+      const period = stats(intervals).p50;
+      const work: number[] = [];
+      let late = 0;
+      for (let i = 0; i < 200; i++) {
+        const before = await frame();
+        const t0 = performance.now();
+        document.execCommand("insertText", false, i % 40 === 39 ? "\n" : "x");
+        work.push(performance.now() - t0);
+        // Das Bild mit der Eingabe ist das nächste; später = verpasster Frame.
+        if ((await frame()) - before > period * 1.5) late++;
+      }
+      const s = stats(work);
+      if (s.p95 > 50) throw new Error(`Arbeit p95 ${s.p95.toFixed(1)} ms (hart 50)`);
+      if (late > 10) throw new Error(`${late} von 200 Eingaben verpassen den nächsten Frame`);
+      return `Arbeit p50 ${s.p50.toFixed(2)} / p95 ${s.p95.toFixed(2)} / max ${s.max.toFixed(1)} ms · ${late}/200 verpasste Frames · Frame ${period.toFixed(1)} ms`;
+    },
+  ],
+  [
+    "Zurück zu Tasks (Strg+1): Task bleibt geöffnet",
+    async () => {
+      const ms = await toMode("tasks");
+      await until("h1 Eingang", () => heading() === "Eingang");
+      const title = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Titel"]')?.value;
+      if (title !== "Bleibt offen") throw new Error(`Detail ${title ?? "zu"}`);
+      return `${ms.toFixed(1)} ms`;
+    },
+  ],
+  [
+    "Wieder Notes: dieselbe Notiz, Cursor am Ende",
+    async () => {
+      const ms = await toMode("notes");
+      const el = await until("Editor", () => editor());
+      if (!el.value.startsWith("# Selbsttest Notiz") || !el.getAttribute("aria-label")?.endsWith("Selbsttest Notiz")) {
+        throw new Error(`Editor ${el.getAttribute("aria-label")}`);
+      }
+      return `${ms.toFixed(1)} ms`;
+    },
+  ],
+  [
+    "Suche (Strg+K) findet die Notiz",
+    async () => {
+      await openPaletteTimed();
+      type(paletteInput()!, "Punkt zwei");
+      await until("Treffer", () => byRole("option", /Selbsttest Notiz/), 3000);
+      key(paletteInput()!, "Escape");
+      await until("zu", () => !paletteInput());
+    },
+  ],
+  ["Zurück zu Tasks (Ausgangszustand für andere Suiten)", async () => void (await toMode("tasks"))],
+];
+
+// N5-12: „Notiz auf zwei Geräten" (`tools/acceptance-two-devices.sh`, Abschnitt 8). A legt zwei
+// Notizen an; beide ändern offline – „Zwei Geräte" in verschiedenen Zeilen (sauberer Merge),
+// „Streit" in derselben Zeile (Konfliktkopie); danach n5sync auf A, B, A.
+const MERGE_BASE = "Zwei Geräte\nZeile 1\nZeile 2\nZeile 3\n";
+const CLASH_BASE = "Streit\nGemeinsame Zeile\n";
+
+/** Alle Notizen als eine vergleichbare Zeile (Name: Inhalt, Zeilenumbrüche als ⏎). */
+async function notesState(client: CoreClient): Promise<string> {
+  const list = await allNotes(client);
+  const parts = await Promise.all(list.map(async (n) => `${n.name}: ${(await client.notes.get(n.id)).body.replaceAll("\n", "⏎")}`));
+  return parts.sort().join(" | ");
+}
+
+async function editNote(client: CoreClient, name: string, edit: (body: string) => string) {
+  const note = await noteNamed(client, name);
+  await client.notes.updateBody(note.id, edit(note.body), note.bodyRev);
+}
+
+const n5create: Step[] = [
+  [
+    "A: Notizen „Zwei Geräte“ und „Streit“",
+    async (client) => {
+      for (const text of [MERGE_BASE, CLASH_BASE]) {
+        const note = await client.notes.create(null, "text");
+        await client.notes.updateBody(note.id, text, null);
+      }
+    },
+  ],
+  ["Hochgeladen", async (client) => syncedNow(client)],
+  ["Zustand", async (client) => notesState(client)],
+];
+
+const n5offA: Step[] = [
+  ["B hat schon den Stand von A", async (client) => syncedNow(client)],
+  offline,
+  [
+    "A: Zeile 1 und die gemeinsame Zeile ändern",
+    async (client) => {
+      await editNote(client, "Zwei Geräte", (b) => b.replace("Zeile 1", "Zeile 1 von A"));
+      await editNote(client, "Streit", (b) => b.replace("Gemeinsame Zeile", "Fassung von A"));
+    },
+  ],
+];
+
+const n5offB: Step[] = [
+  ["Stand von A holen", async (client) => syncedNow(client)],
+  offline,
+  [
+    "B: Zeile 3 und die gemeinsame Zeile ändern",
+    async (client) => {
+      await editNote(client, "Zwei Geräte", (b) => b.replace("Zeile 3", "Zeile 3 von B"));
+      await editNote(client, "Streit", (b) => b.replace("Gemeinsame Zeile", "Fassung von B"));
+    },
+  ],
+];
+
+const n5sync: Step[] = [
+  [
+    "Online, synchronisieren",
+    async (client) => {
+      await online();
+      return syncedNow(client);
+    },
+  ],
+  [
+    "Editor zeigt den zusammengeführten Text",
+    async (client) => {
+      const note = await noteNamed(client, "Zwei Geräte");
+      await toMode("notes");
+      await click("treeitem", "Zwei Geräte.txt");
+      await until("Editor", () => editor()?.value === note.body, 3000);
+      await toMode("tasks");
+    },
+  ],
+  ["Zustand", async (client) => notesState(client)],
+];
+
 const SUITES: Record<string, Step[]> = { p002, p3new, p4due, p4today, p4upcoming, p4keys, p4search, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
-  p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth };
+  p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth, notes, n5create, n5offA, n5offB, n5sync };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */
 export async function runSelftest(
@@ -1900,6 +2141,11 @@ export async function runSelftest(
       .catch(() => null);
     if (listButton?.getAttribute("aria-pressed") === "false") listButton.click();
   }
+  // Der Modus liegt ebenfalls im localStorage: Jede Suite beginnt im Modus „Tasks".
+  const toTasks = await until("Kopfzeile", () => document.querySelector("h1") ?? byRole("button", /Zu Tasks wechseln/), 10_000)
+    .then(() => byRole("button", /Zu Tasks wechseln/))
+    .catch(() => null);
+  toTasks?.click();
   const steps = names.flatMap((n) => SUITES[n] ?? [[`Suite ${n}`, async () => Promise.reject(new Error("unbekannt"))] as Step]);
   const box = document.createElement("pre");
   box.style.cssText =

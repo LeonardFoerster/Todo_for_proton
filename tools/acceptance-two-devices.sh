@@ -11,6 +11,8 @@
 # Abschnitt 5 (P0-07): Sammelaktionen der Mehrfachauswahl über beide Profile.
 # Abschnitt 6 (P1-03): Abhaken verlässt den Eingang, Upload ohne manuellen Sync.
 # Abschnitt 7 (P2-09): Board-Ziehen, Listen umbenennen/umsortieren über beide Profile.
+# Abschnitt 8 (N5-12): Notiz auf zwei Geräten – sauberer Merge und Konfliktkopie.
+#   Nur diesen Abschnitt:  ONLY=notes tools/acceptance-two-devices.sh
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -69,6 +71,7 @@ wait_for() { # wait_for DATEI MUSTER SEKUNDEN
     return 1
 }
 
+if [ "${ONLY:-}" != notes ]; then
 say ""
 say "== 1. Anlegen auf A → erscheint auf B =="
 pid_b=$(start B p802wait)
@@ -183,6 +186,28 @@ say "  A: $a"
 say "  B: $b"
 [ "$a" = "Listen Haushalt | Obst · Äpfel in Obst" ] && [ "$a" = "$b" ]; check "B: dieselbe Zuordnung, Namen und Reihenfolge" $?
 [ "$a" = "$r" ]; check "nach Neustart von A unverändert" $?
+
+fi # ONLY
+
+say ""
+say "== 8. Notiz auf zwei Geräten: verschiedene Zeilen → Merge, dieselbe Zeile → Konfliktkopie =="
+run A n5create
+passed A n5create; check "A legt „Zwei Geräte“ und „Streit“ an und lädt hoch" $?
+run A n5offA
+run B n5offB
+passed A n5offA && passed B n5offB; check "beide ändern offline" $?
+run A n5sync
+run B n5sync
+run A n5sync
+a=$(state A n5sync)
+b=$(state B n5sync)
+say "  A: $a"
+say "  B: $b"
+[ -n "$a" ] && [ "$a" = "$b" ]; check "beide Geräte identisch" $?
+[[ $a == *"Zwei Geräte: Zwei Geräte⏎Zeile 1 von A⏎Zeile 2⏎Zeile 3 von B⏎"* ]]; check "Zeile 1 von A und Zeile 3 von B zusammengeführt" $?
+[[ $a =~ Streit\ \(Konflikt\ [0-9]{2}\.[0-9]{2}\.[0-9]{4}\):\ Streit⏎Fassung\ von\ [AB]⏎ ]] &&
+    [[ $a == *"Fassung von A"* ]] && [[ $a == *"Fassung von B"* ]]; check "Konflikt: beide Fassungen erhalten, eine als Kopie" $?
+passed A n5sync && passed B n5sync; check "Editor zeigt den zusammengeführten Text" $?
 
 say ""
 if [ $failures -eq 0 ]; then say "ERGEBNIS: alle Prüfungen bestanden"; else say "ERGEBNIS: $failures Prüfung(en) fehlgeschlagen"; fi
