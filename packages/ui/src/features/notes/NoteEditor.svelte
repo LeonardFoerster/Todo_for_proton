@@ -6,7 +6,7 @@
    * ohne den Cursor zu verlieren.
    */
   import type { NoteDto, SyncStatusDto } from "@tasks/core-client";
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { toasts } from "../../components/toasts.svelte";
   import { limitWidth, readNoteView, writeNoteView } from "../../lib/note-preferences";
   import type { Shortcut, ShortcutRegistry } from "../../lib/shortcuts";
@@ -139,12 +139,16 @@
     });
   }
 
-  // Bitte um Fokus (Enter im Baum, neue Notiz): aus der Vorschau zurück in den Quelltext.
+  // Bitte um Fokus (Enter im Baum, neue Notiz): aus der Vorschau zurück in den Quelltext. Einmal
+  // einlösen und `preview` nicht verfolgen – sonst schaltet jede spätere Vorschau sofort zurück.
   $effect(() => {
-    if (notes.editorFocus && textarea && note && !readonly) {
-      if (preview) showPreview(false);
-      textarea.focus();
-    }
+    if (!notes.editorFocus || !textarea || !note || readonly) return;
+    const el = textarea;
+    notes.editorFocus = false;
+    untrack(() => {
+      if (preview) void showPreview(false);
+    });
+    el.focus();
   });
 
   // Sprung zum Suchtreffer, wenn die Notiz schon offen war (sonst erledigt das `load`).

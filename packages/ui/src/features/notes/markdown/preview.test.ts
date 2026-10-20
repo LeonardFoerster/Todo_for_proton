@@ -60,4 +60,20 @@ describe("Markdown preview", () => {
     await user.click(await screen.findByRole("link", { name: "Seite" }));
     expect(windowOpen).toHaveBeenCalledWith("https://example.org/a", "_blank", "noopener");
   });
+
+  it("stays on after a focus request (new note)", async () => {
+    const client = new FakeCoreClient();
+    await client.ensureInbox();
+    render(App, { props: { client } });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /Zu Notes wechseln/ }));
+    await user.click((await screen.findAllByRole("button", { name: "Neue Notiz" }))[0]);
+    const editor = await screen.findByRole("textbox", { name: /^Inhalt/ });
+    await waitFor(() => expect(document.activeElement).toBe(editor));
+    await user.keyboard("# Titel");
+    await user.keyboard("{Control>}e{/Control}");
+    await waitFor(() => expect(document.querySelector(".preview h1")?.textContent).toBe("Titel"));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(document.querySelector(".preview h1")).toBeTruthy();
+  });
 });
