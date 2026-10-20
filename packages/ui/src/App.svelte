@@ -865,7 +865,7 @@
     </main>
   {/if}
   <main class="pane" aria-labelledby="view-title" hidden={appMode.mode !== "tasks"}>
-    <header class="pane-header">
+    <header class="pane-header" class:wide={showBoard}>
       <span class="menu">
         <IconButton label="Navigation öffnen" icon={PanelLeft} onclick={() => (drawerOpen = true)} />
       </span>
@@ -1185,8 +1185,12 @@
     align-items: center;
     gap: var(--space-2);
     height: 56px;
-    padding: 0 var(--space-4) 0 var(--space-6);
+    /* Gleiche Kanten wie die Zeilen der Lesespalte (Einzug 8 px + Innenabstand der Zeile). */
+    padding: 0 calc(var(--content-inset) + var(--space-6)) 0 calc(var(--content-inset) + var(--space-8));
     flex: none;
+  }
+  .pane-header.wide {
+    padding: 0 var(--space-4) 0 var(--space-6);
   }
   .layout-switch {
     display: flex;

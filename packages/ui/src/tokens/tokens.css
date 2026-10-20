@@ -76,6 +76,10 @@
   --radius-lg: 12px;
   --radius-full: 999px;
   --row-height: 36px;
+  /* Lesespalte (P5-02): Kopfzeile und Liste teilen diese Breite, zentriert im Hauptbereich. `--content-inset`
+     ist der Rand links/rechts; `100%` gilt dort, wo die Variable benutzt wird (Breite des umgebenden Blocks). */
+  --content-max: 820px;
+  --content-inset: max(0px, (100% - var(--content-max)) / 2);
   --control-height: 32px;
   --control-height-lg: 36px;
 

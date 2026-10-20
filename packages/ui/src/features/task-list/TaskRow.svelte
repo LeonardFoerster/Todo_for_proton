@@ -122,8 +122,10 @@
     align-items: center;
     gap: var(--space-3);
     height: var(--row-height);
+    /* Lesespalte (P5-02): keine Trennlinien; Hover/Auswahl als gerundete Fläche mit Einzug. */
+    margin-inline: calc(var(--content-inset) + var(--space-2));
     padding: 0 var(--space-4) 0 var(--space-6);
-    border-bottom: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
     cursor: default;
     user-select: none;
     transition: background-color var(--duration-fast) var(--ease);
@@ -146,9 +148,10 @@
     content: "";
     position: absolute;
     left: 0;
-    top: 0;
-    bottom: 0;
+    top: 8px;
+    bottom: 8px;
     width: 3px;
+    border-radius: 0 2px 2px 0;
     background: var(--color-accent);
   }
   .grip {
@@ -260,6 +263,7 @@
     display: none;
     gap: 2px;
     padding-left: var(--space-2);
+    border-radius: var(--radius-md);
     transform: translateY(-50%);
     background: inherit;
   }

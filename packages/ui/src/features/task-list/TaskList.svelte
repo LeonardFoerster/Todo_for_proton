@@ -630,7 +630,6 @@
 <style>
   .task-list {
     height: 100%;
-    border-top: 1px solid var(--color-border);
   }
   .task-list.dragging {
     cursor: grabbing;
@@ -653,8 +652,8 @@
   }
   .drop-line {
     position: absolute;
-    left: var(--space-4);
-    right: var(--space-4);
+    left: calc(var(--content-inset) + var(--space-4));
+    right: calc(var(--content-inset) + var(--space-4));
     height: 2px;
     border-radius: 1px;
     background: var(--color-accent);

@@ -217,7 +217,8 @@ Sichtprüfung per Demo (`pnpm --filter @tasks/ui dev`, `app.html?theme=light|dar
 Chrome (`google-chrome-stable --headless=new --screenshot`, Breiten 1440/1000/420), vorher/nachher. Prüfung in der
 echten WebView nur per Selbsttest (`apps/desktop/src/selftest.ts`). Nach jeder Aufgabe `just desktop-install`.
 
-### [ ] P5-01 · Schrift und Typo-Skala
+### [x] P5-01 · Schrift und Typo-Skala — 2026-10-21 · 8e5ce3e
+> Notiz: Inter 5.3 (48 KB), Start 338 → 347 ms Median, PSS gleich (ADR-030). `--text-2xl` angelegt, benutzt ab P5-05.
 **Lies vorher:** `ui-guidelines.md` §3/§7, `packages/ui/src/tokens/tokens.css`, `tools/measure-desktop.sh`.
 
 **Schritte:**
