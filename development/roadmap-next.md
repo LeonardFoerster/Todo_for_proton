@@ -156,7 +156,7 @@ Shell, `ImportNotes` in Blöcken, Ergebnis-Dialog.
 > `tauri-plugin-dialog`. Grenzen in der Shell: höchstens 20 000 Dateien, 31 Unterordner-Ebenen unter dem neuen Ordner.
 > Im Web fehlt `notes.importFolder`, der Menüeintrag erscheint dort nicht.
 
-### [ ] N5-12 · Selbsttest, Messung, Abnahme, Doku
+### [~] N5-12 · Selbsttest, Messung, Abnahme, Doku — 2026-10-21 · fc8db74, d758c2b (User-Abnahme offen)
 **Schritte:** WebView-Selbsttest `notes` (umschalten, Notiz anlegen, tippen, Autosave, Vorschau, zurück zu Tasks mit
 erhaltenem Zustand, Interaktion bis Repaint); Abnahmeskript „Notiz auf zwei Geräten" (sauberer Merge + Konflikt);
 `tools/measure-desktop.sh` im Notes-Modus (RAM-Zuwachs, Start im Notes-Modus) → `architecture.md` §6; Doku
@@ -164,6 +164,13 @@ erhaltenem Zustand, Interaktion bis Repaint); Abnahmeskript „Notiz auf zwei Ge
 aktualisieren", AGENTS-Status); Abnahme durch den User (Checkliste in `prototype-acceptance.md`).
 **Fertig wenn:** Selbsttest + Abnahmeskript grün, Budgets aus `notes.md` §9 eingehalten oder als FIX erfasst,
 User-Abnahme eingetragen. Commit `test(desktop): notes acceptance`.
+
+> Notiz: Automatisch alles grün – Selbsttests `notes` (12 Schritte) und `n5seed` in WebKitGTK, Abnahmeskript Abschnitt
+> 8 (`ONLY=notes`) und der volle Lauf aller 8 Abschnitte. Alle Budgets aus `notes.md` §9 eingehalten (Messwerte
+> `architecture.md` §6 „Notes"); kein neuer FIX. Der Selbsttest fand zwei Fehler, behoben in 021d725 (Vorschau
+> sprang nach einer Fokus-Bitte sofort zurück) und 0d481cf (`app_ready` kam im Notes-Modus von der versteckten
+> Task-Liste). `measure-desktop.sh` kann mit `MODE`/`NOTES_OPEN` im Notes-Modus starten (eigenes Profil, vorbelegter
+> WebView-localStorage). Wartet auf die Abnahme durch den User: Checkliste `prototype-acceptance.md` E.
 
 ## N4 · Wiederkehrende Tasks (Entwurf 2026-10-18 – wartet auf Freigabe)
 
