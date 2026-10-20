@@ -73,6 +73,7 @@ macro_rules! handlers {
             commands::sync_now,
             commands::sync_flush,
             commands::close_ready,
+            commands::open_external,
             commands::set_online,
             commands::app_ready,
             commands::dev_selftest,
@@ -133,6 +134,7 @@ macro_rules! handlers {
             commands::sync_now,
             commands::sync_flush,
             commands::close_ready,
+            commands::open_external,
             commands::set_online,
             commands::app_ready,
         ]

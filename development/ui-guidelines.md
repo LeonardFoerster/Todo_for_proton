@@ -92,6 +92,14 @@ Zen (`Strg+Umschalt+F`): ohne Seitenleiste, Statuszeile nur nach Mausbewegung od
 beendet Zen. Konfliktkopien melden ein Toast „Konflikt – Kopie „…“ angelegt“ mit „Anzeigen“. Einstellungen →
 „Notizen“: Typ neuer Notizen (Markdown/Text), Zeilenbreite begrenzen.
 
+Vorschau (N5-09, `.md`): `Strg+E` bzw. „Bearbeiten | Vorschau“ in der Statuszeile, je Notiz gemerkt
+(`notes.view`). Eigener Renderer (`markdown/render.ts`, ~4 KB gzip) erzeugt DOM-Knoten, nie `innerHTML` aus dem
+Text; Links nur `http:`/`https:`/`mailto:`, ein Klick öffnet den Standardbrowser (`open_external`), nie die
+WebView. Checklisten sind anklickbar und ändern genau ihre Quellzeile (wie eine Eingabe gespeichert). Beim Umschalten
+springt die Vorschau zur Zeile des Cursors und zurück zur obersten sichtbaren Zeile. Ab ~200 KB erst „Vorschau wird
+erstellt…“. Typografie: Überschriften 1,6/1,3/1,1 em, Code in `--font-mono` auf `--color-bg-subtle`, Zitate mit
+3-px-Linie, Tabellen mit 1-px-Rahmen.
+
 ## 3. Design-Tokens
 
 Als CSS Custom Properties in `packages/ui/src/tokens/tokens.css`. Komponenten nutzen **nur** semantische Tokens.

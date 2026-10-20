@@ -6,7 +6,7 @@
    * ohne den Cursor zu verlieren.
    */
   import type { NoteDto, SyncStatusDto } from "@tasks/core-client";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { toasts } from "../../components/toasts.svelte";
   import { limitWidth, readNoteView, writeNoteView } from "../../lib/note-preferences";
   import type { Shortcut, ShortcutRegistry } from "../../lib/shortcuts";
@@ -27,6 +27,8 @@
     type TextState,
   } from "./editor-commands";
   import NoteStatusBar from "./NoteStatusBar.svelte";
+  import MarkdownPreview from "./markdown/MarkdownPreview.svelte";
+  import { toggleTaskInSource } from "./markdown/render";
   import type { NotesState } from "./notes-state.svelte";
 
   interface Props {
@@ -51,6 +53,11 @@
   let dirty = $state(false);
   let busy = $state(false);
   let counts = $state({ words: 0, chars: 0, selected: 0, bytes: 0 });
+  /** Vorschau statt Quelltext (nur `.md`, `Strg+E`, je Notiz gemerkt). */
+  let preview = $state(false);
+  /** Text für die Vorschau (beim Umschalten und bei Änderungen gesetzt, nie je Taste). */
+  let previewSource = $state("");
+  let previewer = $state<MarkdownPreview>();
 
   /** Stand im Core (zuletzt gespeichert bzw. geladen) und die Basis fürs nächste Speichern. */
   let saved = "";
@@ -97,6 +104,7 @@
         const end = Math.min(view.end ?? 0, loaded.body.length);
         textarea.setSelectionRange(Math.min(view.start ?? 0, end), end);
         textarea.scrollTop = view.scroll ?? 0;
+        if (view.preview && loaded.kind === "markdown") showPreview(true);
       }
       updateStats();
     } catch {
@@ -107,17 +115,61 @@
   function rememberView() {
     if (!textarea || !note) return;
     writeNoteView(id, {
-      ...readNoteView(id),
+      preview,
       start: textarea.selectionStart,
       end: textarea.selectionEnd,
       scroll: textarea.scrollTop,
     });
   }
 
-  // Bitte um Fokus (Enter im Baum, neue Notiz).
+  // Bitte um Fokus (Enter im Baum, neue Notiz): aus der Vorschau zurück in den Quelltext.
   $effect(() => {
-    if (notes.editorFocus && textarea && note && !readonly) textarea.focus();
+    if (notes.editorFocus && textarea && note && !readonly) {
+      if (preview) showPreview(false);
+      textarea.focus();
+    }
   });
+
+  // `.txt` hat keine Vorschau (Typ gewechselt).
+  $effect(() => {
+    if (preview && note && note.kind !== "markdown") showPreview(false);
+  });
+
+  /** Umschalten Bearbeiten ↔ Vorschau mit Scroll-Abgleich über Quellzeilen. */
+  async function showPreview(on: boolean) {
+    if (!textarea || on === preview) return;
+    if (on) {
+      const caretLine = textarea.value.slice(0, textarea.selectionStart).split("\n").length - 1;
+      previewSource = textarea.value;
+      preview = true;
+      await tick();
+      previewer?.scrollToLine(caretLine);
+      previewer?.focus();
+    } else {
+      const line = previewer?.topLine() ?? 0;
+      preview = false;
+      await tick();
+      const lines = textarea.value.split("\n");
+      const ratio = lines.length > 1 ? line / lines.length : 0;
+      textarea.scrollTop = ratio * textarea.scrollHeight;
+      if (!readonly) textarea.focus({ preventScroll: true });
+    }
+  }
+
+  /** Checkbox in der Vorschau: genau `[ ]` ↔ `[x]` dieser Zeile, gespeichert wie eine Eingabe. */
+  function toggleTask(line: number) {
+    if (!textarea || readonly) return;
+    const edit = toggleTaskInSource(textarea.value, line);
+    if (!edit) return;
+    textarea.setRangeText(edit.insert, edit.from, edit.to, "preserve");
+    previewSource = textarea.value;
+    input();
+  }
+
+  function openLink(url: string) {
+    if (notes.client.openExternal) void notes.client.openExternal(url).catch(() => undefined);
+    else window.open(url, "_blank", "noopener");
+  }
 
   function input() {
     dirty = true;
@@ -186,6 +238,7 @@
       replacePreservingCursor(textarea, result.body);
       saved = result.body;
       baseRev = result.bodyRev;
+      if (preview) previewSource = result.body;
       scheduleStats();
       return;
     }
@@ -220,6 +273,7 @@
       replacePreservingCursor(textarea, current.body);
       saved = current.body;
       baseRev = current.bodyRev;
+      if (preview) previewSource = current.body;
       scheduleStats();
     } else {
       // Ungespeicherte Eingaben: mit der alten Basis speichern, der Core mergt (§6.3).
@@ -264,6 +318,15 @@
       entry(["ctrl+alt+3"], "Überschrift 3 (.md)", focusedMd, () => heading(textState(), 3)),
       entry(["ctrl+alt+0"], "Absatz statt Überschrift (.md)", focusedMd, () => heading(textState(), 0)),
       entry(["ctrl+shift+x"], "Checkbox umschalten (.md)", focusedMd, () => toggleCheckbox(textState())),
+      {
+        keys: ["ctrl+e"],
+        description: "Bearbeiten ↔ Vorschau (.md)",
+        group: "Editor",
+        scope: "notes",
+        inInputs: true,
+        when: () => markdown && notes.openId === id && !notes.showTrash,
+        run: () => void showPreview(!preview),
+      },
     ];
   }
 
@@ -291,7 +354,11 @@
   <div class="empty"><p>Diese Notiz gibt es nicht mehr.</p></div>
 {:else}
   <div class="editor" class:mono={note?.kind === "text"} class:wide>
+    {#if preview}
+      <MarkdownPreview bind:this={previewer} source={previewSource} {readonly} ontoggle={toggleTask} onlink={openLink} />
+    {/if}
     <textarea
+      hidden={preview}
       bind:this={textarea}
       aria-label={note ? `Inhalt von ${note.name}` : "Inhalt"}
       spellcheck="false"
@@ -313,7 +380,20 @@
       large={counts.bytes >= LARGE_BYTES}
       saving={busy || dirty}
       sync={sync()}
-    />
+    >
+      {#snippet extra()}
+        {#if markdown}
+          <span class="view-switch" role="group" aria-label="Ansicht">
+            <button type="button" aria-pressed={!preview} data-tooltip="Bearbeiten   Strg+E" onclick={() => void showPreview(false)}>
+              Bearbeiten
+            </button>
+            <button type="button" aria-pressed={preview} data-tooltip="Vorschau   Strg+E" onclick={() => void showPreview(true)}>
+              Vorschau
+            </button>
+          </span>
+        {/if}
+      {/snippet}
+    </NoteStatusBar>
   {/if}
 {/if}
 
@@ -338,8 +418,39 @@
     line-height: 1.6;
     tab-size: 4;
   }
-  .wide textarea {
+  .wide textarea,
+  .wide :global(.preview) {
     padding-inline: var(--space-6);
+  }
+  .editor {
+    position: relative;
+  }
+  textarea[hidden] {
+    display: none;
+  }
+  .view-switch {
+    display: inline-flex;
+    gap: 2px;
+    padding: 1px;
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-hover);
+  }
+  .view-switch button {
+    height: 20px;
+    padding: 0 var(--space-2);
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--color-text-muted);
+    font: inherit;
+    cursor: pointer;
+  }
+  .view-switch button[aria-pressed="true"] {
+    background: var(--color-bg);
+    color: var(--color-text);
+  }
+  .view-switch button:focus-visible {
+    outline: 2px solid var(--color-focus-outline);
   }
   .mono textarea {
     font-family: var(--font-mono);

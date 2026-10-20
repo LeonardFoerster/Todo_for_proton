@@ -353,6 +353,15 @@ fn only_writing_commands_trigger_a_sync() {
 }
 
 #[test]
+fn external_links_are_limited_to_web_and_mail() {
+    let h = harness();
+    let err = h
+        .invoke("open_external", json!({ "url": "javascript:alert(1)" }))
+        .unwrap_err();
+    assert_eq!(err["kind"], "validation");
+}
+
+#[test]
 fn note_lifecycle_through_ipc() {
     let h = harness();
     let folder = h.ok("create_note_folder", json!({ "name": "Uni" }));

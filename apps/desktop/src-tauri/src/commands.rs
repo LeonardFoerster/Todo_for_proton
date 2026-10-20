@@ -424,6 +424,32 @@ pub async fn sync_now(state: State<'_, AppState>) -> Result<()> {
     Ok(())
 }
 
+/// Link aus der Markdown-Vorschau im Standardbrowser öffnen – nie in der WebView. Nur `http:`,
+/// `https:` und `mailto:` (`notes.md` §6.5).
+#[tauri::command]
+pub async fn open_external(url: String) -> Result<()> {
+    if !is_external_url(&url) {
+        return Err(ErrorDto::from(todo_core::CoreError::Validation(
+            "only http, https and mailto links can be opened".into(),
+        )));
+    }
+    match std::process::Command::new("xdg-open").arg(&url).spawn() {
+        // Abwarten im Hintergrund, damit kein Zombie-Prozess bleibt.
+        Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
+        Err(err) => tracing::warn!(error = %err, "xdg-open failed"),
+    }
+    Ok(())
+}
+
+/// Zulässige externe Adresse: Schema `http`/`https`/`mailto`, keine Leer- oder Steuerzeichen.
+#[must_use]
+pub fn is_external_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    (lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:"))
+        && url.len() <= 2048
+        && !url.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+
 /// Die UI hat vor dem Schließen gespeichert (Antwort auf `app://close-requested`).
 #[tauri::command]
 pub async fn close_ready<R: tauri::Runtime>(window: tauri::Window<R>) -> Result<()> {
@@ -480,4 +506,26 @@ pub async fn dev_selftest_report<R: tauri::Runtime>(
         app.exit(0);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_external_url;
+
+    #[test]
+    fn external_links_are_limited_to_web_and_mail() {
+        assert!(is_external_url("https://example.org/a?b=c#d"));
+        assert!(is_external_url("HTTP://example.org"));
+        assert!(is_external_url("mailto:a@example.org"));
+        for bad in [
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "data:text/html,x",
+            "https://a b",
+            "-x",
+            "https://\u{0}x",
+        ] {
+            assert!(!is_external_url(bad), "{bad}");
+        }
+    }
 }

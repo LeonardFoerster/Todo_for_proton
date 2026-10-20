@@ -92,6 +92,8 @@ export class TauriCoreClient implements CoreClient {
   /** Nur Desktop-Shell: Netzwerkwechsel der WebView an den Sync-Scheduler. */
   setOnline = (online: boolean): Promise<void> => invoke("set_online", { online });
 
+  openExternal = (url: string): Promise<void> => invoke("open_external", { url });
+
   onCloseRequested = (cb: () => Promise<void>) =>
     subscribe("app://close-requested", () => {
       void cb()

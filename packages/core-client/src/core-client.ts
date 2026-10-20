@@ -139,6 +139,9 @@ export interface CoreClient {
    */
   onCloseRequested?(cb: () => Promise<void>): () => void;
 
+  /** Nur Shells: Link (http/https/mailto) im Standardbrowser öffnen statt in der Oberfläche. */
+  openExternal?(url: string): Promise<void>;
+
   /** Gibt die Abmeldung zurück. */
   onChange(cb: (e: ChangedEventDto) => void): () => void;
   onSyncStatus(cb: (s: SyncStatusDto) => void): () => void;

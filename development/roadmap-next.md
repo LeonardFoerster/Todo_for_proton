@@ -112,7 +112,7 @@ Tastatur, Drag & Drop, Kontextmenü, Umbenennen inline, Neue Notiz/Ordner); Papi
 **Fertig wenn:** Vitest (Umschalten behält Zustand beider Modi, Baum-Tastatur, Verschieben, Papierkorb +
 Rückgängig), ui-guidelines §2/§5 ergänzt, `just check` grün. Commit `feat(ui): notes mode and note tree`.
 
-### [ ] N5-08 · UI: Editor
+### [x] N5-08 · UI: Editor — 2026-10-20 · 4120757
 **Lies vorher:** `notes.md` §6.1–6.4, §6.6.
 **Schritte:** `NoteEditor` (textarea, Schrift je Typ, Zeilenbreite), Autosave (§6.2), Remote-Änderung in den Puffer
 (§6.3), `editor-commands.ts` (Listen, Einrücken, Format-Kurzbefehle über `insertText`; WebKitGTK prüfen),
@@ -132,6 +132,10 @@ Interaktion < 16 ms (p95 im Selbsttest), `just check` grün. Commit `feat(ui): n
 Links extern über die Shell, Scroll-Abgleich, `Strg+E`.
 **Fertig wenn:** Vitest mit Spezifikationsfällen + XSS-Fällen, Größe des Renderers ≤ 15 KB gzip, Render-Budget
 gemessen, `just check` grün. Commit `feat(ui): markdown preview`.
+> Notiz: Renderer ~4 KB gzip (unminifiziert), Notes-Chunk gesamt 18,7 KB JS + 2,3 KB CSS gzip (Budget 25 KB).
+> Render-Budget: 20 KB in jsdom als Plausibilitätstest (< 80 ms); die echte Messung in WebKit macht der Selbsttest
+> (N5-12). Neues Command `open_external` (nur http/https/mailto, `xdg-open`). Weiche Zeilenumbrüche im Absatz werden
+> wie in CommonMark zu Leerzeichen; harte Umbrüche mit zwei Leerzeichen oder `\` am Zeilenende.
 
 ### [ ] N5-10 · Gemeinsame Suche
 **Lies vorher:** `notes.md` §7, `features/palette/`, ADR-027.
