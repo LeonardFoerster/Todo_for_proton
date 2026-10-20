@@ -6,7 +6,7 @@ Etappen aus `roadmap-next.md` eingeschoben werden. Erledigte Phasen werden entfe
 anderen Dokumenten beziehen sich auf diese Archivdatei. Die abgeschlossenen Zwischenphasen P0–P3 (Mehrfachauswahl,
 Upload ≤ 5 s, Listen & Kanban, Fenster „Neue Task") liegen in `archive/roadmap-interim.md`.
 
-**Reihenfolge:** Erst die offenen Phasen hier (P4), danach weiter mit `roadmap-next.md` (N0-01).
+**Reihenfolge:** Erst die offenen Phasen hier (P5), danach weiter mit `roadmap-next.md` (N0-01).
 
 ## Wie diese Liste benutzt wird
 
@@ -28,6 +28,7 @@ Upload ≤ 5 s, Listen & Kanban, Fenster „Neue Task") liegen in `archive/roadm
 | ~~P0–P2~~ | Mehrfachauswahl · Upload ≤ 5 s · Listen & Kanban – **abgeschlossen** 2026-10-18 | → `archive/roadmap-interim.md` |
 | ~~P3~~ | Kanban: Umschalt + Mausrad · Fenster „Neue Task" – **abgeschlossen** 2026-10-18 | → `archive/roadmap-interim.md` |
 | P4 | Bedienung: Uhrzeit im Detail · Heute/Überfällig · Geplant nach Tagen · Fälligkeit per Kürzel · Suche & Befehlspalette · Erledigt nach Tagen – **umgesetzt** 2026-10-19 (P4-01–06); P4-07 wartet auf den User | UX-Review 2026-10-19; die häufigsten Handgriffe (finden, verschieben, Woche überblicken) vor der Web-Etappe |
+| P5 | Feinschliff der Oberfläche: Schrift · Lesespalte · Priorität/Überfällig · Cursor · Kopfzeile & Suche · Zähler · Detail · eigenes Datumsfeld · Touch | Design-Review 2026-10-21; vor der Web-Etappe, damit Web und Android das neue Bild erben |
 
 ## P4 · Bedienung: schneller finden, verschieben, überblicken
 
@@ -200,6 +201,164 @@ Vorschlag aus dem UX-Review: eine Eingabezeile oben in der Liste mit demselben P
 **Konflikt:** P3-02 hat genau diese Zeile auf Wunsch des Users entfernt („mehr Platz"), und „Weitere anlegen" im
 Fenster deckt schnelles Erfassen teilweise ab. Nur aufnehmen, wenn der User das ausdrücklich will – sonst streichen.
 Mögliche Variante ohne Platzverlust: Zeile erscheint nur nach `N` bzw. am Ende der Liste statt dauerhaft oben.
+
+## P5 · Feinschliff der Oberfläche
+
+**Ziel:** Die App wirkt nicht nur fehlerfrei, sondern hochwertig: klare Rangfolge, eine Lesespalte statt
+Zeilen über die volle Breite, Priorität und Überfällig eindeutig, sichtbarer Einstieg in die Suche, eigenes
+Datumsfeld, Touch-taugliche Zeilen. Herkunft: Design-Review 2026-10-21 per Screenshot (Demo `packages/ui`,
+hell/dunkel, 1440/420 px). Reine UI-Arbeit – **keine** Änderung an Core, Sync oder Datenmodell.
+Mit dem User geklärt: keine Eingabezeile in der Liste (P4-07 bleibt `[~]`), keine Listenfarben, keine
+Notiz-Vorschau in der Zeile (bräuchte DTO-Änderung und variable Zeilenhöhe), Inter wird mitgeliefert.
+
+**Für alle Aufgaben gilt:** `ui-guidelines.md` §1/§7 bleiben gültig (keine Verläufe, kein `backdrop-filter`, eine
+Akzentfarbe, Animation nur `transform`/`opacity`); nur semantische Tokens, neue Farbpaare in `tokens.test.ts`.
+Sichtprüfung per Demo (`pnpm --filter @tasks/ui dev`, `app.html?theme=light|dark&open=1&menu=1&n=60`) und headless
+Chrome (`google-chrome-stable --headless=new --screenshot`, Breiten 1440/1000/420), vorher/nachher. Prüfung in der
+echten WebView nur per Selbsttest (`apps/desktop/src/selftest.ts`). Nach jeder Aufgabe `just desktop-install`.
+
+### [ ] P5-01 · Schrift und Typo-Skala
+**Lies vorher:** `ui-guidelines.md` §3/§7, `packages/ui/src/tokens/tokens.css`, `tools/measure-desktop.sh`.
+
+**Schritte:**
+1. Kaltstart vorher messen (`tools/measure-desktop.sh`).
+2. Inter Variable als Latin-Subset (WOFF2, nur Achse `wght`) mit `OFL.txt` nach `packages/ui/src/assets/fonts/` –
+   einmalig aus dem Fontsource-Paket kopiert, **keine** npm-Abhängigkeit; Größe im Commit begründen.
+3. `tokens.css`: `@font-face` (`font-display: swap`), „Inter Variable" vor `system-ui` in `--font-sans`; neu
+   `--text-2xl: 24px` für Ansichtstitel. `tnum` nur gezielt, nicht global.
+4. `tabular-nums` ergänzen, wo es fehlt: Datum/Uhrzeit im Detail, Statuszeile der Notes, Zeiten in `GroupHeading`.
+5. ADR-030 „Schrift Inter mitgeliefert" (Größe, Lizenz, Startzeit vorher/nachher). ADR-028 ist für N4 reserviert.
+
+**Fertig wenn:**
+- Kaltstart weiter < 400 ms (Werte im ADR); Screenshots hell/dunkel zeigen Inter.
+
+### [ ] P5-02 · Lesespalte und ruhigere Zeilen
+**Lies vorher:** `App.svelte` (`.pane-header`), `features/task-list/TaskList.svelte`, `TaskRow.svelte`,
+`GroupHeading.svelte`, `components/VirtualList.svelte`.
+
+**Schritte:**
+1. Token `--content-max: 820px`; Kopfzeile, Liste, Leerzustand und Abschnitte teilen dieselbe linke Kante, zentriert
+   in `.pane`. Das Board bleibt bei voller Breite.
+2. `TaskRow`: `border-bottom` weg; Hover/Auswahl als Fläche mit `--radius-md` und 8 px seitlichem Einzug; Akzentbalken
+   innerhalb der Rundung (`::before` mit `inset-block: 6px`).
+3. `TaskList`: `border-top` des Containers weg; Drop-Linie beim Ziehen an den Einzug anpassen.
+4. `GroupHeading`: Einzug wie die Zeilen (`--space-6`), Trennlinie nur unter Abschnittsköpfen.
+
+**Fertig wenn:**
+- Vitest grün (inkl. Drag-Tests `sort-delete`, `bulk-actions`); Screenshot bei 1440 px zeigt die Spalte.
+
+### [ ] P5-03 · Priorität, Überfällig, Meta-Zeile
+**Lies vorher:** `TaskRow.svelte` (Meta, `priorityLabel`), `features/board/BoardCard.svelte`,
+`components/Checkbox.svelte` (`tone`), `due-views.test.ts`.
+
+**Befund:** Die Priorität steht doppelt (Ring + Fähnchen); bei hoher Priorität und Überfällig sind Ring, Fähnchen und
+Datum rot. Der Notiz-Hinweis „≡" (CSS) sieht aus wie ein Ziehgriff.
+
+**Schritte:**
+1. Fähnchen in Zeile und Karte entfernen; die Priorität zeigt nur der Ring (`tone`). Prioritätstext ans **Ende** des
+   Zeilen-/Karten-`aria-label` („…, hohe Priorität" – der Anfang bleibt, Tests suchen per Präfix); Tooltip am Haken.
+2. Rot als Text nur noch für Überfällig.
+3. Notiz-Hinweis als Lucide `notebook-text` (14 px Zeile, 12 px Karte; Import in `icons.ts`).
+4. Meta-Reihenfolge in Zeile und Karte gleich: Liste · Fälligkeit · Notiz. Doppelte `.due`-Stile zusammenführen.
+
+**Fertig wenn:**
+- Vitest: `aria-label` mit Priorität; `due-views.test.ts` grün.
+
+### [ ] P5-04 · Cursor und Fokus
+**Lies vorher:** `TaskRow.svelte` (`.selected`, `::before`, Fokus-Regeln), `BoardCard.svelte`, `tokens.test.ts`.
+
+**Befund:** Im Dunkelmodus liegen auf der Cursor-Zeile Auswahlfläche, Akzentbalken und ein eckiger 2-px-Umriss bis an
+den Rand – wirkt wie ein Debug-Rahmen.
+
+**Schritte:**
+1. Cursor = Auswahlfläche + Akzentbalken, gerundet; Tastatur-Umriss folgt der Rundung und erscheint nur unter
+   `[data-input="keyboard"]` (wie bisher).
+2. Board-Karte in derselben Sprache (Fläche + Balken statt Rahmenfarbe).
+3. `tokens.test.ts`: Akzent auf `--color-bg-selected` ≥ 3:1 in beiden Themes.
+
+**Fertig wenn:**
+- Kontrasttest grün; Screenshot dunkel mit Tastatur-Cursor ohne eckigen Rahmen; Selbsttest Fokus.
+
+### [ ] P5-05 · Kopfzeile mit Kontext, Suche sichtbar
+**Lies vorher:** `App.svelte` (`.pane-header`, `.header-actions`, `openPalette`, `openSettings`),
+`features/sidebar/Sidebar.svelte`, `SyncFooter.svelte`, `lib/lists.svelte.ts` (`counts`).
+
+**Schritte:**
+1. `h1` in `--text-2xl`, darunter eine gedämpfte Zeile (`--text-sm`): Heute „Mittwoch, 21. Oktober · 3 Tasks ·
+   1 überfällig", Eingang „4 offen"; sonst nur, wo die Zahl ohne neuen Core-Aufruf bekannt ist (echtes Zählen → FIX-04).
+2. „Einstellungen" (Name bleibt) als IconButton in `SyncFooter`; „Tastaturkürzel" aus der Kopfzeile entfernen
+   (bleibt über `?`, Palette und den Link im Einstellungsdialog).
+3. Suche: Button im Feld-Stil „Suchen … Strg K" unter der Brand-Zeile der Seitenleiste (außerhalb `.tasks-body`, also
+   in beiden Modi), Prop `onsearch` → `openPalette()`; eingeklappt IconButton mit Lucide `search`.
+
+**Fertig wenn:**
+- Vitest: Klick auf „Suchen" öffnet die Palette; `layout-switch`, `multi-select`, `list-management`,
+  `SettingsDialog` grün.
+
+### [ ] P5-06 · Zähler in der Seitenleiste
+**Lies vorher:** `features/sidebar/SidebarItem.svelte`, `Sidebar.svelte` (`countFor`).
+
+**Schritte:**
+1. Nur noch **eine** Zahl (gesamt); mit Überfälligen als Pille (`--color-danger-subtle` / `--color-danger`), Aufteilung
+   in Tooltip und `sr-only` („3, davon 1 überfällig"). Eingeklappter Punkt bleibt.
+2. `tokens.test.ts`: danger auf danger-subtle in beiden Themes.
+
+**Fertig wenn:**
+- Vitest (Zähler mit/ohne Überfällige, zugänglicher Name) und Kontrasttest grün.
+
+### [ ] P5-07 · Detail-Panel aufräumen
+**Lies vorher:** `features/task-detail/TaskDetail.svelte`.
+
+**Schritte:**
+1. `.notes` wächst mit (`field-sizing: content` wie der Titel), ohne `resize`-Griff.
+2. Das zusätzliche `due-text` neben den Feldern entfällt (der Ton steckt am Feld).
+3. „Erstellt · Geändert" direkt unter dem Inhalt im scrollenden `.body` statt fest am unteren Rand.
+
+**Fertig wenn:**
+- Screenshot mit langer Notiz ohne Griff; Vitest grün.
+
+### [ ] P5-08 · Eigenes Fälligkeitsfeld (`DueField`)
+**Lies vorher:** `features/due/DuePrompt.svelte`, `due-actions.ts`, `features/new-task/parse.ts` (`parseDue`),
+`lib/format-date.ts`, `components/Menu.svelte`, `NewTaskDialog.svelte` (Chip „Fällig"), `App.svelte` (Menü `D`).
+
+**Schritte:**
+1. `features/due/DueField.svelte`: Button mit `dueLabel(due).long` bzw. „Kein Datum", öffnet ein Popover (Platzierung
+   wie `Menu`, Fokusfalle, `Esc`).
+2. Inhalt: Texteingabe mit `parseDue` + Live-Vorschau (aus `DuePrompt`), Schnellwahl aus `dueChoices()`, Monatsraster
+   (7 × 6, `role="grid"`, Pfeiltasten, Bild↑/↓ = Monat), Uhrzeit als Text, „Entfernen". Zeitlogik nur über
+   `keepTime`/`todayPlus`/`dueFromInputs`.
+3. Einsatz: Detail-Panel statt `<input type=date/time>` und Chips; Chip „Fällig" im Fenster „Neue Task"; Menü `D` →
+   „Datum wählen…" mit Raster. Lazy laden, wenn das Initial-Chunk spürbar wächst.
+
+**Fertig wenn:**
+- Vitest: Raster per Tastatur, Text „fr 14:00", Uhrzeit bleibt beim Tageswechsel, Entfernen.
+- Selbsttest in der WebView; „DatePicker" in `ui-guidelines.md` §4/§8 nicht mehr offen.
+
+### [ ] P5-09 · Schmale Ansicht und Touch
+**Lies vorher:** `TaskList.svelte` (`const ROW`, Drag-Rechnung), `components/VirtualList.svelte`, `App.svelte`
+(Breakpoints `max-width: 699px`), `components/Menu.svelte`.
+
+**Schritte:**
+1. `lib/density.svelte.ts`: `matchMedia("(pointer: coarse), (max-width: 699px)")` → `rowHeight` 36 bzw. 44;
+   `tokens.css` setzt `--row-height: 44px` in derselben Query; `TaskList` nutzt den Wert statt `ROW = 36`
+   (VirtualList, Drag, Drop-Linie). Notes-Baum (32 px) bleibt, wenn nicht nötig.
+2. Unter 700 px: runder Button „Neue Task" unten rechts (56 px, `--color-accent-fill`, Abstand zum Toaster) →
+   `NewTaskDialog`; Kopfzeilen-Aktionen (Darstellung, Auswählen, Listenaktionen) in ein Menü `⋯`.
+
+**Fertig wenn:**
+- Vitest für `density` (gemocktes `matchMedia`); Screenshot bei 420 px: 44-px-Zeilen, Button sichtbar, kein
+  waagerechtes Scrollen.
+
+### [ ] P5-10 · Doku und Abnahme
+**Schritte:**
+1. `ui-guidelines.md`: §2 (Lesespalte, Kopfzeile mit Unterzeile, Suche), §3 (Schrift, `--text-2xl`, `--content-max`),
+   §4 (Fähnchen weg, `DueField`, Zähler-Pille, Button „Neue Task" unten), neuer §9 „Design-Review P5" (Befund/Status
+   wie §8).
+2. Abschlussmessung `tools/measure-desktop.sh` (Start, PSS) als Notiz hier.
+3. `prototype-acceptance.md`: Sichtprüfung durch den User als `[~]`.
+
+**Fertig wenn:**
+- `just check` grün; Budgets eingehalten; Doku stimmt mit der App überein.
 
 ---
 
