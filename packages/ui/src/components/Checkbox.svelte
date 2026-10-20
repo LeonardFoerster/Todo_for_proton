@@ -13,9 +13,11 @@
     /** Ringfarbe für Priorität (nur offen sichtbar). */
     tone?: "default" | "high" | "medium" | "low";
     tabindex?: number;
+    /** Tooltip, z. B. die Priorität (sie steht nur im Ring). */
+    tooltip?: string;
   }
 
-  let { checked, label, onchange, disabled = false, tone = "default", tabindex }: Props = $props();
+  let { checked, label, onchange, disabled = false, tone = "default", tabindex, tooltip }: Props = $props();
 </script>
 
 <button
@@ -26,6 +28,7 @@
   aria-label={label}
   {disabled}
   {tabindex}
+  data-tooltip={tooltip}
   onclick={(e) => {
     e.stopPropagation();
     onchange?.(!checked);
@@ -62,6 +65,13 @@
   }
   .low {
     --ring: var(--color-accent);
+  }
+  /* Priorität: zarte Füllung im Ring, damit sie ohne Fähnchen auffällt (P5-03). */
+  .high .ring,
+  .medium .ring,
+  .low .ring {
+    fill: color-mix(in srgb, var(--ring) 12%, transparent);
+    stroke-width: 1.75;
   }
   svg {
     width: 20px;

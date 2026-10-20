@@ -174,9 +174,9 @@ describe("bulk actions", () => {
     const c = (await client.listTasks({ view: { kind: "inbox" } }, { limit: 10 })).items[2];
     await client.updateTask(c.id, { notes: "Notiz", priority: "high" });
     const createdAt = (await client.getTask(c.id)).createdAt;
-    await user.click(screen.getByRole("option", { name: "C" }));
+    await user.click(await screen.findByRole("option", { name: "C, hohe Priorität" }));
     await user.keyboard("{Escape}");
-    screen.getByRole("option", { name: "C" }).focus();
+    screen.getByRole("option", { name: "C, hohe Priorität" }).focus();
     await user.keyboard("{Delete}");
     expect(spies.deleteTasks).toHaveBeenCalledWith([c.id]);
     await user.click(await undo());

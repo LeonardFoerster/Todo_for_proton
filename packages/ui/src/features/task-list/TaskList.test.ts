@@ -25,6 +25,18 @@ const titles = () => rows().map((r) => r.getAttribute("aria-label")?.replace(/, 
 const checkbox = (title: string) => screen.getByRole("checkbox", { name: `Erledigt: ${title}` });
 
 describe("TaskList", () => {
+  it("names the priority at the end of the row label and on the check, without a flag (P5-03)", async () => {
+    const client = new FakeCoreClient();
+    await client.ensureInbox();
+    await client.createTask({ title: "Wichtig", priority: "high", notes: "x" });
+    render(App, { props: { client } });
+    const row = await screen.findByRole("option", { name: /^Wichtig/ });
+    expect(row.getAttribute("aria-label")).toBe("Wichtig, hohe Priorität");
+    expect(within(row).getByRole("checkbox").getAttribute("data-tooltip")).toBe("Hohe Priorität");
+    expect(within(row).getByLabelText("Hat Notizen")).toBeTruthy();
+    expect(within(row).queryByLabelText("Hohe Priorität")).toBeNull();
+  });
+
   it("renders open tasks of the view in order", async () => {
     await setup(3);
     expect(rows().map((r) => r.textContent?.trim())).toEqual(["Task 1", "Task 2", "Task 3"]);

@@ -20,6 +20,7 @@ export { default as PanelLeft } from "@lucide/svelte/icons/panel-left";
 export { default as Plus } from "@lucide/svelte/icons/plus";
 export { default as RefreshCw } from "@lucide/svelte/icons/refresh-cw";
 export { default as Settings } from "@lucide/svelte/icons/settings";
+export { default as StickyNote } from "@lucide/svelte/icons/sticky-note";
 export { default as Sun } from "@lucide/svelte/icons/sun";
 export { default as Trash } from "@lucide/svelte/icons/trash";
 export { default as Undo } from "@lucide/svelte/icons/undo";

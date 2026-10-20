@@ -2,9 +2,11 @@
   import type { TaskSummaryDto } from "@tasks/core-client";
   import Checkbox from "../../components/Checkbox.svelte";
   import SelectBox from "../../components/SelectBox.svelte";
-  import { Flag, GripVertical, Hash, Trash } from "../../icons";
+  import { GripVertical, Trash } from "../../icons";
   import { dueLabel, dueToInputTime } from "../../lib/format-date";
   import type { DueMode } from "../../lib/groups";
+  import { priorityInLabel, priorityLabel } from "./priority";
+  import TaskMeta from "./TaskMeta.svelte";
 
   interface Props {
     task: TaskSummaryDto;
@@ -45,7 +47,7 @@
   const due = $derived(task.due ? dueLabel(task.due) : null);
   /** Angezeigter Text: ganzes Datum, oder nur die Uhrzeit (ganztägig dann nichts). */
   const dueText = $derived(due && (dueMode === "full" ? due.text : dueToInputTime(task.due)));
-  const priorityLabel = { none: "", low: "Niedrige Priorität", medium: "Mittlere Priorität", high: "Hohe Priorität" };
+  const priority = $derived(done ? "" : priorityLabel[task.priority]);
 </script>
 
 <!-- Tasten (Enter, Leertaste, Entf, Pfeile) behandelt die zentrale Registry (lib/shortcuts.ts). -->
@@ -59,7 +61,7 @@
   class:dragging
   role="option"
   aria-selected={selectable ? checked : selected}
-  aria-label={[task.title, done ? "erledigt" : null, due?.long].filter(Boolean).join(", ")}
+  aria-label={[task.title, done ? "erledigt" : null, due?.long, done ? null : priorityInLabel(task.priority)].filter(Boolean).join(", ")}
   tabindex={selected ? 0 : -1}
   data-task-id={task.id}
   onclick={(e) => {
@@ -83,19 +85,11 @@
     label={done ? `Wieder öffnen: ${task.title}` : `Erledigt: ${task.title}`}
     tone={done || task.priority === "none" ? "default" : task.priority}
     tabindex={-1}
+    tooltip={priority || undefined}
     onchange={(value) => ontoggle(task, value)}
   />
   <span class="title">{task.title}</span>
-  <span class="meta">
-    {#if task.hasNotes}<span class="notes" title="Hat Notizen" aria-label="Hat Notizen"></span>{/if}
-    {#if listName}<span class="list"><Hash size={12} strokeWidth={2} aria-hidden="true" />{listName}</span>{/if}
-    {#if due && dueText}<span class="due {due.tone}" title={due.long}>{dueText}</span>{/if}
-    {#if task.priority !== "none" && !done}
-      <span class="prio {task.priority}" title={priorityLabel[task.priority]} aria-label={priorityLabel[task.priority]}>
-        <Flag size={14} strokeWidth={2} aria-hidden="true" />
-      </span>
-    {/if}
-  </span>
+  <TaskMeta {task} {due} {dueText} {listName} />
   {#if ondelete}
     <span class="actions">
       <button
@@ -199,62 +193,6 @@
     color: var(--color-text-muted);
     text-decoration: line-through;
     text-decoration-color: color-mix(in srgb, var(--color-text-muted) 70%, transparent);
-  }
-  .meta {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    flex: none;
-    color: var(--color-text-muted);
-    font-size: var(--text-sm);
-  }
-  .notes {
-    width: 12px;
-    height: 2px;
-    border-radius: 1px;
-    background: currentColor;
-    box-shadow:
-      0 4px 0 currentColor,
-      0 -4px 0 currentColor;
-    opacity: 0.7;
-  }
-  .list {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    max-width: 140px;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-  .due {
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-  .due.overdue {
-    color: var(--color-danger);
-    font-weight: var(--weight-medium);
-  }
-  .due.today {
-    color: var(--color-accent-text);
-    font-weight: var(--weight-medium);
-  }
-  .done .due {
-    color: var(--color-text-muted);
-    font-weight: var(--weight-regular);
-  }
-  .prio {
-    display: grid;
-    place-items: center;
-  }
-  .prio.high {
-    color: var(--color-danger);
-  }
-  .prio.medium {
-    color: var(--color-warning);
-  }
-  .prio.low {
-    color: var(--color-accent);
   }
   .actions {
     position: absolute;

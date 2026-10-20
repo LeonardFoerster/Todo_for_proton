@@ -2,8 +2,9 @@
   /** Karte im Kanban-Board: feste Höhe (Virtualisierung), Haken, Titel, Meta – wie `TaskRow`. */
   import type { TaskSummaryDto } from "@tasks/core-client";
   import Checkbox from "../../components/Checkbox.svelte";
-  import { Flag } from "../../icons";
-  import { dueLabel } from "../../lib/format-date";
+    import { dueLabel } from "../../lib/format-date";
+  import { priorityInLabel, priorityLabel } from "../task-list/priority";
+  import TaskMeta from "../task-list/TaskMeta.svelte";
 
   interface Props {
     task: TaskSummaryDto;
@@ -20,7 +21,7 @@
 
   const done = $derived(task.status === "done");
   const due = $derived(task.due ? dueLabel(task.due) : null);
-  const priorityLabel = { none: "", low: "Niedrige Priorität", medium: "Mittlere Priorität", high: "Hohe Priorität" };
+  const priority = $derived(done ? "" : priorityLabel[task.priority]);
 </script>
 
 <!-- Tasten behandelt die zentrale Registry (lib/shortcuts.ts). -->
@@ -32,7 +33,7 @@
     class:cursor
     class:dragging
     role="option"
-    aria-label={[task.title, done ? "erledigt" : null, due?.long].filter(Boolean).join(", ")}
+    aria-label={[task.title, done ? "erledigt" : null, due?.long, done ? null : priorityInLabel(task.priority)].filter(Boolean).join(", ")}
     aria-selected={cursor}
     tabindex={cursor ? 0 : -1}
     data-task-id={task.id}
@@ -47,21 +48,12 @@
       label={done ? `Wieder öffnen: ${task.title}` : `Erledigt: ${task.title}`}
       tone={done || task.priority === "none" ? "default" : task.priority}
       tabindex={-1}
+      tooltip={priority || undefined}
       onchange={(value) => ontoggle(task, value)}
     />
     <span class="body">
       <span class="title">{task.title}</span>
-      {#if due || task.hasNotes || (task.priority !== "none" && !done)}
-        <span class="meta">
-          {#if due}<span class="due {due.tone}" title={due.long}>{due.text}</span>{/if}
-          {#if task.hasNotes}<span class="notes" title="Hat Notizen" aria-label="Hat Notizen"></span>{/if}
-          {#if task.priority !== "none" && !done}
-            <span class="prio {task.priority}" title={priorityLabel[task.priority]} aria-label={priorityLabel[task.priority]}>
-              <Flag size={12} strokeWidth={2} aria-hidden="true" />
-            </span>
-          {/if}
-        </span>
-      {/if}
+      {#if due || task.hasNotes}<TaskMeta {task} {due} size="card" />{/if}
     </span>
   </div>
 </div>
@@ -121,47 +113,5 @@
   .done .title {
     color: var(--color-text-muted);
     text-decoration: line-through;
-  }
-  .meta {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    color: var(--color-text-muted);
-    font-size: var(--text-xs);
-  }
-  .due {
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-  .due.overdue {
-    color: var(--color-danger);
-    font-weight: var(--weight-medium);
-  }
-  .due.today {
-    color: var(--color-accent-text);
-    font-weight: var(--weight-medium);
-  }
-  .notes {
-    width: 10px;
-    height: 2px;
-    border-radius: 1px;
-    background: currentColor;
-    box-shadow:
-      0 3px 0 currentColor,
-      0 -3px 0 currentColor;
-    opacity: 0.7;
-  }
-  .prio {
-    display: grid;
-    place-items: center;
-  }
-  .prio.high {
-    color: var(--color-danger);
-  }
-  .prio.medium {
-    color: var(--color-warning);
-  }
-  .prio.low {
-    color: var(--color-accent);
   }
 </style>

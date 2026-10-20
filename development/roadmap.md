@@ -233,7 +233,8 @@ echten WebView nur per Selbsttest (`apps/desktop/src/selftest.ts`). Nach jeder A
 **Fertig wenn:**
 - Kaltstart weiter < 400 ms (Werte im ADR); Screenshots hell/dunkel zeigen Inter.
 
-### [ ] P5-02 · Lesespalte und ruhigere Zeilen
+### [x] P5-02 · Lesespalte und ruhigere Zeilen — 2026-10-21 · 278db83
+> Notiz: Lesespalte über `--content-max`/`--content-inset` (Token, `100%` gilt beim Verwender); Kopfzeile im Board (`.wide`) bei voller Breite.
 **Lies vorher:** `App.svelte` (`.pane-header`), `features/task-list/TaskList.svelte`, `TaskRow.svelte`,
 `GroupHeading.svelte`, `components/VirtualList.svelte`.
 
