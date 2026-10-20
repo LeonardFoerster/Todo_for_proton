@@ -1,5 +1,9 @@
 <script lang="ts">
-  /** Modaler Dialog auf Basis von `<dialog>` (Fokusfalle, Esc, Hintergrund inert). */
+  /**
+   * Modaler Dialog auf Basis von `<dialog>` (Fokusfalle, Esc, Hintergrund inert). `bare`: ohne Kopf, der Titel
+   * ist nur der zugängliche Name; `placement="top"`: fest oben verankert (wächst nur nach unten), im schmalen
+   * Fenster ein Bereich, der unten aufgeht (P6-02).
+   */
   import type { Snippet } from "svelte";
   import { onMount } from "svelte";
   import { X } from "../icons";
@@ -10,9 +14,11 @@
     onclose: () => void;
     children: Snippet;
     width?: number;
+    bare?: boolean;
+    placement?: "center" | "top";
   }
 
-  let { title, onclose, children, width = 480 }: Props = $props();
+  let { title, onclose, children, width = 480, bare = false, placement = "center" }: Props = $props();
   /** Eindeutig je Dialog – verschachtelte Dialoge dürfen sich nicht dieselbe Titel-ID teilen. */
   const uid = $props.id();
   const titleId = `dialog-title-${uid}`;
@@ -31,7 +37,10 @@
 <dialog
   bind:this={dialog}
   style:--width="{width}px"
-  aria-labelledby={titleId}
+  class:bare
+  class:top={placement === "top"}
+  aria-labelledby={bare ? undefined : titleId}
+  aria-label={bare ? title : undefined}
   tabindex="-1"
   oncancel={(e) => {
     e.preventDefault();
@@ -41,10 +50,12 @@
     if (e.target === dialog) onclose();
   }}
 >
-  <header>
-    <h2 id={titleId}>{title}</h2>
-    <IconButton label="Schließen" shortcut="Esc" icon={X} size={28} onclick={onclose} />
-  </header>
+  {#if !bare}
+    <header>
+      <h2 id={titleId}>{title}</h2>
+      <IconButton label="Schließen" shortcut="Esc" icon={X} size={28} onclick={onclose} />
+    </header>
+  {/if}
   <div class="content">{@render children()}</div>
 </dialog>
 
@@ -81,6 +92,32 @@
   .content {
     padding: var(--space-4) var(--space-5) var(--space-5);
     overflow-y: auto;
+  }
+  .bare .content {
+    padding: var(--space-4);
+  }
+  /* Oben verankert: wächst beim Aufklappen nur nach unten, statt neu zu zentrieren. */
+  .top {
+    margin: 15vh auto auto;
+  }
+  /* Schmal: Bereich von unten, volle Breite, über der Bildschirmtastatur (dvh). */
+  @media (max-width: 699px) {
+    .top {
+      width: 100%;
+      max-width: 100%;
+      max-height: 85dvh;
+      margin: auto 0 0;
+      border-bottom: 0;
+      border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      animation-name: sheet-in;
+    }
+  }
+  @keyframes sheet-in {
+    from {
+      transform: translateY(24px);
+      opacity: 0;
+    }
   }
   @keyframes dialog-in {
     from {
