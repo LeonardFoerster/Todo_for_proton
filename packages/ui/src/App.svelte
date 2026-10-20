@@ -43,7 +43,9 @@
   import { ListsState } from "./lib/lists.svelte";
   import { readChoice, readFlag, writeChoice, writeFlag } from "./lib/preferences";
   import { routeHash, Router, type SmartViewKind } from "./lib/router.svelte";
-  import { formatKeys, ShortcutRegistry } from "./lib/shortcuts";
+  import { formatKeys, ShortcutRegistry, type Shortcut } from "./lib/shortcuts";
+  import { AppMode, type Mode } from "./lib/app-mode.svelte";
+  import type * as NotesChunk from "./features/notes/index";
   import { SyncState } from "./lib/sync.svelte";
   import { todayPlus } from "./lib/format-date";
   import { routeListId, routeTitle } from "./lib/views";
@@ -68,6 +70,8 @@
   // svelte-ignore state_referenced_locally
   const sync = new SyncState(client);
   const router = new Router();
+  /** Modus Tasks/Notes (N5), pro Gerät gemerkt. */
+  const appMode = new AppMode();
 
   let collapsed = $state(readFlag(COLLAPSED_KEY));
   /** Darstellung Liste oder Kanban-Board (P2-05), pro Gerät gemerkt. */
@@ -104,6 +108,11 @@
   let cleanup = $state<{ ids: string[]; cutoff: Date } | null>(null);
   /** Zuletzt geöffnete Tasks dieser Sitzung (neueste zuerst, nur im Speicher). */
   let recentTasks = $state.raw<RecentTask[]>([]);
+  /** Notes-Chunk (lazy, `notes.md` §5.2): einmal geladen, danach bleibt alles gemountet. */
+  let notesChunk = $state<typeof NotesChunk | null>(null);
+  let notes = $state<InstanceType<typeof NotesChunk.NotesState> | null>(null);
+  let notesMain = $state<{ flush: () => Promise<void> }>();
+  let notesSidebar = $state<{ focusTree: () => void }>();
   let newTaskDialog = $state<NewTaskDialog>();
   let taskList = $state<TaskList>();
   let board = $state<Board>();
@@ -128,8 +137,55 @@
     if (selection?.active) untrack(() => (openId = null));
   });
 
+  /** Lädt den Notes-Chunk und startet seinen Zustand (einmal). */
+  async function loadNotes() {
+    if (notes) return;
+    const chunk = await import("./features/notes/index");
+    if (notes) return;
+    notesChunk = chunk;
+    const state = new chunk.NotesState(client);
+    notes = state;
+    notesStop = state.start();
+    notesShortcutsStop = shortcuts.register(...notesShortcuts(state));
+  }
+  let notesStop: (() => void) | null = null;
+  let notesShortcutsStop: (() => void) | null = null;
+
+  /** Kürzel des Modus „Notes", die zur App gehören (Neue Notiz); der Baum registriert seine. */
+  function notesShortcuts(state: InstanceType<typeof NotesChunk.NotesState>): Shortcut[] {
+    const create = () => void state.createNote().catch((e: Error) => toasts.show({ message: `Notiz nicht angelegt: ${e.message}`, tone: "danger" }));
+    return inScope("notes", [
+      { keys: ["n"], description: "Neue Notiz", group: "Notizen", palette: "Neue Notiz", run: create },
+      { keys: ["ctrl+n"], description: "Neue Notiz (auch beim Tippen)", group: "Notizen", inInputs: true, run: create },
+    ]);
+  }
+
+  function inScope(scope: Mode, list: Shortcut[]): Shortcut[] {
+    return list.map((s) => ({ ...s, scope }));
+  }
+
+  /** Modus wechseln (Klick auf den Namen, Strg+1/2, Palette): Eingaben sichern, sofort hochladen. */
+  async function switchMode(next: Mode) {
+    if (next === appMode.mode) return;
+    drawerOpen = false;
+    if (appMode.mode === "notes") await notesMain?.flush();
+    if (next === "notes") await loadNotes();
+    appMode.set(next);
+    void client.sync.flush().catch(() => undefined);
+    await tick();
+    if (next === "notes") {
+      if (notes?.openId && !notes.showTrash) notes.focusEditor();
+      else notesSidebar?.focusTree();
+    } else void taskList?.focusSelected();
+  }
+
   onMount(() => {
     const stops = [router.listen(), followSystemTheme(), shortcuts.attach(window), trackInputMode()];
+    stops.push(() => {
+      notesStop?.();
+      notesShortcutsStop?.();
+    });
+    if (appMode.mode === "notes") void loadNotes();
     void (async () => {
       try {
         await client.ensureInbox();
@@ -211,7 +267,7 @@
   function commandsNow(): PaletteCommand[] {
     return shortcuts
       .list()
-      .filter((s) => s.palette && (!s.when || s.when()))
+      .filter((s) => s.palette && shortcuts.inScope(s) && (!s.when || s.when()))
       .map((s) => ({
         id: s.palette!,
         label: s.palette!,
@@ -428,6 +484,7 @@
     else if (showShortcuts) showShortcuts = false;
     else if (showSettings) showSettings = false;
     else if (target && target.matches("input, textarea, select")) target.blur();
+    else if (appMode.mode === "notes") drawerOpen = false;
     else if (openId) closeDetail();
     else if (drawerOpen) drawerOpen = false;
     else if (selecting()) taskList?.exitSelection();
@@ -437,7 +494,58 @@
   shortcuts.setModal(
     () => showShortcuts || showSettings || showNewTask || !!deleteTarget || !!renameDialog || !!duePrompt || showPalette || showNewList || !!cleanup,
   );
+  shortcuts.setScope(() => appMode.mode);
+  // Überall (beide Modi).
   shortcuts.register(
+    { keys: ["ctrl+k"], description: "Suchen und Befehle", group: "Allgemein", inInputs: true, run: () => void openPalette() },
+    // „/“ nur außerhalb von Feldern – beim Tippen bleibt es ein Zeichen.
+    { keys: ["/"], description: "Suchen (außerhalb von Feldern)", group: "Allgemein", run: () => void openPalette() },
+    { keys: [], description: "Einstellungen", group: "Allgemein", palette: "Einstellungen öffnen", run: () => void openSettings() },
+    {
+      keys: [],
+      description: "Seitenleiste ein-/ausklappen",
+      group: "Allgemein",
+      palette: "Seitenleiste ein-/ausklappen",
+      run: toggleCollapse,
+    },
+    {
+      keys: ["?"],
+      description: "Tastaturkürzel anzeigen",
+      group: "Allgemein",
+      palette: "Tastaturkürzel anzeigen",
+      inModal: true,
+      run: () => (showShortcuts = !showShortcuts),
+    },
+    {
+      keys: ["escape"],
+      description: "Schließen / Auswahl aufheben",
+      group: "Allgemein",
+      inInputs: true,
+      inModal: true,
+      run: escape,
+    },
+    {
+      keys: ["ctrl+1"],
+      description: "Zu Tasks wechseln",
+      group: "Allgemein",
+      palette: "Zu Tasks wechseln",
+      inInputs: true,
+      when: () => appMode.mode !== "tasks",
+      run: () => void switchMode("tasks"),
+    },
+    {
+      keys: ["ctrl+2"],
+      description: "Zu Notes wechseln",
+      group: "Allgemein",
+      palette: "Zu Notes wechseln",
+      inInputs: true,
+      when: () => appMode.mode !== "notes",
+      run: () => void switchMode("notes"),
+    },
+  );
+  // Nur im Modus „Tasks" (N5: der Modus „Notes" registriert eigene Kürzel).
+  shortcuts.register(
+    ...inScope("tasks", [
     {
       keys: ["shift+f10", "contextmenu"],
       label: "Umschalt+F10",
@@ -469,18 +577,7 @@
       },
     },
     { keys: ["n"], description: "Neue Task", group: "Allgemein", palette: "Neue Task", run: newTask },
-    { keys: ["ctrl+k"], description: "Suchen und Befehle", group: "Allgemein", inInputs: true, run: () => void openPalette() },
-    // „/“ nur außerhalb von Feldern – beim Tippen bleibt es ein Zeichen.
-    { keys: ["/"], description: "Suchen (außerhalb von Feldern)", group: "Allgemein", run: () => void openPalette() },
     { keys: [], description: "Neue Liste…", group: "Listen", palette: "Neue Liste…", run: () => (showNewList = true) },
-    { keys: [], description: "Einstellungen", group: "Allgemein", palette: "Einstellungen öffnen", run: () => void openSettings() },
-    {
-      keys: [],
-      description: "Seitenleiste ein-/ausklappen",
-      group: "Allgemein",
-      palette: "Seitenleiste ein-/ausklappen",
-      run: toggleCollapse,
-    },
     ...(
       [
         ["alt+d", "Fälligkeit", () => newTaskDialog?.toggleDue()],
@@ -498,22 +595,6 @@
       run,
     })),
     { keys: ["ctrl+n"], description: "Neue Task (auch beim Tippen)", group: "Allgemein", inInputs: true, run: newTask },
-    {
-      keys: ["?"],
-      description: "Tastaturkürzel anzeigen",
-      group: "Allgemein",
-      palette: "Tastaturkürzel anzeigen",
-      inModal: true,
-      run: () => (showShortcuts = !showShortcuts),
-    },
-    {
-      keys: ["escape"],
-      description: "Schließen / Auswahl aufheben",
-      group: "Allgemein",
-      inInputs: true,
-      inModal: true,
-      run: escape,
-    },
     { keys: ["arrowdown", "j"], label: "↓ / J", description: "Nächste Task", group: "Liste", when: hasList, run: () => selectBy(1) },
     { keys: ["arrowup", "k"], label: "↑ / K", description: "Vorige Task", group: "Liste", when: hasList, run: () => selectBy(-1) },
     {
@@ -688,10 +769,17 @@
     { keys: ["g u"], description: "Geplant", group: "Ansichten", palette: "Gehe zu Geplant", run: () => goTo("upcoming") },
     { keys: [], description: "Alle Tasks", group: "Ansichten", palette: "Gehe zu Alle Tasks", run: () => goTo("all") },
     { keys: [], description: "Erledigt", group: "Ansichten", palette: "Gehe zu Erledigt", run: () => goTo("completed") },
+    ]),
   );
 </script>
 
-<div class="app" class:collapsed class:drawer-open={drawerOpen} class:detail-open={openId !== null}>
+<div
+  class="app"
+  class:collapsed
+  class:drawer-open={drawerOpen}
+  class:detail-open={openId !== null && appMode.mode === "tasks"}
+  class:notes-mode={appMode.mode === "notes"}
+>
   <aside class="sidebar-slot">
     <Sidebar
       {route}
@@ -710,13 +798,32 @@
       onnavigate={() => (drawerOpen = false)}
       onlogin={() => void openSettings()}
       onsync={() => void openSettings()}
-    />
+      mode={appMode.mode}
+      onswitchmode={() => void switchMode(appMode.mode === "tasks" ? "notes" : "tasks")}
+    >
+      {#snippet notesBody()}
+        {#if notesChunk && notes}
+          <notesChunk.NotesSidebar
+            bind:this={notesSidebar}
+            {notes}
+            {shortcuts}
+            collapsed={collapsed && !drawerOpen}
+            onnavigate={() => (drawerOpen = false)}
+          />
+        {/if}
+      {/snippet}
+    </Sidebar>
   </aside>
   {#if drawerOpen}
     <button type="button" class="scrim" aria-label="Navigation schließen" onclick={() => (drawerOpen = false)}></button>
   {/if}
 
-  <main class="pane" aria-labelledby="view-title">
+  {#if notesChunk && notes}
+    <main class="pane notes-pane" aria-label="Notes" hidden={appMode.mode !== "notes"}>
+      <notesChunk.NotesMain bind:this={notesMain} {notes} onopennav={() => (drawerOpen = true)} />
+    </main>
+  {/if}
+  <main class="pane" aria-labelledby="view-title" hidden={appMode.mode !== "tasks"}>
     <header class="pane-header">
       <span class="menu">
         <IconButton label="Navigation öffnen" icon={PanelLeft} onclick={() => (drawerOpen = true)} />
@@ -851,7 +958,7 @@
     </div>
   </main>
 
-  {#if openId}
+  {#if openId && appMode.mode === "tasks"}
     <aside class="detail-slot">
       <TaskDetail taskId={openId} {lists} onclose={closeDetail} ondelete={deleteFromDetail} />
     </aside>
@@ -1013,6 +1120,22 @@
     border-radius: var(--radius-lg);
     background: var(--color-bg);
     overflow: hidden;
+  }
+  .pane[hidden] {
+    display: none;
+  }
+  .pane {
+    animation: mode-fade var(--duration-base) var(--ease);
+  }
+  @keyframes mode-fade {
+    from {
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pane {
+      animation: none;
+    }
   }
   .pane-header {
     display: flex;

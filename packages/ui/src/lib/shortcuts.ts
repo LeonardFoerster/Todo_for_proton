@@ -18,6 +18,8 @@ export interface Shortcut {
   when?: () => boolean;
   /** Auch aktiv, während ein modaler Zustand sperrt (z. B. Esc, ?). */
   inModal?: boolean;
+  /** Nur in diesem Bereich aktiv (z. B. Modus `tasks`/`notes`, N5); ohne = überall. */
+  scope?: string;
   /**
    * Auch als Befehl in der Befehlspalette (P4-05), mit diesem Namen („Gehe zu Heute“). Einträge
    * ohne `keys` erscheinen nur dort, nicht in der Kürzel-Übersicht.
@@ -60,10 +62,21 @@ export class ShortcutRegistry {
   private shortcuts: Shortcut[] = [];
   private pending: { first: string; at: number } | null = null;
   private modal: () => boolean = () => false;
+  private scope: () => string | undefined = () => undefined;
 
   /** Solange `isModal()` gilt (Dialog offen), laufen nur Kürzel mit `inModal`. */
   setModal(isModal: () => boolean): void {
     this.modal = isModal;
+  }
+
+  /** Aktueller Bereich: Kürzel mit anderem `scope` sind inaktiv (auch in der Palette). */
+  setScope(current: () => string | undefined): void {
+    this.scope = current;
+  }
+
+  /** Gilt das Kürzel im aktuellen Bereich? */
+  inScope(s: Shortcut): boolean {
+    return !s.scope || s.scope === this.scope();
   }
 
   /** Registriert Kürzel; gibt die Abmeldung zurück. */
@@ -91,6 +104,7 @@ export class ShortcutRegistry {
       (s) =>
         (!modal || s.inModal) &&
         (!inText || s.inInputs) &&
+        this.inScope(s) &&
         (!s.when || s.when()) &&
         !(isNativeActivation(e) && !s.inInputs),
     );

@@ -96,7 +96,7 @@ Konflikt, Papierkorb vs. Bearbeitung, Leeren vs. neue Notiz), `just check` grün
 > lesbar: Bearbeiten, Umbenennen, Typ, Verschieben → `Validation`. `CoreEvent::Changed` hat seit N5-03 `notes`/
 > `note_folders`.
 
-### [ ] N5-06 · API, Shell, `CoreClient`
+### [x] N5-06 · API, Shell, `CoreClient` — 2026-10-20 · 27886dd
 **Lies vorher:** `api/dto.rs`, `commands.rs` (Auslöser-Liste), `core-client.ts`, `fake-core-client.ts`, `interfaces.md` §7.
 **Schritte:** DTOs (`NoteSummaryDto` ohne Inhalt, `NoteDto`, `NoteFolderDto`, `NoteTreePageDto`), Methoden je
 Use-Case, Commands + Auslöser + Capabilities, Fake-Client mit gleicher Semantik, `just types`; `todo-wasm` kompiliert

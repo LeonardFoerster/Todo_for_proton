@@ -53,9 +53,32 @@ ohne Protons Code, Assets oder Marke zu übernehmen.
 └───────────────┘ └────────────────────┘ └────────────────────┘
 ```
 
-**Notes-Modus (N5, Entwurf – `notes.md` §5/§6):** Klick auf den Namen neben dem Logo („Tasks“ ⇄ „Notes“) bzw.
-`Strg+1`/`Strg+2` wechselt den Modus. Die Seitenleiste bleibt, ihr Inhalt wird zum Ordnerbaum mit Notizen
-(2 Spalten: Baum + Editor, kein Detail-Panel). Jeder Modus behält seinen Zustand.
+**Notes-Modus (N5-07, `notes.md` §5/§6):** Der Name neben dem Logo ist ein Button („Tasks ⇄“ bzw. „Notes ⇄“,
+Tooltip „Zu Notes wechseln (Strg+2)“; eingeklappt ein Icon-Button) und wechselt den Modus, ebenso `Strg+1`/`Strg+2`
+(auch in Feldern) und die Palette („Zu Tasks/Notes wechseln“). Kopf der Seitenleiste und Sync-Fußzeile bleiben stehen,
+Inhalt und Hauptbereich blenden in 160 ms über (nur `opacity`, bei `prefers-reduced-motion` nicht). 2 Spalten: Baum
++ Editor, kein Detail-Panel. Beide Teilbäume bleiben nach dem ersten Laden gemountet (`hidden`); der Notes-Teil ist
+ein eigener Lazy-Chunk (10,6 KB gzip mit Baum und Papierkorb). Gemerkt pro Gerät: `tasks.mode`, `notes.open`,
+`notes.expanded`.
+
+```
+┌─ [◆] Notes ⇄ ───────┐
+│ [+ Neue Notiz]   ⋯   │  ⋯ = Neuer Ordner, Ordner importieren…
+│ ▾ Uni                │  Zeilen 32 px, Einrückung 16 px je Ebene, virtualisiert
+│   ▾ Analysis         │  Ordner-Inhalt erst beim Aufklappen geladen
+│     ▤ Blatt 3     ◀  │  ▤ .txt / ⌗ .md (Icon), offene Notiz = aktive Navigation
+│ ─────────────────── │
+│ 🗑 Papierkorb      3 │  öffnet die Liste der obersten Elemente im Hauptbereich
+│ ⟳ Synchronisiert     │
+└──────────────────────┘
+```
+
+Baum: `role="tree"`, Zeilen `treeitem` mit `aria-level`/`aria-expanded`; Klick öffnet die Notiz bzw. klappt den Ordner,
+Doppelklick benennt inline um, Ziehen (ab 4 px) verschiebt (mittlere Hälfte eines Ordners = hinein, sonst
+Einfügelinie), Rechtsklick/`Umschalt+F10` = Kontextmenü (Neue Notiz hier, Neuer Ordner hier, Umbenennen, Typ,
+Verschieben nach…, In den Papierkorb). Gleichnamige Elemente im selben Ordner sind erlaubt (Hinweis-Toast). Papierkorb:
+Name, Herkunft, „gelöscht vor 3 Tagen“, Wiederherstellen, Endgültig löschen und „Papierkorb leeren“ (je mit
+Bestätigung); Notizen darin sind nur lesbar.
 
 ## 3. Design-Tokens
 
@@ -203,6 +226,18 @@ Auswahl (Auswahlfarbe) getrennt. Kontextmenü auf einer ausgewählten Zeile wirk
 | Board: Karte öffnen / abhaken / löschen | `Enter` / `Leertaste`, `E` / `Entf` |
 | Board: Karte in die Nachbarspalte / in der Spalte verschieben | `Alt+←/→` / `Alt+↑/↓` |
 | Board: fokussierte Spalte (Kopf) verschieben | `Alt+←/→` |
+
+**Notes (N5-07).** Task-Kürzel gelten nur im Modus „Tasks“ (Registry-`scope`), die folgenden nur im Modus „Notes“.
+
+| Aktion | Shortcut |
+|---|---|
+| Modus Tasks / Notes (überall, auch in Feldern) | `Strg+1` / `Strg+2` |
+| Neue Notiz (im Ordner der offenen Notiz, Editor fokussiert; leer verlassen = verworfen) | `N` bzw. `Strg+N` |
+| Baum: bewegen / aufklappen, hinein / zuklappen, Elternordner | `↑/↓`, `J/K` / `→` / `←` |
+| Baum: Notiz öffnen und Editor fokussieren / Ordner auf- und zuklappen | `Enter` |
+| Baum: umbenennen / in den Papierkorb (Rückgängig) / verschieben nach… | `F2` / `Entf` / `M` |
+| Baum: unter Geschwistern nach oben/unten | `Alt+↑/↓` |
+| Baum: Aktionen | `Umschalt+F10` bzw. Menütaste |
 
 Bewusst kein „Keine auswählen" auf `Strg+Umschalt+A`. Seit P4-04 erkennt die Kürzel-Registry Shift bei **Buchstaben**
 (`shift+t`), bei Satzzeichen weiterhin nicht (`?` ist je nach Layout schon Shift); Feststelltaste zählt nicht als Shift.

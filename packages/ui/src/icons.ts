@@ -41,3 +41,18 @@ export { default as Circle } from "@lucide/svelte/icons/circle";
 export { default as Clock } from "@lucide/svelte/icons/clock";
 export { default as Search } from "@lucide/svelte/icons/search";
 export { default as Zap } from "@lucide/svelte/icons/zap";
+// Notes (N5) – Umschalter im Hauptbundle, der Rest nur im lazy Notes-Chunk.
+export { default as ArrowLeftRight } from "@lucide/svelte/icons/arrow-left-right";
+export { default as ChevronRight } from "@lucide/svelte/icons/chevron-right";
+export { default as Eye } from "@lucide/svelte/icons/eye";
+export { default as FileCode } from "@lucide/svelte/icons/file-code";
+export { default as FilePlus } from "@lucide/svelte/icons/file-plus";
+export { default as FileText } from "@lucide/svelte/icons/file-text";
+export { default as Folder } from "@lucide/svelte/icons/folder";
+export { default as FolderOpen } from "@lucide/svelte/icons/folder-open";
+export { default as FolderPlus } from "@lucide/svelte/icons/folder-plus";
+export { default as Import } from "@lucide/svelte/icons/import";
+export { default as Maximize } from "@lucide/svelte/icons/maximize-2";
+export { default as Minimize } from "@lucide/svelte/icons/minimize-2";
+export { default as NotebookPen } from "@lucide/svelte/icons/notebook-pen";
+export { default as RotateCcw } from "@lucide/svelte/icons/rotate-ccw";

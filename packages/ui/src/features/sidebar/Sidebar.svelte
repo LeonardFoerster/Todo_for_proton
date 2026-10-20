@@ -1,9 +1,11 @@
 <script lang="ts">
   import type { SyncStatusDto, TaskListDto } from "@tasks/core-client";
+  import type { Snippet } from "svelte";
   import logo from "../../assets/logo.png";
   import Button from "../../components/Button.svelte";
   import IconButton from "../../components/IconButton.svelte";
-  import { Hash, PanelLeft, Plus } from "../../icons";
+  import { ArrowLeftRight, Hash, NotebookPen, PanelLeft, Plus } from "../../icons";
+  import { MODE_LABELS, type Mode } from "../../lib/app-mode.svelte";
   import { formatCount, type ListsState } from "../../lib/lists.svelte";
   import { routeHash, type Route } from "../../lib/router.svelte";
   import { SMART_VIEWS } from "../../lib/views";
@@ -31,6 +33,11 @@
     onrenamecancel?: () => void;
     /** Benutzerliste an Einfügeposition `to` (Index unter den Benutzerlisten) schieben. */
     onmovelist?: (id: string, to: number) => void;
+    /** Modus (N5): Der Name neben dem Logo schaltet um. */
+    mode?: Mode;
+    onswitchmode?: () => void;
+    /** Inhalt im Modus „Notes" (Baum); Kopf und Fußzeile bleiben stehen. */
+    notesBody?: Snippet;
   }
 
   let {
@@ -50,7 +57,13 @@
     onrename,
     onrenamecancel,
     onmovelist,
+    mode = "tasks",
+    onswitchmode,
+    notesBody,
   }: Props = $props();
+
+  const other = $derived(mode === "tasks" ? "notes" : "tasks");
+  const switchLabel = $derived(`Zu ${MODE_LABELS[other]} wechseln (Strg+${other === "tasks" ? 1 : 2})`);
 
   let addingList = $state(false);
   let listsEl = $state<HTMLUListElement>();
@@ -108,7 +121,16 @@
   <div class="brand">
     {#if !collapsed}
       <img class="mark" src={logo} alt="" width="22" height="22" />
-      <span class="name">Tasks</span>
+      {#if onswitchmode}
+        <button type="button" class="name mode" aria-label={switchLabel} data-tooltip={switchLabel} onclick={onswitchmode}>
+          <span>{MODE_LABELS[mode]}</span>
+          <ArrowLeftRight size={14} strokeWidth={1.75} aria-hidden="true" />
+        </button>
+      {:else}
+        <span class="name">Tasks</span>
+      {/if}
+    {:else if onswitchmode}
+      <IconButton label={switchLabel} icon={NotebookPen} size={28} tooltipSide="right" onclick={onswitchmode} />
     {/if}
     <IconButton
       label={collapsed ? "Seitenleiste ausklappen" : "Seitenleiste einklappen"}
@@ -119,6 +141,11 @@
     />
   </div>
 
+  {#if notesBody}
+    <!-- Einmal geladen, bleibt der Notes-Baum gemountet (Zustand, notes.md §5.2). -->
+    <div class="mode-body" hidden={mode !== "notes"}>{@render notesBody()}</div>
+  {/if}
+  <div class="tasks-body" hidden={mode === "notes"}>
   <div class="primary">
     {#if collapsed}
       <button type="button" class="new-compact" aria-label="Neue Task" data-tooltip="Neue Task   N" data-tooltip-side="right" onclick={onnewtask}>
@@ -200,6 +227,7 @@
       {/if}
     </ul>
   </div>
+  </div>
 
   <SyncFooter {status} {account} {collapsed} {onlogin} {onsync} />
 </nav>
@@ -233,6 +261,55 @@
     font-size: var(--text-lg);
     font-weight: var(--weight-semibold);
     letter-spacing: -0.01em;
+  }
+  .mode {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: var(--space-2);
+    height: 32px;
+    margin-left: calc(-1 * var(--space-1));
+    padding: 0 var(--space-1);
+    border: 0;
+    border-radius: var(--radius-md);
+    background: none;
+    color: var(--color-text);
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .mode :global(svg) {
+    color: var(--color-text-muted);
+  }
+  .mode:hover {
+    background: var(--color-bg-hover);
+  }
+  .mode:focus-visible {
+    outline: 2px solid var(--color-focus-outline);
+    outline-offset: -2px;
+  }
+  .tasks-body,
+  .mode-body {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    animation: mode-fade var(--duration-base) var(--ease);
+  }
+  .tasks-body[hidden],
+  .mode-body[hidden] {
+    display: none;
+  }
+  @keyframes mode-fade {
+    from {
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tasks-body,
+    .mode-body {
+      animation: none;
+    }
   }
   .primary {
     padding: var(--space-1) var(--space-3) var(--space-3);

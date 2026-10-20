@@ -20,8 +20,8 @@
     overlay?: Snippet;
     onkeydown?: (e: KeyboardEvent) => void;
     oncontextmenu?: (e: MouseEvent) => void;
-    /** ARIA-Rolle des Containers (`list` oder `listbox`). */
-    role?: "list" | "listbox";
+    /** ARIA-Rolle des Containers (`list`, `listbox` oder `tree`). */
+    role?: "list" | "listbox" | "tree";
     /** Listbox mit Mehrfachauswahl (`aria-multiselectable`). */
     multiselectable?: boolean;
   }
