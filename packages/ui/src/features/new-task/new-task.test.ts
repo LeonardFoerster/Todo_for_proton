@@ -36,7 +36,12 @@ describe("new-task window", () => {
   it("recognizes due, priority and list in the title and creates in one go", async () => {
     const { client, uni, user } = await setup();
     await user.type(title(), "Blatt 3 morgen !1 @uni");
-    expect(within(dialog()).getByText("Blatt 3").tagName).toBe("STRONG");
+    // P6-01: erkannte Stellen sind im Titelfeld markiert (Ebene hinter dem Feld).
+    expect([...dialog().querySelectorAll("mark")].map((m) => [m.textContent, m.classList.contains("priority")])).toEqual([
+      ["morgen", false],
+      ["!1", true],
+      ["@uni", false],
+    ]);
     expect(within(dialog()).getByRole("button", { name: "Priorität: Hoch" })).toBeTruthy();
     expect(within(dialog()).getByRole("button", { name: "Liste: Uni" })).toBeTruthy();
     await user.keyboard("{Enter}");
@@ -69,6 +74,9 @@ describe("new-task window", () => {
     await user.type(title(), "Blatt 1 !2{Enter}");
     await waitFor(() => expect(title()).toHaveProperty("value", ""));
     expect(within(dialog()).getByRole("button", { name: "Priorität: Keine" })).toBeTruthy();
+    // P6-02: Bestätigung im Fenster statt Toast.
+    expect(within(dialog()).getByRole("status").textContent).toContain("„Blatt 1“ in „Uni“ angelegt");
+    expect(toasts.items).toHaveLength(0);
     await user.type(title(), "Blatt 2{Enter}");
     await waitFor(async () => expect((await all(client)).map((t) => [t.title, t.listId, t.priority])).toEqual([
       ["Blatt 1", uni.id, "medium"],
@@ -87,5 +95,27 @@ describe("new-task window", () => {
     title().focus();
     await user.keyboard("{Alt>}d{/Alt}");
     expect(await within(dialog()).findByLabelText("Fällig am")).toBeTruthy();
+  });
+
+  it("is a bare dialog: notes as second line, chips with ×, due popover closes alone on Esc (P6)", async () => {
+    const { client, user } = await setup();
+    expect(dialog().querySelector("h2")).toBeNull();
+    expect(within(dialog()).queryByRole("button", { name: /Notiz/ })).toBeNull();
+    await user.type(title(), "Bericht morgen !2");
+    await user.click(within(dialog()).getByRole("button", { name: "Priorität entfernen" }));
+    expect(within(dialog()).getByRole("button", { name: "Priorität: Keine" })).toBeTruthy();
+    // Von Hand übersteuert → die Markierung von „!2“ ist weg, die von „morgen“ bleibt.
+    expect([...dialog().querySelectorAll("mark")].map((m) => m.textContent)).toEqual(["morgen"]);
+    await user.click(within(dialog()).getByRole("button", { name: /Morgen/ }));
+    const popover = await within(dialog()).findByRole("dialog", { name: "Fälligkeit wählen" });
+    await waitFor(() => expect(document.activeElement).toBe(within(popover).getByRole("textbox", { name: "Fällig am" })));
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(within(dialog()).queryByRole("dialog", { name: "Fälligkeit wählen" })).toBeNull());
+    expect(dialog()).toBeTruthy();
+    await user.click(within(dialog()).getByRole("button", { name: "Fälligkeit entfernen" }));
+    await user.click(within(dialog()).getByRole("textbox", { name: "Notiz" }));
+    await user.keyboard("Seite 4{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Neue Task" })).toBeNull());
+    expect(await all(client)).toMatchObject([{ title: "Bericht", priority: "none", due: null, notes: "Seite 4" }]);
   });
 });

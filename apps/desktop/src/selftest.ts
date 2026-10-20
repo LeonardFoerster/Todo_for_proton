@@ -1647,13 +1647,41 @@ const p2layout: Step[] = [
 // P3-03: Fenster „Neue Task“ mit erkannten Angaben und Notiz – ein `createTask` über die echte IPC.
 const p3new: Step[] = [
   [
+    "Datums-Popover und Prioritätsmenü liegen sichtbar über dem Fenster; Esc schließt nur das Popover (P6)",
+    async () => {
+      const input = await openNewTask();
+      /** Liegt das Element an seinem Mittelpunkt wirklich oben (nicht hinter der modalen Ebene)? */
+      const onTop = (el: Element) => {
+        const r = el.getBoundingClientRect();
+        return el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
+      };
+      key(input, "d", { altKey: true });
+      const popover = await until("Popover", () => document.querySelector('dialog[open] [role="dialog"][aria-label="Fälligkeit wählen"]'));
+      await frame();
+      if (!onTop(popover)) throw new Error("Popover verdeckt");
+      key(document.activeElement ?? popover, "Escape");
+      await until("Popover zu", () => !document.querySelector('[aria-label="Fälligkeit wählen"]'));
+      if (!document.querySelector('dialog[open] input[aria-label="Neue Task"]')) throw new Error("Fenster mit geschlossen");
+      key(input, "p", { altKey: true });
+      const menu = await until("Menü", () => document.querySelector('[role="menu"][aria-label="Priorität wählen"]'));
+      await frame();
+      if (!onTop(menu)) throw new Error("Menü verdeckt");
+      key(menu, "Escape");
+      key(input, "Escape");
+      await newTaskClosed();
+      return "beide oben, Fenster bleibt bei Esc im Popover offen";
+    },
+  ],
+  [
     "Neue Task mit Uhrzeit, Priorität und Notiz",
     async (client) => {
       const input = await openNewTask();
       type(input, "Sprechstunde morgen um 14:00 !1");
-      await until("Titelvorschau", () => document.querySelector("dialog[open] .hint strong")?.textContent === "Sprechstunde");
+      // P6: erkannte Stellen im Titel markiert, Notiz als zweite Zeile (kein Chip mehr).
+      await until("Markierung", () =>
+        [...document.querySelectorAll("dialog[open] mark")].map((m) => m.textContent).join("|") === "morgen um 14:00|!1",
+      );
       await click("button", "Priorität: Hoch");
-      await click("button", /Notiz/);
       const notes = await field("Notiz");
       type(notes, "Fragen zu Blatt 3");
       key(notes, "Enter", { ctrlKey: true });

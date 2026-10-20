@@ -4,6 +4,7 @@ export { default as Calendar } from "@lucide/svelte/icons/calendar";
 export { default as CalendarDays } from "@lucide/svelte/icons/calendar-days";
 export { default as Check } from "@lucide/svelte/icons/check";
 export { default as CircleCheck } from "@lucide/svelte/icons/circle-check";
+export { default as CircleHelp } from "@lucide/svelte/icons/circle-help";
 export { default as Cloud } from "@lucide/svelte/icons/cloud";
 export { default as CloudOff } from "@lucide/svelte/icons/cloud-off";
 export { default as Ellipsis } from "@lucide/svelte/icons/ellipsis";

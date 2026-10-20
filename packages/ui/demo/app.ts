@@ -57,3 +57,16 @@ if (params.has("settings")) {
     }
   }, 400);
 }
+// ?new=Text: Fenster „Neue Task“ vorbelegt öffnen (P6-Screenshots); &chip=due öffnet das Datums-Popover.
+const fresh = params.get("new");
+if (fresh !== null) {
+  setTimeout(() => {
+    document.querySelector<HTMLElement>('aside nav button[title^="Neue Task"], button.fab')?.click();
+    setTimeout(() => {
+      const input = document.querySelector<HTMLInputElement>('dialog[open] input[aria-label="Neue Task"]')!;
+      input.value = fresh;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      if (params.get("chip") === "due") document.querySelector<HTMLElement>("dialog[open] [data-tooltip^='Fälligkeit']")?.click();
+    }, 300);
+  }, 300);
+}
