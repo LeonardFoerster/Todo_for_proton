@@ -656,6 +656,15 @@ Alle Geräte müssen gleichzeitig aktualisieren. diff3-Crate (Kandidat `diffy`) 
 geprüft. Revisionen werden lokal aufgeräumt, sobald alle aktiven Geräte einen Nachfahren gesehen haben. Fehlt eine
 Basis trotzdem, entsteht eine Konfliktkopie, kein Verlust. Gleichzeitiges Bearbeiten und endgültiges Löschen verliert
 die Bearbeitung (bewusst, User-Entscheidung 2026-10-20).
+**Nachtrag N5-02 (2026-10-20):** Kein `diffy`, eigener Diff in `sync/text_merge.rs` (~250 Zeilen): Myers mit
+Präfix-/Suffix-Abgleich, ab 1 000 Bearbeitungsschritten ein einziger Hunk (begrenzt Laufzeit und Speicher bei völlig
+neuen Texten; dann eben Konfliktkopie). Grund: Die Regel „benachbarte Zeilen sind kein Konflikt, dieselbe Zeile
+schon" (klassisches diff3/Git wertet Nachbarzeilen als Konflikt) lässt sich so direkt umsetzen, und es kommt keine
+Abhängigkeit dazu. Konflikt = zwei Hunks betreffen dieselbe Basiszeile, zwei verschiedene Einfügungen an derselben
+Stelle oder eine Einfügung mitten in einem ersetzten Bereich; gleiche Änderungen beider Seiten zählen einmal.
+Merge-Basis: gemeinsamer Vorfahr; gibt es mehrere gleichrangige (Kreuz-Merges), wird ihre eigene Auflösung die Basis
+(wie Git „recursive"). Zwei unabhängige erste Revisionen setzen auf dem leeren Text auf. Köpfe mit gleichem Text
+brauchen keine Merge-Revision; die nächste Bearbeitung nennt sie alle als Eltern (`parents_for_edit`).
 
 ---
 

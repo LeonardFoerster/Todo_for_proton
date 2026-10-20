@@ -42,7 +42,7 @@ stabiler Messreihe (3 Läufe je Variante) erneut prüfen. Kein X11-Zwang (nur al
 Editor, Wechsel per Klick auf „Tasks"/„Notes" bzw. `Strg+1/2`, Sync im Op-Log mit 3-Wege-Merge (ADR-029).
 **Vorab-Lektüre für alle N5-Aufgaben:** `notes.md` vollständig, ADR-015, ADR-016, ADR-022, ADR-027.
 
-### [ ] N5-01 · ADR-029 + Domain `Note`, `NoteFolder`, Baum-Regeln
+### [x] N5-01 · ADR-029 + Domain `Note`, `NoteFolder`, Baum-Regeln — 2026-10-20 · b0e5118
 **Lies vorher:** `notes.md` §3, `domain/task.rs`, `domain/task_list.rs`, `domain/sort_key.rs`, `domain/ids.rs`.
 **Schritte:** IDs, `NoteName` (Validierung), `NoteKind`, `Note`/`NoteFolder` mit `*Parts`/`from_parts`, Auto-Name aus
 erster Zeile, reine Baum-Funktionen (Waisen → Wurzel, Zyklus-Bruch per höchster HLC, wirksamer Papierkorb, Tiefe ≤ 32).
