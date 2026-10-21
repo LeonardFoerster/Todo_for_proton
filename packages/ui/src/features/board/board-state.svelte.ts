@@ -60,7 +60,7 @@ export class BoardState {
 
   attach(): () => void {
     return this.client.onChange((e) => {
-      if (e.tasks.length > REFRESH_BATCH) {
+      if (e.tasks.length > REFRESH_BATCH || e.links.length > 0) {
         for (const c of this.columns) void c.rows.reload();
       } else {
         for (const id of e.tasks) void this.refresh(id);

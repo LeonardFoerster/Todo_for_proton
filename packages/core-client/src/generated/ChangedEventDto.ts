@@ -7,4 +7,8 @@ export type ChangedEventDto = { tasks: Array<string>, lists: Array<string>, note
 /**
  * Tags (ADR-035).
  */
-tags: Array<string>, };
+tags: Array<string>, 
+/**
+ * Verknüpfungen Task ↔ Notiz (ADR-036).
+ */
+links: Array<string>, };

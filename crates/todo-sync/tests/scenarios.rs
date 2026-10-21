@@ -515,3 +515,37 @@ fn tag_rename_and_concurrent_assignment_both_survive() {
     assert!(a.task(&task.id).unwrap().tags.is_empty());
     assert_converged(&[&a, &b]);
 }
+
+/// Verknüpfungen (ADR-036): Beide verknüpfen offline dieselbe Task mit derselben Notiz → **eine**
+/// Verknüpfung (ID aus beiden Enden); Lösen auf einem Gerät löst sie überall.
+#[test]
+fn same_link_on_two_devices_is_one_and_unlinks_everywhere() {
+    use todo_core::api::note_dto::NoteKindDto;
+    let world = World::new();
+    let a = world.device("a");
+    let b = world.device("b");
+    let task = a.add("Blatt 3");
+    let note = block_on(a.api.create_note(None, NoteKindDto::Markdown)).unwrap();
+    a.sync();
+    b.sync();
+    let la = block_on(a.api.link_task_note(task.id.clone(), note.id.clone())).unwrap();
+    b.clock.advance(50);
+    let lb = block_on(b.api.link_task_note(task.id.clone(), note.id.clone())).unwrap();
+    assert_eq!(la.id, lb.id);
+    a.sync();
+    b.sync();
+    a.sync();
+    for device in [&a, &b] {
+        let linked = block_on(device.api.task_links(task.id.clone())).unwrap();
+        assert_eq!(linked.len(), 1);
+        assert_eq!(linked[0].note_id, note.id);
+        assert!(device.all()[0].has_links);
+    }
+    block_on(b.api.unlink(lb.id.clone())).unwrap();
+    b.sync();
+    a.sync();
+    assert!(block_on(a.api.task_links(task.id.clone()))
+        .unwrap()
+        .is_empty());
+    assert_converged(&[&a, &b]);
+}

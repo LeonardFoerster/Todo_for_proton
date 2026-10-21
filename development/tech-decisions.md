@@ -890,6 +890,27 @@ Fälligkeit. Das bestehende `parent_id` bleibt ungenutzt.
 **Konsequenzen:** Ältere Apps kennen `EntityRef::Tag` nicht und überspringen solche Segmente – „alle Geräte
 aktualisieren". Tags zusammenführen (gleichnamig nach Umbenennen) bleibt eine spätere Aktion.
 
+## ADR-036 · Verknüpfung Task ↔ Notiz als eigene Entity
+
+**Status:** akzeptiert (2026-10-21, N9-01)
+**Kontext:** Tasks und Notizen sollen sich gegenseitig zeigen (Blatt 3 ↔ Mitschrift). N3 sieht später weitere
+Verknüpfungen (externe Adressen, Kalender) vor – Felder an `Task` würden das nicht tragen.
+**Entscheidung:**
+1. `Link { id, task, note, created_at }` als synchronisierte Entity: `EntityRef::Link` (angehängt), Felder
+   `LinkTask` (19, `FieldValue::TaskRef`) und `LinkNote` (20, `FieldValue::NoteRef`) und `CreatedAt`; nur anlegen
+   und löschen (Tombstone), nie ändern.
+2. **ID aus beiden Enden** (UUIDv5): Dieselbe Verknüpfung auf zwei Geräten ist eine. Nach dem Lösen (Tombstone) nimmt
+   ein erneutes Verknüpfen die nächste Variante (wie bei ADR-028/035).
+3. Keine Fremdschlüssel: Ein Ende kann per Sync fehlen oder endgültig gelöscht werden. Listen blenden Verknüpfungen
+   mit fehlendem Ende oder mit Ende im Papierkorb aus; `purge_dangling_links` (täglich mit dem Papierkorb) löscht
+   solche, deren Ende es nicht mehr gibt.
+4. API: `link_task_note`, `unlink`, `task_links(task) → LinkedNoteDto[]`, `note_links(note) → LinkedTaskDto[]`;
+   `TaskSummaryDto.hasLinks` für das Symbol in der Zeile (SQLite: `EXISTS` über `links`); Ereignis `Changed.links`
+   – die Listen laden dann neu, weil nur der Core `hasLinks` kennt.
+5. SQLite: Migration 0009 (Tabelle `links` mit Index je Ende, `entity_kind` 5).
+**Konsequenzen:** Ältere Apps überspringen Segmente mit `EntityRef::Link` – „alle Geräte aktualisieren". Export
+enthält (noch) keine Verknüpfungen.
+
 ---
 
 ## Spikes

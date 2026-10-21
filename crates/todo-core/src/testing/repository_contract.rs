@@ -58,6 +58,7 @@ macro_rules! repository_contract_tests {
             recurrence_roundtrips,
             checklist_roundtrips_counts_and_is_searched,
             tags_roundtrip_sort_by_name_and_filter_tasks,
+            links_roundtrip_filter_and_mark_tasks,
             summary_matches_task,
             sync_device_id_is_stable,
             commit_writes_ops_to_outbox,
@@ -143,6 +144,7 @@ pub fn run_all<R: TaskRepository>(make: impl Fn() -> R) {
     recurrence_roundtrips(make());
     checklist_roundtrips_counts_and_is_searched(make());
     tags_roundtrip_sort_by_name_and_filter_tasks(make());
+    links_roundtrip_filter_and_mark_tasks(make());
     summary_matches_task(make());
     sync_device_id_is_stable(make());
     commit_writes_ops_to_outbox(make());
@@ -969,6 +971,50 @@ pub fn tags_roundtrip_sort_by_name_and_filter_tasks<R: TaskRepository>(repo: R) 
     )
     .expect("delete");
     assert_eq!(block_on(f.repo.list_tags()).expect("tags").len(), 2);
+}
+
+/// Verknüpfungen (ADR-036): gespeichert, nach Task bzw. Notiz gefiltert, löschbar; die Zeile der
+/// Task meldet „verknüpft“.
+pub fn links_roundtrip_filter_and_mark_tasks<R: TaskRepository>(repo: R) {
+    use crate::domain::{Link, LinkId, NoteId};
+    let f = setup(repo);
+    let t = f.add_tasks(f.inbox.id(), 2);
+    let (n1, n2) = (NoteId::new(), NoteId::new());
+    let a = Link::new(LinkId::between(t[0].id(), n1, 0), t[0].id(), n1, &f.clock);
+    let b = Link::new(LinkId::between(t[0].id(), n2, 0), t[0].id(), n2, &f.clock);
+    let c = Link::new(LinkId::between(t[1].id(), n1, 0), t[1].id(), n1, &f.clock);
+    block_on(
+        f.repo.commit(
+            ChangeSet::new()
+                .upsert_link(a)
+                .upsert_link(b)
+                .upsert_link(c),
+        ),
+    )
+    .expect("commit");
+    let of_task = block_on(f.repo.list_links(Some(t[0].id()), None)).expect("links");
+    assert_eq!(of_task.len(), 2);
+    assert!(of_task.contains(&a) && of_task.contains(&b));
+    let of_note = block_on(f.repo.list_links(None, Some(n1))).expect("links");
+    assert_eq!(
+        of_note
+            .iter()
+            .map(Link::id)
+            .collect::<std::collections::BTreeSet<_>>(),
+        [a.id(), c.id()].into()
+    );
+    assert_eq!(
+        block_on(f.repo.list_links(None, None)).expect("all").len(),
+        3
+    );
+    block_on(
+        f.repo
+            .commit(ChangeSet::new().delete(EntityRef::Link(c.id()))),
+    )
+    .expect("delete");
+    let page = f.page(all(), None, 10).expect("page");
+    let flags: Vec<bool> = page.items.iter().map(|s| s.has_links).collect();
+    assert_eq!(flags, [true, false]);
 }
 
 /// Die Zusammenfassung entspricht `TaskSummary::from(&task)`.

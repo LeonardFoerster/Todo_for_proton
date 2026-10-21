@@ -374,3 +374,45 @@ mod tests {
         assert!(NoteItem::try_from(&bad).is_err());
     }
 }
+
+// --- Verknüpfungen Task ↔ Notiz (N9, ADR-036) ---------------------------------------------------
+
+/// Eine Verknüpfung.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct LinkDto {
+    pub id: String,
+    pub task_id: String,
+    pub note_id: String,
+}
+
+impl From<&crate::domain::Link> for LinkDto {
+    fn from(link: &crate::domain::Link) -> Self {
+        Self {
+            id: link.id().to_string(),
+            task_id: link.task().to_string(),
+            note_id: link.note().to_string(),
+        }
+    }
+}
+
+/// Verknüpfte Notiz einer Task (Detail-Panel).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct LinkedNoteDto {
+    pub link_id: String,
+    pub note_id: String,
+    pub name: String,
+    pub kind: NoteKindDto,
+}
+
+/// Verknüpfte Task einer Notiz (Statuszeile der Notiz).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct LinkedTaskDto {
+    pub link_id: String,
+    pub task: super::dto::TaskSummaryDto,
+}

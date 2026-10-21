@@ -110,9 +110,9 @@ describe("FakeNotes", () => {
     core.notes.simulateRemoteBody(note.id, "von B");
     await Promise.resolve();
     expect(events).toEqual([
-      { tasks: [], lists: [], notes: [note.id], noteFolders: [], tags: [] },
-      { tasks: [], lists: [], notes: [], noteFolders: [folder.id], tags: [] },
-      { tasks: [], lists: [], notes: [note.id], noteFolders: [], tags: [] },
+      { tasks: [], lists: [], notes: [note.id], noteFolders: [], tags: [], links: [] },
+      { tasks: [], lists: [], notes: [], noteFolders: [folder.id], tags: [], links: [] },
+      { tasks: [], lists: [], notes: [note.id], noteFolders: [], tags: [], links: [] },
     ]);
     expect((await core.notes.get(note.id)).body).toBe("von B");
     const conflicts: string[] = [];

@@ -22,4 +22,8 @@ checklistDone: number, checklistTotal: number,
 /**
  * Tag-IDs (ADR-035).
  */
-tags: Array<string>, };
+tags: Array<string>, 
+/**
+ * Mit Notizen verknüpft (ADR-036).
+ */
+hasLinks: boolean, };

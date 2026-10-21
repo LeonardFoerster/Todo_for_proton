@@ -5,7 +5,7 @@
 
 use super::{FieldMap, FieldName, FieldValue, HlcState, Op, OpId, OpKind};
 use crate::{
-    domain::{Note, NoteFolder, Tag, Task, TaskList, Timestamp},
+    domain::{Link, Note, NoteFolder, Tag, Task, TaskList, Timestamp},
     ports::{Change, EntityRef},
 };
 
@@ -167,6 +167,19 @@ pub fn tag_fields(tag: &Tag) -> FieldMap {
     ])
 }
 
+/// Feldwerte einer Verknüpfung (ADR-036).
+#[must_use]
+pub fn link_fields(link: &Link) -> FieldMap {
+    FieldMap::from([
+        (FieldName::LinkTask, FieldValue::TaskRef(link.task())),
+        (FieldName::LinkNote, FieldValue::NoteRef(link.note())),
+        (
+            FieldName::CreatedAt,
+            FieldValue::Timestamp(link.created_at()),
+        ),
+    ])
+}
+
 /// Ops für eine Änderung. `before` sind die bisher bekannten Feldwerte der Entity (`None` =
 /// unbekannt); Felder, die dort fehlen, gelten als geändert.
 ///
@@ -185,6 +198,7 @@ pub fn ops_for(
         Change::UpsertNote(note) => note_fields(note),
         Change::UpsertNoteFolder(folder) => note_folder_fields(folder),
         Change::UpsertTag(tag) => tag_fields(tag),
+        Change::UpsertLink(link) => link_fields(link),
         Change::Delete(_) => {
             return before
                 .map(|_| clock.stamp(now, entity, OpKind::Delete))

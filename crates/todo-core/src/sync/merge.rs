@@ -15,9 +15,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{FieldMap, FieldName, FieldValue, Hlc, Op, OpKind};
 use crate::domain::{
-    Due, Note, NoteFolder, NoteFolderId, NoteFolderParts, NoteId, NoteParts, Priority, SortKey,
-    Tag, TagId, TagParts, Task, TaskId, TaskList, TaskListId, TaskListParts, TaskParts, TaskStatus,
-    Timestamp,
+    Due, Link, LinkId, LinkParts, Note, NoteFolder, NoteFolderId, NoteFolderParts, NoteId,
+    NoteParts, Priority, SortKey, Tag, TagId, TagParts, Task, TaskId, TaskList, TaskListId,
+    TaskListParts, TaskParts, TaskStatus, Timestamp,
 };
 
 /// Ein Feldwert mit der HLC der Op, die ihn gesetzt hat.
@@ -228,6 +228,25 @@ pub fn materialize_tag(id: TagId, registers: &Registers) -> Option<Tag> {
         updated_at: updated_at(registers),
     })
     .ok()
+}
+
+/// Wie [`materialize_task`] für Verknüpfungen (ADR-036).
+#[must_use]
+pub fn materialize_link(id: LinkId, registers: &Registers) -> Option<Link> {
+    let task = match value(registers, FieldName::LinkTask)? {
+        FieldValue::TaskRef(t) => *t,
+        _ => return None,
+    };
+    let note = match value(registers, FieldName::LinkNote)? {
+        FieldValue::NoteRef(n) => *n,
+        _ => return None,
+    };
+    Some(Link::from_parts(LinkParts {
+        id,
+        task,
+        note,
+        created_at: created_at(registers)?,
+    }))
 }
 
 /// Wie [`materialize_task`] für Notiz-Ordner. `parent` = wirksamer Elternordner nach den

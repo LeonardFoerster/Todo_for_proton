@@ -33,6 +33,8 @@ export function toSummary(t: TaskDto): TaskSummaryDto {
     checklistDone: t.checklist.filter((i) => i.done).length,
     checklistTotal: t.checklist.length,
     tags: [...t.tags],
+    // Kennt der `TaskDto` nicht; `apply` behält den bisherigen Wert.
+    hasLinks: false,
   };
 }
 
@@ -144,7 +146,8 @@ export class TaskListState {
   /** Abo auf Core-Änderungen; gibt die Abmeldung zurück. */
   attach(): () => void {
     return this.client.onChange((e) => {
-      if (e.tasks.length > REFRESH_BATCH) void this.reload();
+      // Verknüpfungen (ADR-036) ändern nur `hasLinks` – das weiß nur die Zusammenfassung des Cores.
+      if (e.tasks.length > REFRESH_BATCH || e.links.length > 0) void this.reload();
       else for (const id of e.tasks) void this.refresh(id);
     });
   }
@@ -201,9 +204,12 @@ export class TaskListState {
     }
   }
 
-  apply(task: TaskSummaryDto): void {
+  apply(next: TaskSummaryDto): void {
     const ctx = this.ctx();
-    if (this.hidden.has(task.id)) return;
+    if (this.hidden.has(next.id)) return;
+    // Aus einem `TaskDto` (ohne Verknüpfungen): `hasLinks` der bisherigen Zeile behalten.
+    const prev = this.items.find((t) => t.id === next.id);
+    const task = prev && !next.hasLinks ? { ...next, hasLinks: prev.hasLinks } : next;
     const visible = shownInView(task, ctx) || (this.leaving.has(task.id) && inView(task, ctx));
     const rest = this.items.filter((t) => t.id !== task.id);
     if (!visible) {

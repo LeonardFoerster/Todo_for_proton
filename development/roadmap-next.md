@@ -452,7 +452,8 @@ ziehen, `Enter` neuer Punkt; Zeile/Karte: „2/5“; Suche findet Punkttext.
 **Schritte:** `Tag { id, name, sort_key }` als neue synchronisierte Entität (`EntityRef::Tag` angehängt, wie
 `TaskList`); `Task.tags: Vec<TagId>` (Feld existiert, Code `Tags`) bekommt Logik; Umbenennen/Löschen eines Tags;
 `TaskQuery.tag` filtert; API/DTO/Commands.
-### [ ] N8-03 · UI: Tags
+### [x] N8-03 · UI: Tags — 2026-10-21 · a67095b
+> Notiz: Chip „Tags“ mit `Alt+T`; neue Tasks in einer Tag-Ansicht bekommen den Tag. Selbsttest `n8` (Tag + Checkliste) grün; Szenario-Tests in `todo-sync/tests/scenarios.rs`.
 **Schritte:** `#tag` im Fenster „Neue Task“ (markiert wie die anderen Angaben, unbekannte Tags werden angelegt), Chip
 „Tags“, Tags im Detail und in Zeile/Karte; Seitenleiste „Tags“ mit Ansicht je Tag; Palette.
 **Fertig wenn (N8):** `just check` grün, Szenario-Tests (Tag umbenennen auf A, zuweisen auf B), Selbsttest.

@@ -29,10 +29,11 @@ use crate::{
         check_bulk_len, CompleteTask, CompleteTaskInput, CompleteTasks, CompleteTasksInput,
         CreateTask, CreateTaskInput, CreateTaskList, CreateTaskListInput, DeleteTag, DeleteTask,
         DeleteTaskInput, DeleteTaskList, DeleteTaskListInput, DeleteTasks, DeleteTasksInput, Deps,
-        EnsureInbox, EnsureTag, MoveTask, MoveTaskInput, MoveTaskList, MoveTaskListInput,
-        MoveTasks, MoveTasksInput, RenameTag, RenameTagInput, RenameTaskList, RenameTaskListInput,
-        ReopenTask, ReopenTaskInput, RestoreTasks, RestoreTasksInput, SetDues, SetDuesInput,
-        TaskPatch, UpdateTask, UpdateTaskInput,
+        EnsureInbox, EnsureTag, LinkTaskNote, ListLinks, MoveTask, MoveTaskInput, MoveTaskList,
+        MoveTaskListInput, MoveTasks, MoveTasksInput, PurgeDanglingLinks, RenameTag,
+        RenameTagInput, RenameTaskList, RenameTaskListInput, ReopenTask, ReopenTaskInput,
+        RestoreTasks, RestoreTasksInput, SetDues, SetDuesInput, TaskPatch, UnlinkTaskNote,
+        UpdateTask, UpdateTaskInput,
     },
     app::{
         CreateNote, CreateNoteFolder, CreateNoteFolderInput, CreateNoteInput, DiscardEmptyNote,
@@ -50,7 +51,7 @@ use crate::{
     app::{ExportData, ExportNotes, ImportData, ImportDataInput},
     app::{SkipOccurrence, SkipOccurrenceInput, UndoOccurrence, UndoOccurrenceInput},
     domain::{
-        DeviceId, Note, NoteFolder, NoteFolderId, NoteId, SortKey, Tag, TagId, Task, TaskId,
+        DeviceId, Link, Note, NoteFolder, NoteFolderId, NoteId, SortKey, Tag, TagId, Task, TaskId,
         TaskList, TaskListId, TaskParts,
     },
     ports::{
@@ -73,6 +74,8 @@ pub enum CoreEvent {
         note_folders: Vec<String>,
         /// Seit ADR-035.
         tags: Vec<String>,
+        /// Verknüpfungen (ADR-036).
+        links: Vec<String>,
     },
     /// Beim Zusammenlegen nebenläufiger Bearbeitungen entstanden Konfliktkopien (ADR-029).
     NoteConflicts { conflicts: Vec<NoteConflictDto> },
@@ -507,6 +510,80 @@ impl CoreApi {
     /// Fehler des Repositories.
     pub async fn purge_expired_tasks(&self) -> CoreResult<u32> {
         PurgeExpiredTasks::new(self.deps.clone()).execute().await
+    }
+
+    // --- Verknüpfungen Task ↔ Notiz (ADR-036) -------------------------------------------------
+
+    /// Verknüpft Task und Notiz (schon verknüpft: dieselbe Verknüpfung).
+    ///
+    /// # Errors
+    /// `NotFound`, `Validation` (IDs).
+    pub async fn link_task_note(
+        &self,
+        task: String,
+        note: String,
+    ) -> CoreResult<note_dto::LinkDto> {
+        let link = LinkTaskNote::new(self.deps.clone())
+            .execute(task_id(&task)?, note_id(&note)?)
+            .await?;
+        Ok((&link).into())
+    }
+
+    /// # Errors
+    /// `Validation` (ID).
+    pub async fn unlink(&self, id: String) -> CoreResult<()> {
+        let id =
+            crate::domain::LinkId::parse(&id).map_err(|e| CoreError::Validation(e.to_string()))?;
+        UnlinkTaskNote::new(self.deps.clone()).execute(id).await
+    }
+
+    /// Verknüpfte Notizen einer Task (ohne fehlende und solche im Papierkorb).
+    ///
+    /// # Errors
+    /// `Validation` (ID).
+    pub async fn task_links(&self, task: String) -> CoreResult<Vec<note_dto::LinkedNoteDto>> {
+        let found = ListLinks::new(self.deps.clone())
+            .notes_of(task_id(&task)?)
+            .await?;
+        Ok(found
+            .into_iter()
+            .map(|(link, note)| note_dto::LinkedNoteDto {
+                link_id: link.to_string(),
+                note_id: note.id().to_string(),
+                name: note.name().to_string(),
+                kind: note.kind().into(),
+            })
+            .collect())
+    }
+
+    /// Verknüpfte Tasks einer Notiz (ohne fehlende und solche im Papierkorb).
+    ///
+    /// # Errors
+    /// `Validation` (ID).
+    pub async fn note_links(&self, note: String) -> CoreResult<Vec<note_dto::LinkedTaskDto>> {
+        let found = ListLinks::new(self.deps.clone())
+            .tasks_of(note_id(&note)?)
+            .await?;
+        Ok(found
+            .into_iter()
+            .map(|(link, task)| note_dto::LinkedTaskDto {
+                link_id: link.to_string(),
+                task: (&TaskSummary {
+                    has_links: true,
+                    ..TaskSummary::from(&task)
+                })
+                    .into(),
+            })
+            .collect())
+    }
+
+    /// Verwaiste Verknüpfungen entfernen (beim Start, wie der Papierkorb).
+    ///
+    /// # Errors
+    /// Fehler des Repositories.
+    pub async fn purge_dangling_links(&self) -> CoreResult<u32> {
+        let n = PurgeDanglingLinks::new(self.deps.clone()).execute().await?;
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
     }
 
     /// Verschiebt alle als Block (bisherige Anzeigereihenfolge) an `target`; ohne `listId` in die
@@ -1001,8 +1078,14 @@ fn emit(sinks: &Sinks, changed: &[EntityRef]) {
     if changed.is_empty() {
         return;
     }
-    let (mut tasks, mut lists, mut notes, mut note_folders, mut tags) =
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut tasks, mut lists, mut notes, mut note_folders, mut tags, mut links) = (
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
     for entity in changed {
         match entity {
             EntityRef::Task(id) => tasks.push(id.to_string()),
@@ -1010,6 +1093,7 @@ fn emit(sinks: &Sinks, changed: &[EntityRef]) {
             EntityRef::Note(id) => notes.push(id.to_string()),
             EntityRef::NoteFolder(id) => note_folders.push(id.to_string()),
             EntityRef::Tag(id) => tags.push(id.to_string()),
+            EntityRef::Link(id) => links.push(id.to_string()),
         }
     }
     let event = CoreEvent::Changed {
@@ -1018,6 +1102,7 @@ fn emit(sinks: &Sinks, changed: &[EntityRef]) {
         notes,
         note_folders,
         tags,
+        links,
     };
     let sinks = sinks
         .read()
@@ -1099,6 +1184,14 @@ impl TaskRepository for NotifyingRepository {
 
     async fn list_tags(&self) -> CoreResult<Vec<Tag>> {
         self.inner.list_tags().await
+    }
+
+    async fn list_links(
+        &self,
+        task: Option<TaskId>,
+        note: Option<NoteId>,
+    ) -> CoreResult<Vec<Link>> {
+        self.inner.list_links(task, note).await
     }
 
     async fn list_tasks(
@@ -1262,6 +1355,7 @@ mod sync_tests {
                 notes: Vec::new(),
                 note_folders: Vec::new(),
                 tags: Vec::new(),
+                links: Vec::new(),
             }]
         );
         assert_eq!(inbox.id, TaskListId::INBOX.to_string());
@@ -1341,6 +1435,7 @@ mod bulk_tests {
             notes: Vec::new(),
             note_folders: Vec::new(),
             tags: Vec::new(),
+            links: Vec::new(),
         }]
     }
 
@@ -1614,6 +1709,7 @@ mod note_tests {
                 notes: vec![note.id.clone()],
                 note_folders: Vec::new(),
                 tags: Vec::new(),
+                links: Vec::new(),
             }]
         );
         let page = block_on(api.list_note_items(

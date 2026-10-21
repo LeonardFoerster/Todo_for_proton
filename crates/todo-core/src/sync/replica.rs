@@ -12,14 +12,16 @@
 use std::collections::BTreeMap;
 
 use super::{
-    conflict_copy_id, materialize_list, materialize_note, materialize_note_folder, materialize_tag,
-    materialize_task, merge, merge::folder, merge::wall, ops_for, ConflictLoser, EntityState,
-    FieldName, Op, OpClock, OpKind, Registers, Resolution, Revision, RevisionSet,
+    conflict_copy_id, materialize_link, materialize_list, materialize_note,
+    materialize_note_folder, materialize_tag, materialize_task, merge, merge::folder, merge::wall,
+    ops_for, ConflictLoser, EntityState, FieldName, Op, OpClock, OpKind, Registers, Resolution,
+    Revision, RevisionSet,
 };
 use crate::{
     domain::{
-        note_tree, DeviceId, Note, NoteFolder, NoteFolderId, NoteId, NoteName, RevisionId, SortKey,
-        Tag, TagId, Task, TaskId, TaskList, TaskListId, Timestamp, NOTE_NAME_MAX_CHARS,
+        note_tree, DeviceId, Link, LinkId, Note, NoteFolder, NoteFolderId, NoteId, NoteName,
+        RevisionId, SortKey, Tag, TagId, Task, TaskId, TaskList, TaskListId, Timestamp,
+        NOTE_NAME_MAX_CHARS,
     },
     ports::{Change, ChangeSet, Clock, EntityRef},
     CoreResult,
@@ -209,6 +211,9 @@ pub trait ReplicaStore {
     fn tag(&mut self, id: TagId) -> CoreResult<Option<Tag>>;
     /// # Errors
     /// Speicherfehler.
+    fn link(&mut self, id: LinkId) -> CoreResult<Option<Link>>;
+    /// # Errors
+    /// Speicherfehler.
     fn put_task(&mut self, task: &Task) -> CoreResult<()>;
     /// # Errors
     /// Speicherfehler.
@@ -222,6 +227,9 @@ pub trait ReplicaStore {
     /// # Errors
     /// Speicherfehler.
     fn put_tag(&mut self, tag: &Tag) -> CoreResult<()>;
+    /// # Errors
+    /// Speicherfehler.
+    fn put_link(&mut self, link: &Link) -> CoreResult<()>;
     /// # Errors
     /// Speicherfehler.
     fn remove(&mut self, entity: EntityRef) -> CoreResult<()>;
@@ -565,6 +573,27 @@ pub fn apply_remote<S: ReplicaStore + ?Sized>(
         list_set_changed |= current.is_some() != target.is_some();
         match &target {
             Some(list) => store.put_list(list)?,
+            None => store.remove(*entity)?,
+        }
+        receipt.changed.push(*entity);
+    }
+    // Verknüpfungen (ADR-036): verweisen nur per ID; ein fehlendes Ende blendet die UI aus.
+    for (entity, ops) in &groups {
+        let EntityRef::Link(id) = *entity else {
+            continue;
+        };
+        let Some(state) = merged(store, *entity, ops)? else {
+            continue;
+        };
+        let target = match &state {
+            EntityState::Live(registers) => materialize_link(id, registers),
+            EntityState::Deleted(_) => None,
+        };
+        if store.link(id)? == target {
+            continue;
+        }
+        match &target {
+            Some(link) => store.put_link(link)?,
             None => store.remove(*entity)?,
         }
         receipt.changed.push(*entity);

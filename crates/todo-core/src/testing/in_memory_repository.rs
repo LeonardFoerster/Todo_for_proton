@@ -8,8 +8,8 @@ use std::{
 
 use crate::{
     domain::{
-        tag_key, DeviceId, Note, NoteFolder, NoteFolderId, NoteId, RevisionId, SortKey, Tag, TagId,
-        Task, TaskId, TaskList, TaskListId, Timestamp,
+        tag_key, DeviceId, Link, LinkId, Note, NoteFolder, NoteFolderId, NoteId, RevisionId,
+        SortKey, Tag, TagId, Task, TaskId, TaskList, TaskListId, Timestamp,
     },
     ports::{
         check_page_limit, decode_tree_cursor, encode_tree_cursor, Change, ChangeSet, CommitReceipt,
@@ -30,6 +30,7 @@ struct State {
     notes: BTreeMap<NoteId, Note>,
     folders: BTreeMap<NoteFolderId, NoteFolder>,
     tags: BTreeMap<TagId, Tag>,
+    links: BTreeMap<LinkId, Link>,
     // Sync-Buchhaltung
     clock: OpClock,
     entities: BTreeMap<EntityRef, EntityState>,
@@ -70,6 +71,7 @@ impl InMemoryTaskRepository {
                 notes: BTreeMap::new(),
                 folders: BTreeMap::new(),
                 tags: BTreeMap::new(),
+                links: BTreeMap::new(),
                 clock: OpClock::new(HlcState::new(device), 0),
                 entities: BTreeMap::new(),
                 revisions: BTreeMap::new(),
@@ -202,6 +204,12 @@ fn apply(state: &mut State, change: Change) {
         }
         Change::Delete(EntityRef::Tag(id)) => {
             state.tags.remove(&id);
+        }
+        Change::UpsertLink(link) => {
+            state.links.insert(link.id(), link);
+        }
+        Change::Delete(EntityRef::Link(id)) => {
+            state.links.remove(&id);
         }
     }
 }
@@ -346,6 +354,22 @@ impl TaskRepository for InMemoryTaskRepository {
         Ok(tags)
     }
 
+    async fn list_links(
+        &self,
+        task: Option<TaskId>,
+        note: Option<NoteId>,
+    ) -> CoreResult<Vec<Link>> {
+        let mut links: Vec<Link> = self
+            .state()
+            .links
+            .values()
+            .filter(|l| task.is_none_or(|t| l.task() == t) && note.is_none_or(|n| l.note() == n))
+            .copied()
+            .collect();
+        links.sort_by_key(|l| (l.created_at(), l.id()));
+        Ok(links)
+    }
+
     async fn list_tasks(
         &self,
         query: &TaskQuery,
@@ -383,7 +407,10 @@ impl TaskRepository for InMemoryTaskRepository {
         let items = matching
             .iter()
             .take(limit)
-            .map(|(_, task)| TaskSummary::from(*task))
+            .map(|(_, task)| TaskSummary {
+                has_links: state.links.values().any(|l| l.task() == task.id()),
+                ..TaskSummary::from(*task)
+            })
             .collect();
         Ok(Page { items, next_cursor })
     }
@@ -680,6 +707,15 @@ impl ReplicaStore for State {
 
     fn put_tag(&mut self, tag: &Tag) -> CoreResult<()> {
         apply(self, Change::UpsertTag(tag.clone()));
+        Ok(())
+    }
+
+    fn link(&mut self, id: LinkId) -> CoreResult<Option<Link>> {
+        Ok(self.links.get(&id).copied())
+    }
+
+    fn put_link(&mut self, link: &Link) -> CoreResult<()> {
+        apply(self, Change::UpsertLink(*link));
         Ok(())
     }
 

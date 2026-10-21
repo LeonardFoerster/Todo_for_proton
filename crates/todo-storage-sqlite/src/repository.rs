@@ -5,7 +5,7 @@ use std::path::Path;
 use rusqlite::{params_from_iter, Connection, TransactionBehavior};
 use todo_core::{
     domain::{
-        tag_key, DeviceId, Note, NoteFolder, NoteFolderId, NoteId, SortKey, Tag, TagId, Task,
+        tag_key, DeviceId, Link, Note, NoteFolder, NoteFolderId, NoteId, SortKey, Tag, TagId, Task,
         TaskId, TaskList, TaskListId,
     },
     ports::{
@@ -22,9 +22,10 @@ use crate::{
     connection::Database,
     error::{corrupt, storage},
     mapping::{
-        read_folder, read_list, read_note, read_note_summary, read_sort_key, read_summary,
-        read_tag, read_task, read_tree_item, write_folder, write_list, write_note, write_tag,
-        write_task, FOLDER_COLUMNS, LIST_COLUMNS, NOTE_SUMMARY_COLUMNS, TAG_COLUMNS, TASK_COLUMNS,
+        read_folder, read_link, read_list, read_note, read_note_summary, read_sort_key,
+        read_summary, read_tag, read_task, read_tree_item, write_folder, write_link, write_list,
+        write_note, write_tag, write_task, FOLDER_COLUMNS, LINK_COLUMNS, LIST_COLUMNS,
+        NOTE_SUMMARY_COLUMNS, TAG_COLUMNS, TASK_COLUMNS,
     },
     query::{list_tasks_sql, search_notes_sql, search_tasks_sql, Position},
     sync_store::{self, SqliteReplica},
@@ -279,6 +280,35 @@ impl TaskRepository for SqliteTaskRepository {
                 // Groß/Klein egal wie im Core (`tag_key`); SQLite `NOCASE` kennt nur ASCII.
                 tags.sort_by_cached_key(|t| (tag_key(t.name()), t.id()));
                 Ok(tags)
+            })
+            .await
+    }
+
+    async fn list_links(
+        &self,
+        task: Option<TaskId>,
+        note: Option<NoteId>,
+    ) -> CoreResult<Vec<Link>> {
+        self.db
+            .call(move |conn| {
+                let mut stmt = conn
+                    .prepare_cached(&format!(
+                        "SELECT {LINK_COLUMNS} FROM links
+                         WHERE (?1 IS NULL OR task_id = ?1) AND (?2 IS NULL OR note_id = ?2)
+                         ORDER BY created_at, id"
+                    ))
+                    .map_err(storage)?;
+                let mut rows = stmt
+                    .query(rusqlite::params![
+                        task.map(|t| t.to_string()),
+                        note.map(|n| n.to_string())
+                    ])
+                    .map_err(storage)?;
+                let mut links = Vec::new();
+                while let Some(row) = rows.next().map_err(storage)? {
+                    links.push(read_link(row)?);
+                }
+                Ok(links)
             })
             .await
     }
@@ -543,6 +573,8 @@ fn apply(conn: &Connection, change: &Change) -> CoreResult<()> {
         Change::Delete(EntityRef::NoteFolder(id)) => delete(conn, "note_folders", &id.to_string()),
         Change::UpsertTag(tag) => write_tag(conn, tag),
         Change::Delete(EntityRef::Tag(id)) => delete(conn, "tags", &id.to_string()),
+        Change::UpsertLink(link) => write_link(conn, link),
+        Change::Delete(EntityRef::Link(id)) => delete(conn, "links", &id.to_string()),
     }
 }
 
@@ -640,6 +672,13 @@ mod tests {
         }
         async fn list_tags(&self) -> CoreResult<Vec<Tag>> {
             self.repo.list_tags().await
+        }
+        async fn list_links(
+            &self,
+            task: Option<TaskId>,
+            note: Option<NoteId>,
+        ) -> CoreResult<Vec<Link>> {
+            self.repo.list_links(task, note).await
         }
         async fn list_tasks(
             &self,

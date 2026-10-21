@@ -92,6 +92,8 @@ pub struct ChangedEventDto {
     pub note_folders: Vec<String>,
     /// Tags (ADR-035).
     pub tags: Vec<String>,
+    /// Verknüpfungen Task ↔ Notiz (ADR-036).
+    pub links: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

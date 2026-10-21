@@ -131,6 +131,15 @@ impl AppState {
                 }
                 Err(err) => tracing::warn!(error = %err, "purging expired tasks failed"),
             }
+            // Verknüpfungen mit endgültig gelöschtem Ende (ADR-036).
+            match api.purge_dangling_links().await {
+                Ok(0) => {}
+                Ok(n) => {
+                    tracing::info!(links = n, "dangling links purged");
+                    sync.local_change();
+                }
+                Err(err) => tracing::warn!(error = %err, "purging dangling links failed"),
+            }
         });
     }
 }

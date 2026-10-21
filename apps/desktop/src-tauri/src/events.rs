@@ -39,6 +39,7 @@ impl<R: Runtime> EventSink for ChangedEmitter<R> {
                 notes,
                 note_folders,
                 tags,
+                links,
             } => self.app.emit(
                 CHANGED_EVENT,
                 ChangedEventDto {
@@ -47,6 +48,7 @@ impl<R: Runtime> EventSink for ChangedEmitter<R> {
                     notes,
                     note_folders,
                     tags,
+                    links,
                 },
             ),
             CoreEvent::NoteConflicts { conflicts } => {

@@ -15,8 +15,8 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use super::Hlc;
 use crate::{
     domain::{
-        ChecklistItem, DeviceId, Due, NoteFolderId, NoteKind, Priority, Recurrence, RevisionId,
-        SortKey, TagId, TaskId, TaskListId, Timestamp, NOTE_BODY_MAX_BYTES,
+        ChecklistItem, DeviceId, Due, NoteFolderId, NoteId, NoteKind, Priority, Recurrence,
+        RevisionId, SortKey, TagId, TaskId, TaskListId, Timestamp, NOTE_BODY_MAX_BYTES,
     },
     ports::EntityRef,
     CoreError, CoreResult,
@@ -111,11 +111,15 @@ pub enum FieldName {
     Recurrence,
     /// Checkliste einer Task (N8, ADR-034); LWW auf die ganze Liste.
     Checklist,
+    /// Task einer Verknüpfung (N9, ADR-036).
+    LinkTask,
+    /// Notiz einer Verknüpfung (N9, ADR-036).
+    LinkNote,
 }
 
 impl FieldName {
     /// Alle Felder (für Tests und Validierung).
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 20] = [
         Self::ListId,
         Self::ParentId,
         Self::Title,
@@ -134,6 +138,8 @@ impl FieldName {
         Self::Trashed,
         Self::Recurrence,
         Self::Checklist,
+        Self::LinkTask,
+        Self::LinkNote,
     ];
 
     /// Felder einer Task (`Trashed` seit ADR-031, `Recurrence` seit ADR-028, `Checklist` seit ADR-034).
@@ -158,6 +164,9 @@ impl FieldName {
 
     /// Felder eines Tags (ADR-035).
     pub const TAG: [Self; 2] = [Self::Name, Self::CreatedAt];
+
+    /// Felder einer Verknüpfung (ADR-036).
+    pub const LINK: [Self; 3] = [Self::LinkTask, Self::LinkNote, Self::CreatedAt];
 
     /// Felder einer Notiz (der Inhalt ist kein Feld, sondern Revisionen).
     pub const NOTE: [Self; 7] = [
@@ -201,6 +210,8 @@ impl FieldName {
             Self::Trashed => 16,
             Self::Recurrence => 17,
             Self::Checklist => 18,
+            Self::LinkTask => 19,
+            Self::LinkNote => 20,
         }
     }
 
@@ -219,6 +230,7 @@ impl FieldName {
             EntityRef::Note(_) => Self::NOTE.contains(&self),
             EntityRef::NoteFolder(_) => Self::NOTE_FOLDER.contains(&self),
             EntityRef::Tag(_) => Self::TAG.contains(&self),
+            EntityRef::Link(_) => Self::LINK.contains(&self),
         }
     }
 
@@ -242,6 +254,8 @@ impl FieldName {
                 | (Self::Trashed, FieldValue::Trashed(_))
                 | (Self::Recurrence, FieldValue::Recurrence(_))
                 | (Self::Checklist, FieldValue::Checklist(_))
+                | (Self::LinkTask, FieldValue::TaskRef(_))
+                | (Self::LinkNote, FieldValue::NoteRef(_))
         )
     }
 }
@@ -283,6 +297,10 @@ pub enum FieldValue {
     Recurrence(#[serde(with = "recurrence_wire")] Option<Recurrence>),
     /// Checkliste (N8): Punkte als (ID, Text, Haken), beim Lesen geprüft.
     Checklist(#[serde(with = "checklist_wire")] Vec<ChecklistItem>),
+    /// Verweis auf eine Task (Verknüpfung, N9).
+    TaskRef(TaskId),
+    /// Verweis auf eine Notiz (Verknüpfung, N9).
+    NoteRef(NoteId),
 }
 
 impl Op {
@@ -710,7 +728,9 @@ mod tests {
                 FieldName::TASK.contains(&field)
                     || FieldName::TASK_LIST.contains(&field)
                     || FieldName::NOTE.contains(&field)
-                    || FieldName::NOTE_FOLDER.contains(&field),
+                    || FieldName::NOTE_FOLDER.contains(&field)
+                    || FieldName::TAG.contains(&field)
+                    || FieldName::LINK.contains(&field),
                 "{field:?}"
             );
         }

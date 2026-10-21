@@ -78,6 +78,12 @@ export class FakeNotes implements NotesClient {
 
   get = (id: string) => this.env.run(() => ({ ...this.note(id).note }));
 
+  /** Ohne Latenz, für den Fake-Client (Verknüpfungen): die Notiz oder `undefined`. */
+  peek(id: string): NoteDto | undefined {
+    const row = this.notes.get(id);
+    return row ? { ...row.note } : undefined;
+  }
+
   create = (folderId: string | null, kind: NoteKindDto) =>
     this.env.run(() => {
       this.checkPlace(folderId);

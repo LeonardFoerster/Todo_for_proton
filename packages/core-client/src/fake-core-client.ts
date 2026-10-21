@@ -18,6 +18,9 @@ import type {
   RecurrenceDto,
   SessionDto,
   SyncStatusDto,
+  LinkDto,
+  LinkedNoteDto,
+  LinkedTaskDto,
   TagDto,
   TaskDto,
   TaskDueDto,
@@ -75,7 +78,7 @@ export class FakeCoreClient implements CoreClient {
     this.now = options.now ?? (() => new Date());
     this.notes = new FakeNotes({
       run: (fn) => this.run(fn),
-      emit: (notes, noteFolders) => this.emitEvent({ tasks: [], lists: [], notes, noteFolders, tags: [] }),
+      emit: (notes, noteFolders) => this.emitEvent({ tasks: [], lists: [], notes, noteFolders, tags: [], links: [] }),
       now: () => this.now(),
       newId: () => this.newId(),
     });
@@ -164,6 +167,57 @@ export class FakeCoreClient implements CoreClient {
       // Wie im Core: gezählt werden nur Tasks außerhalb des Papierkorbs (mitgenommen werden alle).
       return moved.filter((r) => r.task.trashedAt == null).length;
     });
+
+  // --- Verknüpfungen (ADR-036) ---------------------------------------------------------------
+
+  private links = new Map<string, LinkDto>();
+  private unlinked = new Set<string>();
+
+  linkTaskNote = (taskId: string, noteId: string) =>
+    this.run(() => {
+      this.row(taskId);
+      if (!this.notes.peek(noteId)) throw new CoreClientError("notFound", `note ${noteId}`);
+      const existing = [...this.links.values()].find((l) => l.taskId === taskId && l.noteId === noteId);
+      if (existing) return { ...existing };
+      let id = `link:${taskId}:${noteId}`;
+      for (let n = 1; this.unlinked.has(id); n++) id = `link:${taskId}:${noteId}|${n}`;
+      const link = { id, taskId, noteId };
+      this.links.set(id, link);
+      this.emit([], [], [], [id]);
+      return { ...link };
+    });
+
+  unlink = (linkId: string) =>
+    this.run(() => {
+      if (this.links.delete(linkId)) {
+        this.unlinked.add(linkId);
+        this.emit([], [], [], [linkId]);
+      }
+    });
+
+  taskLinks = (taskId: string) =>
+    this.run((): LinkedNoteDto[] => {
+      const out: LinkedNoteDto[] = [];
+      for (const l of this.links.values()) {
+        if (l.taskId !== taskId) continue;
+        const note = this.notes.peek(l.noteId);
+        if (note && note.trashedAt == null) out.push({ linkId: l.id, noteId: note.id, name: note.name, kind: note.kind });
+      }
+      return out;
+    });
+
+  noteLinks = (noteId: string) =>
+    this.run((): LinkedTaskDto[] =>
+      [...this.links.values()].flatMap((l) => {
+        const row = l.noteId === noteId ? this.rows.get(l.taskId) : undefined;
+        return row && row.task.trashedAt == null ? [{ linkId: l.id, task: summary(this.dto(row), true) }] : [];
+      }),
+    );
+
+  private hasLinks(taskId: string): boolean {
+    for (const l of this.links.values()) if (l.taskId === taskId) return true;
+    return false;
+  }
 
   // --- Tags (ADR-035) ------------------------------------------------------------------------
 
@@ -569,7 +623,7 @@ export class FakeCoreClient implements CoreClient {
             ? rows.sort(byDue(view.day, byOrder(this.lists)))
             : rows.sort(byOrder(this.lists));
       const start = page.cursor ? Number(page.cursor) : 0;
-      const items = rows.slice(start, start + page.limit).map((r) => summary(this.dto(r)));
+      const items = rows.slice(start, start + page.limit).map((r) => summary(this.dto(r), this.hasLinks(r.task.id)));
       const end = start + items.length;
       return { items, nextCursor: end < rows.length ? String(end) : null };
     });
@@ -675,8 +729,8 @@ export class FakeCoreClient implements CoreClient {
     return fn();
   }
 
-  private emit(tasks: string[], lists: string[], tags: string[] = []) {
-    this.emitEvent({ tasks, lists, notes: [], noteFolders: [], tags });
+  private emit(tasks: string[], lists: string[], tags: string[] = [], links: string[] = []) {
+    this.emitEvent({ tasks, lists, notes: [], noteFolders: [], tags, links });
   }
 
   private emitEvent(event: ChangedEventDto) {
@@ -857,7 +911,7 @@ function byTrashed(a: Row, b: Row): number {
   return (b.task.trashedAt ?? "").localeCompare(a.task.trashedAt ?? "") || a.task.id.localeCompare(b.task.id);
 }
 
-function summary(t: TaskDto): TaskSummaryDto {
+function summary(t: TaskDto, hasLinks = false): TaskSummaryDto {
   return {
     id: t.id,
     listId: t.listId,
@@ -873,6 +927,7 @@ function summary(t: TaskDto): TaskSummaryDto {
     checklistDone: t.checklist.filter((i) => i.done).length,
     checklistTotal: t.checklist.length,
     tags: [...t.tags],
+    hasLinks,
   };
 }
 

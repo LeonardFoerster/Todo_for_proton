@@ -5,10 +5,10 @@ use chrono::Datelike;
 use rusqlite::{named_params, Connection, Row};
 use todo_core::{
     domain::{
-        ChecklistItem, ChecklistItemId, Due, NaiveDate, Note, NoteFolder, NoteFolderId,
-        NoteFolderParts, NoteId, NoteKind, NoteParts, Priority, RevisionId, SortKey, Tag, TagId,
-        TagParts, Task, TaskId, TaskList, TaskListId, TaskListParts, TaskParts, TaskStatus,
-        Timestamp,
+        ChecklistItem, ChecklistItemId, Due, Link, LinkId, LinkParts, NaiveDate, Note, NoteFolder,
+        NoteFolderId, NoteFolderParts, NoteId, NoteKind, NoteParts, Priority, RevisionId, SortKey,
+        Tag, TagId, TagParts, Task, TaskId, TaskList, TaskListId, TaskListParts, TaskParts,
+        TaskStatus, Timestamp,
     },
     ports::{NoteSummary, NoteTreeItem, TaskSummary},
     CoreResult,
@@ -23,6 +23,8 @@ pub(crate) const LIST_COLUMNS: &str = "id, name, sort_key, created_at, updated_a
 
 pub(crate) const TAG_COLUMNS: &str = "id, name, created_at, updated_at";
 
+pub(crate) const LINK_COLUMNS: &str = "id, task_id, note_id, created_at";
+
 const UPSERT_TAG: &str = "\
     INSERT INTO tags (id, name, created_at, updated_at) VALUES (:id, :name, :created_at, :updated_at)
     ON CONFLICT (id) DO UPDATE SET
@@ -32,7 +34,8 @@ const UPSERT_TAG: &str = "\
 pub(crate) const SUMMARY_COLUMNS: &str = "id, list_id, title, status, priority, due_date, due_at, \
      due_tz, notes <> '' AS has_notes, sort_key, completed_at, trashed_at, \
      (recurrence IS NOT NULL AND (due_date IS NOT NULL OR due_at IS NOT NULL)) AS recurring, \
-     checklist_done, checklist_total, tags";
+     checklist_done, checklist_total, tags, \
+     EXISTS (SELECT 1 FROM links WHERE links.task_id = tasks.id) AS has_links";
 
 pub(crate) const NOTE_COLUMNS: &str = "id, folder_id, name, auto_name, kind, body, body_rev, \
      sort_key, created_at, modified_at, trashed_at";
@@ -130,6 +133,35 @@ pub(crate) fn write_tag(conn: &Connection, tag: &Tag) -> CoreResult<()> {
     })
     .map_err(storage)?;
     Ok(())
+}
+
+/// Legt die Verknüpfung an (unveränderlich; ein zweites Mal ersetzt sie).
+pub(crate) fn write_link(conn: &Connection, link: &Link) -> CoreResult<()> {
+    conn.prepare_cached(
+        "INSERT INTO links (id, task_id, note_id, created_at) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT (id) DO UPDATE SET task_id = excluded.task_id, note_id = excluded.note_id,
+             created_at = excluded.created_at",
+    )
+    .and_then(|mut stmt| {
+        stmt.execute(rusqlite::params![
+            link.id().to_string(),
+            link.task().to_string(),
+            link.note().to_string(),
+            link.created_at().as_millis(),
+        ])
+    })
+    .map_err(storage)?;
+    Ok(())
+}
+
+/// Liest eine Zeile mit [`LINK_COLUMNS`].
+pub(crate) fn read_link(row: &Row<'_>) -> CoreResult<Link> {
+    Ok(Link::from_parts(LinkParts {
+        id: LinkId::parse(&get::<String>(row, 0)?).map_err(|e| corrupt("link id", e))?,
+        task: task_id(&get::<String>(row, 1)?)?,
+        note: note_id(&get::<String>(row, 2)?)?,
+        created_at: Timestamp::from_millis(get(row, 3)?),
+    }))
 }
 
 /// Liest eine Zeile mit [`TAG_COLUMNS`].
@@ -357,6 +389,7 @@ pub(crate) fn read_summary(row: &Row<'_>) -> CoreResult<TaskSummary> {
         checklist_done: get(row, 13)?,
         checklist_total: get(row, 14)?,
         tags: decode_tags(&get::<String>(row, 15)?)?,
+        has_links: get(row, 16)?,
     })
 }
 

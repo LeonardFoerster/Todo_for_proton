@@ -6,6 +6,7 @@
 mod checklist;
 mod due;
 mod ids;
+mod link;
 mod note;
 mod note_folder;
 mod note_name;
@@ -23,8 +24,10 @@ pub use checklist::{
 };
 pub use due::{Due, LocalDay, NaiveDate, DUE_TZ_MAX_CHARS};
 pub use ids::{
-    ChecklistItemId, DeviceId, NoteFolderId, NoteId, ParseIdError, TagId, TaskId, TaskListId,
+    ChecklistItemId, DeviceId, LinkId, NoteFolderId, NoteId, ParseIdError, TagId, TaskId,
+    TaskListId,
 };
+pub use link::{Link, LinkParts};
 pub use note::{
     check_body, normalize_line_endings, Note, NoteKind, NoteParts, RevisionId, NOTE_BODY_MAX_BYTES,
 };

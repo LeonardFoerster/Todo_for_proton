@@ -44,6 +44,8 @@ pub enum OpKind {
 - **Checkliste (N8, ADR-034)**: Feld `Checklist` (Code 18), LWW auf die ganze Liste der Punkte `{id, text, done}`.
 - **Tag-Entity (N8, ADR-035)**: `EntityRef::Tag` mit `Name`/`CreatedAt`; die ID ist aus dem Namen abgeleitet
   (UUIDv5), damit offline doppelt angelegte Tags zu einem werden.
+- **Verknüpfung (N9, ADR-036)**: `EntityRef::Link` mit `LinkTask`/`LinkNote` (19/20), ID aus beiden Enden; nur
+  anlegen und löschen.
 - **Tags**: v1 LWW auf die ganze Menge; bei Bedarf Upgrade auf OR-Set über `AddToSet`/`RemoveFromSet`.
 - **Reihenfolge**: `sort_key` als Fractional Index (String, z. B. Base62). Verschieben ändert nur
   das eine Feld der bewegten Task. Gleiche Keys nach parallelen Moves → Tie-Break über `TaskId`.

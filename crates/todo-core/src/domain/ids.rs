@@ -147,6 +147,10 @@ define_id!(
     ChecklistItemId
 );
 define_id!(
+    /// ID einer Verknüpfung Task ↔ Notiz (N9, ADR-036).
+    LinkId
+);
+define_id!(
     /// ID eines Geräts (eine Installation der App).
     DeviceId
 );
@@ -189,6 +193,24 @@ impl TagId {
         Self(Uuid::new_v5(&TAG_ID_NAMESPACE, &name))
     }
 }
+
+impl LinkId {
+    /// Deterministische ID (UUIDv5, ADR-036) aus Task und Notiz; `attempt` > 0 nach einem
+    /// gelöschten Link desselben Paars (Tombstone).
+    #[must_use]
+    pub fn between(task: TaskId, note: NoteId, attempt: u8) -> Self {
+        let mut name = Vec::with_capacity(33);
+        name.extend_from_slice(&task.to_bytes());
+        name.extend_from_slice(&note.to_bytes());
+        if attempt > 0 {
+            name.push(attempt);
+        }
+        Self(Uuid::new_v5(&LINK_ID_NAMESPACE, &name))
+    }
+}
+
+/// Fester Namensraum für [`LinkId::between`]. **Nie ändern.**
+const LINK_ID_NAMESPACE: Uuid = Uuid::from_u128(0x6c69_6e6b_2d74_6173_6b6e_6f74_6500_0001);
 
 /// Fester Namensraum für [`TagId::derived`]. **Nie ändern** (sonst doppeln sich Tags).
 const TAG_ID_NAMESPACE: Uuid = Uuid::from_u128(0x7461_672d_6e61_6d65_0000_0000_0000_0001);

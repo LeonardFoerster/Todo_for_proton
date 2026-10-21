@@ -347,6 +347,8 @@ pub struct TaskSummaryDto {
     pub checklist_total: u16,
     /// Tag-IDs (ADR-035).
     pub tags: Vec<String>,
+    /// Mit Notizen verknüpft (ADR-036).
+    pub has_links: bool,
 }
 
 impl From<&TaskSummary> for TaskSummaryDto {
@@ -366,6 +368,7 @@ impl From<&TaskSummary> for TaskSummaryDto {
             checklist_done: s.checklist_done,
             checklist_total: s.checklist_total,
             tags: s.tags.iter().map(ToString::to_string).collect(),
+            has_links: s.has_links,
         }
     }
 }

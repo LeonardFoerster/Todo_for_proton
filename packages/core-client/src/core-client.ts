@@ -25,6 +25,9 @@ import type {
   PageRequestDto,
   SessionDto,
   SyncStatusDto,
+  LinkDto,
+  LinkedNoteDto,
+  LinkedTaskDto,
   TagDto,
   TaskDto,
   TaskDueDto,
@@ -141,6 +144,13 @@ export interface CoreClient {
   renameTag(id: string, name: string): Promise<TagDto>;
   /** Nimmt ihn von allen Tasks; liefert deren Zahl. */
   deleteTag(id: string): Promise<number>;
+
+  // Verknüpfungen Task ↔ Notiz (ADR-036): ID aus beiden Enden; fehlende/gelöschte Enden ausgeblendet.
+  /** Schon verknüpft: dieselbe Verknüpfung. */
+  linkTaskNote(taskId: string, noteId: string): Promise<LinkDto>;
+  unlink(linkId: string): Promise<void>;
+  taskLinks(taskId: string): Promise<LinkedNoteDto[]>;
+  noteLinks(noteId: string): Promise<LinkedTaskDto[]>;
 
   createTask(input: CreateTaskDto): Promise<TaskDto>;
   getTask(id: string): Promise<TaskDto>;

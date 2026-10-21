@@ -31,8 +31,8 @@ use todo_core::api::{
         TaskPatchDto, TaskQueryDto, TaskSummaryDto,
     },
     note_dto::{
-        ImportReportDto, NoteDto, NoteFolderDto, NoteHitDto, NoteItemDto, NoteKindDto,
-        NoteTargetDto, NoteTrashEntryDto, NoteTreeItemDto,
+        ImportReportDto, LinkDto, LinkedNoteDto, LinkedTaskDto, NoteDto, NoteFolderDto, NoteHitDto,
+        NoteItemDto, NoteKindDto, NoteTargetDto, NoteTrashEntryDto, NoteTreeItemDto,
     },
 };
 use todo_sync::SchedulerEvent;
@@ -73,6 +73,36 @@ pub async fn rename_task_list(
     let list = state.api.rename_task_list(id, name).await?;
     state.sync.local_change();
     Ok(list)
+}
+
+// --- Verknüpfungen Task ↔ Notiz (ADR-036) ----------------------------------------------------
+
+#[tauri::command]
+pub async fn link_task_note(
+    state: State<'_, AppState>,
+    task: String,
+    note: String,
+) -> Result<LinkDto> {
+    let link = state.api.link_task_note(task, note).await?;
+    state.sync.local_change();
+    Ok(link)
+}
+
+#[tauri::command]
+pub async fn unlink(state: State<'_, AppState>, id: String) -> Result<()> {
+    state.api.unlink(id).await?;
+    state.sync.local_change();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn task_links(state: State<'_, AppState>, task: String) -> Result<Vec<LinkedNoteDto>> {
+    Ok(state.api.task_links(task).await?)
+}
+
+#[tauri::command]
+pub async fn note_links(state: State<'_, AppState>, note: String) -> Result<Vec<LinkedTaskDto>> {
+    Ok(state.api.note_links(note).await?)
 }
 
 // --- Tags (ADR-035) ---------------------------------------------------------------------------

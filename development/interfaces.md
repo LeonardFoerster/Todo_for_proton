@@ -502,6 +502,9 @@ export interface CoreClient {
   // N8, ADR-035: Tags – Namen ohne `#`, ID aus dem Namen abgeleitet; Tasks tragen IDs (`tags`, ≤ 20)
   listTags(): Promise<TagDto[]>; ensureTag(name: string): Promise<TagDto>;
   renameTag(id: string, name: string): Promise<TagDto>; deleteTag(id: string): Promise<number>;
+  // N9, ADR-036: Verknüpfungen Task ↔ Notiz (ID aus beiden Enden; fehlende/gelöschte Enden ausgeblendet)
+  linkTaskNote(taskId, noteId): Promise<LinkDto>; unlink(linkId): Promise<void>;
+  taskLinks(taskId): Promise<LinkedNoteDto[]>; noteLinks(noteId): Promise<LinkedTaskDto[]>;
   skipOccurrence(id: string, today?: LocalDayDto): Promise<TaskDto>;  // nur vorrücken, kein Verlauf
   undoOccurrence(o: OccurrenceDto): Promise<TaskDto>;                  // {seriesId, occurrenceId|null, previousDue}
   deleteTasks(ids: string[]): Promise<TaskDto[]>;                    // Zustand vor dem Löschen

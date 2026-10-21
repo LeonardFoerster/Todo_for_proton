@@ -84,6 +84,7 @@ fn full_flow_inbox_create_move_complete_list() {
             notes: Vec::new(),
             note_folders: Vec::new(),
             tags: Vec::new(),
+            links: Vec::new(),
         }]
     );
     assert_eq!(block_on(api.ensure_inbox()).unwrap(), inbox, "idempotent");
@@ -123,6 +124,7 @@ fn full_flow_inbox_create_move_complete_list() {
             notes: Vec::new(),
             note_folders: Vec::new(),
             tags: Vec::new(),
+            links: Vec::new(),
         }]
     );
 
@@ -243,6 +245,7 @@ fn update_due_today_view_and_deletes() {
             notes: Vec::new(),
             note_folders: Vec::new(),
             tags: Vec::new(),
+            links: Vec::new(),
         }]
     );
     assert_eq!(titles(&api, ViewDto::Inbox), ["Bericht"]);

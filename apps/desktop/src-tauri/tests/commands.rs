@@ -269,6 +269,26 @@ fn only_writing_commands_trigger_a_sync() {
     );
     assert_eq!(a["tags"], json!([tag["id"]]));
     assert_eq!(expect("delete_tag", json!({ "id": tag["id"] }), 1), 1);
+    // Verknüpfungen (ADR-036): Lesen löst nichts aus.
+    let note = expect(
+        "create_note",
+        json!({ "folder": null, "kind": "markdown" }),
+        1,
+    );
+    let link = expect(
+        "link_task_note",
+        json!({ "task": a["id"], "note": note["id"] }),
+        1,
+    );
+    assert_eq!(
+        expect("task_links", json!({ "task": a["id"] }), 0)[0]["noteId"],
+        note["id"]
+    );
+    assert_eq!(
+        expect("note_links", json!({ "note": note["id"] }), 0)[0]["task"]["id"],
+        a["id"]
+    );
+    expect("unlink", json!({ "id": link["id"] }), 1);
     let b = expect("create_task", json!({ "input": { "title": "b" } }), 1);
     expect(
         "update_task",

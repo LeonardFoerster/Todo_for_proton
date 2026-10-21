@@ -16,6 +16,7 @@ mod edit_note;
 mod ensure_inbox;
 mod export_data;
 mod import_notes;
+mod links;
 mod move_note_items;
 mod move_task;
 mod move_task_list;
@@ -61,6 +62,7 @@ pub use export_data::{
 pub use import_notes::{
     ImportNoteFile, ImportNotes, ImportNotesInput, ImportReport, ImportSkip, IMPORT_CHUNK,
 };
+pub use links::{LinkTaskNote, ListLinks, PurgeDanglingLinks, UnlinkTaskNote};
 pub use move_note_items::{
     MoveNote, MoveNoteFolder, MoveNoteFolderInput, MoveNoteInput, NoteTarget,
 };
