@@ -728,7 +728,7 @@ const p002: Step[] = [
       for (const title of ["s1", "s2", "s3"]) ids.push((await client.createTask({ title, listId: list.id })).id);
       const events: string[][] = [];
       const off = client.onChange((e) => events.push(e.tasks));
-      const done = await client.completeTasks([...ids, ids[0]], true);
+      const { tasks: done } = await client.completeTasks([...ids, ids[0]], true);
       const moved = await client.moveTasks([ids[2], ids[1]], { listId: list.id, before: ids[0] });
       const deleted = await client.deleteTasks(ids);
       const restored = await client.restoreTasks(deleted);

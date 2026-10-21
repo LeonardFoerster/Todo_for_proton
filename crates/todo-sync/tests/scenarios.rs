@@ -334,3 +334,116 @@ fn clock_two_hours_ahead_stays_consistent() {
     c.sync();
     assert_converged(&[&a, &b, &c]);
 }
+
+fn today(date: &str) -> Option<todo_core::api::dto::LocalDayDto> {
+    Some(todo_core::api::dto::LocalDayDto {
+        date: date.into(),
+        start: format!("{date}T00:00:00.000Z"),
+        end: format!("{date}T23:59:59.999Z"),
+    })
+}
+
+fn daily_series(device: &Device, due: &str) -> todo_core::api::dto::TaskDto {
+    use todo_core::api::dto::{CreateTaskDto, FrequencyDto, RecurrenceAnchorDto, RecurrenceDto};
+    block_on(device.api.create_task(CreateTaskDto {
+        title: "Blumen gießen".into(),
+        due: Some(DueDto::Date { date: due.into() }),
+        recurrence: Some(RecurrenceDto {
+            freq: FrequencyDto::Daily,
+            interval: 1,
+            weekdays: Vec::new(),
+            month_day: None,
+            anchor: RecurrenceAnchorDto::Schedule,
+            until: None,
+        }),
+        ..CreateTaskDto::default()
+    }))
+    .expect("create series")
+}
+
+/// Serien (ADR-028): A und B haken offline dasselbe Vorkommen ab → **ein** Verlaufseintrag
+/// (deterministische ID), gleiche Fälligkeit.
+#[test]
+fn completing_the_same_occurrence_on_two_devices_gives_one_entry() {
+    let world = World::new();
+    let a = world.device("a");
+    let b = world.device("b");
+    let series = daily_series(&a, "2026-10-21");
+    a.sync();
+    b.sync();
+
+    let ra = block_on(
+        a.api
+            .complete_tasks(vec![series.id.clone()], true, today("2026-10-21")),
+    )
+    .unwrap();
+    b.clock.advance(50);
+    let rb = block_on(
+        b.api
+            .complete_tasks(vec![series.id.clone()], true, today("2026-10-21")),
+    )
+    .unwrap();
+    assert_eq!(
+        ra.occurrences[0].occurrence_id,
+        rb.occurrences[0].occurrence_id
+    );
+
+    a.sync();
+    b.sync();
+    a.sync();
+    for device in [&a, &b] {
+        assert_eq!(
+            device.titles(),
+            ["Blumen gießen", "Blumen gießen"],
+            "Serie + ein Eintrag"
+        );
+        let s = device.task(&series.id).unwrap();
+        assert_eq!(
+            s.due,
+            Some(DueDto::Date {
+                date: "2026-10-22".into()
+            })
+        );
+    }
+    assert_converged(&[&a, &b]);
+}
+
+/// A überspringt, B hakt ab (beide offline) → beide schreiben dieselbe nächste Fälligkeit; Bs
+/// Verlaufseintrag bleibt. Ergebnis: Serie am 22., ein Eintrag für den 21.
+#[test]
+fn skip_and_complete_of_the_same_occurrence_converge() {
+    let world = World::new();
+    let a = world.device("a");
+    let b = world.device("b");
+    let series = daily_series(&a, "2026-10-21");
+    a.sync();
+    b.sync();
+
+    block_on(
+        a.api
+            .skip_occurrence(series.id.clone(), today("2026-10-21")),
+    )
+    .unwrap();
+    b.clock.advance(50);
+    block_on(
+        b.api
+            .complete_tasks(vec![series.id.clone()], true, today("2026-10-21")),
+    )
+    .unwrap();
+
+    b.sync();
+    a.sync();
+    b.sync();
+    for device in [&a, &b] {
+        assert_eq!(device.titles().len(), 2);
+        let s = device.task(&series.id).unwrap();
+        assert_eq!(
+            s.due,
+            Some(DueDto::Date {
+                date: "2026-10-22".into()
+            })
+        );
+        assert_eq!(s.status, todo_core::api::dto::TaskStatusDto::Open);
+    }
+    assert_converged(&[&a, &b]);
+}

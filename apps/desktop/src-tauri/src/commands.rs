@@ -8,6 +8,7 @@
 //!   (abhaken/öffnen), `move_task` (Liste/Reihenfolge), `delete_task`
 //! - Sammelaktionen (ein Aufruf = eine Meldung): `complete_tasks`, `delete_tasks`, `move_tasks`,
 //!   `restore_tasks`, `set_dues`
+//! - Serien (ADR-028): `skip_occurrence`, `undo_occurrence`
 //! - Papierkorb der Tasks (ADR-031): `trash_tasks`, `untrash_tasks`, `purge_tasks`, `empty_task_trash`
 //! - Notizen (ADR-029): `create_note`, `discard_empty_note` (nur wenn verworfen), `rename_note`,
 //!   `set_note_kind`, `move_note`, `create_note_folder`, `rename_note_folder`, `move_note_folder`,
@@ -25,8 +26,9 @@
 use tauri::State;
 use todo_core::api::{
     dto::{
-        CreateTaskDto, MoveListTargetDto, MoveTargetDto, PageDto, PageRequestDto, TaskDto,
-        TaskDueDto, TaskListDto, TaskPatchDto, TaskQueryDto, TaskSummaryDto,
+        CompleteResultDto, CreateTaskDto, LocalDayDto, MoveListTargetDto, MoveTargetDto,
+        OccurrenceDto, PageDto, PageRequestDto, TaskDto, TaskDueDto, TaskListDto, TaskPatchDto,
+        TaskQueryDto, TaskSummaryDto,
     },
     note_dto::{
         ImportReportDto, NoteDto, NoteFolderDto, NoteHitDto, NoteItemDto, NoteKindDto,
@@ -148,10 +150,34 @@ pub async fn complete_tasks(
     state: State<'_, AppState>,
     ids: Vec<String>,
     done: bool,
-) -> Result<Vec<TaskDto>> {
-    let tasks = state.api.complete_tasks(ids, done).await?;
+    today: Option<LocalDayDto>,
+) -> Result<CompleteResultDto> {
+    let result = state.api.complete_tasks(ids, done, today).await?;
     state.sync.local_change();
-    Ok(tasks)
+    Ok(result)
+}
+
+/// „Dieses Mal überspringen“ (Serie, ADR-028).
+#[tauri::command]
+pub async fn skip_occurrence(
+    state: State<'_, AppState>,
+    id: String,
+    today: Option<LocalDayDto>,
+) -> Result<TaskDto> {
+    let task = state.api.skip_occurrence(id, today).await?;
+    state.sync.local_change();
+    Ok(task)
+}
+
+/// Rückgängig nach dem Abhaken einer Serie.
+#[tauri::command]
+pub async fn undo_occurrence(
+    state: State<'_, AppState>,
+    occurrence: OccurrenceDto,
+) -> Result<TaskDto> {
+    let task = state.api.undo_occurrence(occurrence).await?;
+    state.sync.local_change();
+    Ok(task)
 }
 
 #[tauri::command]

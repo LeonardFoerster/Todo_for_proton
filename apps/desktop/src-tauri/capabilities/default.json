@@ -21,6 +21,8 @@
     "allow-move-task",
     "allow-delete-task",
     "allow-complete-tasks",
+    "allow-skip-occurrence",
+    "allow-undo-occurrence",
     "allow-delete-tasks",
     "allow-trash-tasks",
     "allow-untrash-tasks",

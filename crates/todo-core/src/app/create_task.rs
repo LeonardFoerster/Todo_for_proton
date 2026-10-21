@@ -2,7 +2,7 @@
 
 use super::{key_after, Deps, EnsureInbox};
 use crate::{
-    domain::{Due, Priority, Task, TaskListId},
+    domain::{Due, Priority, Recurrence, Task, TaskListId},
     ports::ChangeSet,
     CoreError, CoreResult,
 };
@@ -15,6 +15,8 @@ pub struct CreateTaskInput {
     pub notes: String,
     pub priority: Priority,
     pub due: Option<Due>,
+    /// Wiederholung (N4); ohne `due` wird das erste Vorkommen ab heute die Fälligkeit.
+    pub recurrence: Option<Recurrence>,
 }
 
 /// Legt eine offene Task am Ende der Zielliste an – mit allen Anfangswerten in einem Commit.
@@ -49,6 +51,9 @@ impl CreateTask {
         task.set_notes(&input.notes, clock);
         task.set_priority(input.priority, clock);
         task.set_due(input.due, clock)?;
+        if let Some(rule) = input.recurrence {
+            super::recurring::apply_rule(&mut task, &rule, self.deps.zones.as_deref(), clock)?;
+        }
         repo.commit(ChangeSet::new().upsert_task(task.clone()))
             .await?;
         Ok(task)

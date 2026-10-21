@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CoreClientError } from "./errors";
 import { FakeCoreClient } from "./fake-core-client";
-import type { ChangedEventDto, LocalDayDto, TaskQueryDto } from "./types";
+import type { ChangedEventDto, LocalDayDto, RecurrenceDto, TaskQueryDto } from "./types";
 
 const inbox: TaskQueryDto = { view: { kind: "inbox" } };
 const day: LocalDayDto = { date: "2026-10-18", start: "2026-10-17T22:00:00.000Z", end: "2026-10-18T22:00:00.000Z" };
@@ -199,11 +199,12 @@ describe("FakeCoreClient", () => {
       await core.completeTask(of("a")[0], true);
       await flush();
       const done = await core.completeTasks([...of("abc"), "unknown", ...of("b")], true);
-      expect(done.map((t) => t.title)).toEqual(["b", "c"]);
+      expect(done.tasks.map((t) => t.title)).toEqual(["b", "c"]);
+      expect(done.occurrences).toEqual([]);
       expect(await flush()).toEqual([{ tasks: of("bc"), lists: [], notes: [], noteFolders: [] }]);
-      expect(await core.completeTasks(of("bc"), true)).toEqual([]);
+      expect(await core.completeTasks(of("bc"), true)).toEqual({ tasks: [], occurrences: [] });
       expect(await flush()).toEqual([]);
-      expect((await core.completeTasks(of("abc"), false)).every((t) => t.completedAt === null)).toBe(true);
+      expect((await core.completeTasks(of("abc"), false)).tasks.every((t) => t.completedAt === null)).toBe(true);
       await expect(core.completeTasks(Array(2001).fill("x"), true)).rejects.toMatchObject({ kind: "validation" });
     });
 
@@ -313,5 +314,32 @@ describe("FakeCoreClient", () => {
     await core.trashTasks([b.id]);
     expect(await core.emptyTaskTrash()).toBe(1);
     expect(await titles(core, { view: { kind: "all" } })).toEqual([]);
+  });
+
+  it("recurring tasks: complete keeps the series open with a history entry, skip and undo", async () => {
+    const { core } = await setup();
+    const daily: RecurrenceDto = { freq: "daily", interval: 1, weekdays: [], anchor: "schedule" };
+    const s = await core.createTask({ title: "Gießen", due: { kind: "date", date: "2026-10-15" }, recurrence: daily });
+    expect(s.recurrence).toMatchObject({ freq: "daily" });
+    const day = (date: string) => ({ date, start: `${date}T00:00:00.000Z`, end: `${date}T23:59:59.999Z` });
+    const res = await core.completeTasks([s.id], true, day("2026-10-21"));
+    expect(res.tasks.map((t) => [t.id, t.status])).toEqual([[s.id, "open"], [`${s.id}:2026-10-15`, "done"]]);
+    expect(res.tasks[0].due).toEqual({ kind: "date", date: "2026-10-21" });
+    expect(res.occurrences).toEqual([{ seriesId: s.id, occurrenceId: `${s.id}:2026-10-15`, previousDue: { kind: "date", date: "2026-10-15" } }]);
+    const summaries = (await core.listTasks({ view: { kind: "all" } }, { limit: 10 })).items;
+    expect(summaries.map((t) => t.recurring)).toEqual([true, false]);
+
+    const undone = await core.undoOccurrence(res.occurrences[0]);
+    expect(undone.due).toEqual({ kind: "date", date: "2026-10-15" });
+    expect(await titles(core, { view: { kind: "all" } })).toEqual(["Gießen"]);
+
+    expect((await core.skipOccurrence(s.id, day("2026-10-21"))).due).toEqual({ kind: "date", date: "2026-10-21" });
+    // Ende erreicht → Serie erledigt; Fälligkeit entfernen beendet die Wiederholung.
+    await core.updateTask(s.id, { recurrence: { ...daily, until: "2026-10-21" } });
+    const last = await core.completeTasks([s.id], true, day("2026-10-21"));
+    expect(last.occurrences[0].occurrenceId).toBeNull();
+    expect(last.tasks[0].status).toBe("done");
+    expect((await core.updateTask(s.id, { due: null })).recurrence).toBeNull();
+    await expect(core.skipOccurrence(s.id)).rejects.toMatchObject({ kind: "validation" });
   });
 });

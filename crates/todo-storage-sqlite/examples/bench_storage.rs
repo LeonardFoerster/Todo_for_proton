@@ -252,7 +252,7 @@ fn main() {
         measure(10, || {
             round += 1;
             let done = round % 2 == 1;
-            drop(block_on(api.complete_tasks(block(5), done)).expect("complete"));
+            drop(block_on(api.complete_tasks(block(5), done, None)).expect("complete"));
         }),
         Some(ms(50)),
     );

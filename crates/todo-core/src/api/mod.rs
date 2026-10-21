@@ -14,8 +14,9 @@ use std::{
 
 use self::{
     dto::{
-        list_id, task_id, CreateTaskDto, MoveListTargetDto, MoveTargetDto, PageDto, PageRequestDto,
-        TaskDto, TaskDueDto, TaskListDto, TaskPatchDto, TaskQueryDto, TaskSummaryDto,
+        list_id, task_id, CompleteResultDto, CreateTaskDto, DueDto, LocalDayDto, MoveListTargetDto,
+        MoveTargetDto, OccurrenceDto, PageDto, PageRequestDto, TaskDto, TaskDueDto, TaskListDto,
+        TaskPatchDto, TaskQueryDto, TaskSummaryDto,
     },
     note_dto::{
         folder_id, note_id, revision_id, ImportNoteFileDto, ImportReportDto, NoteConflictDto,
@@ -47,6 +48,7 @@ use crate::{
         TrashTasksInput, UntrashTasks, UntrashTasksInput,
     },
     app::{ExportData, ExportNotes, ImportData, ImportDataInput},
+    app::{SkipOccurrence, SkipOccurrenceInput, UndoOccurrence, UndoOccurrenceInput},
     domain::{
         DeviceId, Note, NoteFolder, NoteFolderId, NoteId, SortKey, Task, TaskId, TaskList,
         TaskListId, TaskParts,
@@ -217,6 +219,11 @@ impl CoreApi {
             notes: input.notes.unwrap_or_default(),
             priority: input.priority.map(Into::into).unwrap_or_default(),
             due: input.due.map(TryInto::try_into).transpose()?,
+            recurrence: input
+                .recurrence
+                .as_ref()
+                .map(TryInto::try_into)
+                .transpose()?,
         };
         Ok((&CreateTask::new(self.deps.clone()).execute(input).await?).into())
     }
@@ -246,6 +253,10 @@ impl CoreApi {
             due: patch
                 .due
                 .map(|due| due.map(TryInto::try_into).transpose())
+                .transpose()?,
+            recurrence: patch
+                .recurrence
+                .map(|r| r.as_ref().map(TryInto::try_into).transpose())
                 .transpose()?,
         };
         let input = UpdateTaskInput {
@@ -299,14 +310,77 @@ impl CoreApi {
     ///
     /// # Errors
     /// `Validation` (ID, mehr als [`crate::app::BULK_LIMIT_MAX`]).
-    pub async fn complete_tasks(&self, ids: Vec<String>, done: bool) -> CoreResult<Vec<TaskDto>> {
+    pub async fn complete_tasks(
+        &self,
+        ids: Vec<String>,
+        done: bool,
+        today: Option<LocalDayDto>,
+    ) -> CoreResult<CompleteResultDto> {
         let input = CompleteTasksInput {
             ids: task_ids(&ids)?,
             done,
+            today: today
+                .as_ref()
+                .map(crate::domain::LocalDay::try_from)
+                .transpose()?
+                .map(|d| d.date()),
         };
-        Ok(dtos(
-            &CompleteTasks::new(self.deps.clone()).execute(input).await?,
-        ))
+        let out = CompleteTasks::new(self.deps.clone()).execute(input).await?;
+        Ok(CompleteResultDto {
+            tasks: dtos(&out.changed),
+            occurrences: out
+                .occurrences
+                .iter()
+                .map(|o| OccurrenceDto {
+                    series_id: o.series.to_string(),
+                    occurrence_id: o.occurrence.map(|id| id.to_string()),
+                    previous_due: DueDto::from(&o.previous_due),
+                })
+                .collect(),
+        })
+    }
+
+    /// „Dieses Mal überspringen“: Serie aufs nächste Vorkommen, ohne Verlaufseintrag (ADR-028).
+    ///
+    /// # Errors
+    /// `NotFound`, `Validation` (keine offene Serie, Zeitzonen fehlen).
+    pub async fn skip_occurrence(
+        &self,
+        id: String,
+        today: Option<LocalDayDto>,
+    ) -> CoreResult<TaskDto> {
+        let input = SkipOccurrenceInput {
+            id: task_id(&id)?,
+            today: today
+                .as_ref()
+                .map(crate::domain::LocalDay::try_from)
+                .transpose()?
+                .map(|d| d.date()),
+        };
+        Ok((&SkipOccurrence::new(self.deps.clone())
+            .execute(input)
+            .await?)
+            .into())
+    }
+
+    /// Rückgängig nach dem Abhaken einer Serie: Verlaufseintrag weg, alte Fälligkeit zurück.
+    ///
+    /// # Errors
+    /// `NotFound` (Serie), `Validation`.
+    pub async fn undo_occurrence(&self, occurrence: OccurrenceDto) -> CoreResult<TaskDto> {
+        let input = UndoOccurrenceInput {
+            series: task_id(&occurrence.series_id)?,
+            occurrence: occurrence
+                .occurrence_id
+                .as_deref()
+                .map(task_id)
+                .transpose()?,
+            previous_due: Some(occurrence.previous_due.try_into()?),
+        };
+        Ok((&UndoOccurrence::new(self.deps.clone())
+            .execute(input)
+            .await?)
+            .into())
     }
 
     /// Löscht alle; liefert die gelöschten Tasks im Zustand davor (für `restore_tasks`).
@@ -1211,8 +1285,8 @@ mod bulk_tests {
     #[test]
     fn each_bulk_call_is_one_commit_with_one_event() {
         let s = setup();
-        let done = block_on(s.api.complete_tasks(s.ids.clone(), true)).unwrap();
-        assert_eq!(done.len(), 3);
+        let done = block_on(s.api.complete_tasks(s.ids.clone(), true, None)).unwrap();
+        assert_eq!(done.tasks.len(), 3);
         let (events, ops) = s.take();
         assert_eq!(events, changed(&s.ids));
         assert_eq!(fields(&ops), vec![Some(FieldName::Status); 3]);
@@ -1235,7 +1309,7 @@ mod bulk_tests {
             .iter()
             .map(|id| TaskDueDto {
                 id: id.clone(),
-                due: Some(dto::DueDto::Date {
+                due: Some(DueDto::Date {
                     date: "2026-10-20".into(),
                 }),
             })
@@ -1280,11 +1354,13 @@ mod bulk_tests {
     #[test]
     fn noop_and_invalid_calls_emit_nothing() {
         let s = setup();
-        assert!(block_on(s.api.complete_tasks(Vec::new(), true))
+        assert!(block_on(s.api.complete_tasks(Vec::new(), true, None))
             .unwrap()
+            .tasks
             .is_empty());
-        assert!(block_on(s.api.complete_tasks(s.ids.clone(), false))
+        assert!(block_on(s.api.complete_tasks(s.ids.clone(), false, None))
             .unwrap()
+            .tasks
             .is_empty());
         assert!(matches!(
             block_on(s.api.delete_tasks(vec![s.ids[0].clone(), "kaputt".into()])),
@@ -1368,7 +1444,7 @@ mod tests {
             Arc::new(crate::ports::FixedClock(crate::domain::Timestamp::EPOCH)),
         );
         assert_send(api.ensure_inbox());
-        assert_send(api.complete_tasks(Vec::new(), true));
+        assert_send(api.complete_tasks(Vec::new(), true, None));
         assert_send(api.delete_tasks(Vec::new()));
         assert_send(api.set_dues(Vec::new()));
         assert_send(api.search_tasks(String::new(), 10));

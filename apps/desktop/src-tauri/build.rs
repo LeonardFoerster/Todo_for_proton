@@ -14,6 +14,8 @@ const COMMANDS: &[&str] = &[
     "move_task",
     "delete_task",
     "complete_tasks",
+    "skip_occurrence",
+    "undo_occurrence",
     "delete_tasks",
     "trash_tasks",
     "untrash_tasks",

@@ -3,10 +3,12 @@ import type {
   AuthStepDto,
   BackgroundSettingsDto,
   ChangedEventDto,
+  CompleteResultDto,
   CreateTaskDto,
   ExportResultDto,
   ImportDataReportDto,
   ImportReportDto,
+  LocalDayDto,
   MoveListTargetDto,
   MoveTargetDto,
   NoteConflictDto,
@@ -18,6 +20,7 @@ import type {
   NoteTargetDto,
   NoteTrashEntryDto,
   NoteTreeItemDto,
+  OccurrenceDto,
   PageDto,
   PageRequestDto,
   SessionDto,
@@ -131,6 +134,7 @@ export interface CoreClient {
   createTask(input: CreateTaskDto): Promise<TaskDto>;
   getTask(id: string): Promise<TaskDto>;
   updateTask(id: string, patch: TaskPatchDto): Promise<TaskDto>;
+  /** Eine Serie (ADR-028) bleibt offen und rückt vor; Tag = UTC-Datum – die UI nimmt `completeTasks` mit `today`. */
   completeTask(id: string, done: boolean): Promise<TaskDto>;
   moveTask(id: string, target: MoveTargetDto): Promise<TaskDto>;
   deleteTask(id: string): Promise<void>;
@@ -140,8 +144,16 @@ export interface CoreClient {
 
   // Sammelaktionen (ADR-021): ein Aufruf, ein Commit, ein `onChange`. Unbekannte IDs werden
   // übersprungen; Ergebnis = tatsächlich geänderte Tasks. Höchstens 2 000 je Aufruf.
-  /** Abhaken bzw. wieder öffnen; Tasks im Zielzustand fehlen im Ergebnis. */
-  completeTasks(ids: string[], done: boolean): Promise<TaskDto[]>;
+  /**
+   * Abhaken bzw. wieder öffnen; Tasks im Zielzustand fehlen im Ergebnis. Eine Serie (ADR-028) bleibt
+   * offen: Sie bekommt einen erledigten Verlaufseintrag (in `tasks` hinter den übrigen) und ihr nächstes
+   * Vorkommen ab `today` (lokaler Tag; ohne = UTC-Datum). `occurrences` dient „Rückgängig“.
+   */
+  completeTasks(ids: string[], done: boolean, today?: LocalDayDto): Promise<CompleteResultDto>;
+  /** „Dieses Mal überspringen“: Serie rückt vor, kein Verlaufseintrag (endet sie, ist sie erledigt). */
+  skipOccurrence(id: string, today?: LocalDayDto): Promise<TaskDto>;
+  /** Rückgängig nach dem Abhaken einer Serie: Eintrag weg, alte Fälligkeit, wieder offen. */
+  undoOccurrence(occurrence: OccurrenceDto): Promise<TaskDto>;
   /** Liefert die gelöschten Tasks im Zustand davor (für `restoreTasks`). */
   deleteTasks(ids: string[]): Promise<TaskDto[]>;
   /** Verschiebt die Tasks als Block in bisheriger Reihenfolge; ohne `listId` in ihre gemeinsame Liste. */

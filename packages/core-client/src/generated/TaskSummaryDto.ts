@@ -10,4 +10,8 @@ export type TaskSummaryDto = { id: string, listId: string, title: string, status
 /**
  * Im Papierkorb seit (ADR-031; nur in der Ansicht „Papierkorb“ gesetzt).
  */
-trashedAt: string | null, };
+trashedAt: string | null, 
+/**
+ * Wirksame Serie (N4) – Symbol in der Zeile.
+ */
+recurring: boolean, };

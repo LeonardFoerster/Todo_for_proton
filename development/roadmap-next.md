@@ -317,7 +317,7 @@ Verlauf an. Das funktioniert offline auf mehreren Geräten ohne Duplikate.
 beenden" (COUNT), Ausnahmen für einzelne Termine, hochgezählte Titel („Übungsblatt 3 → 4"), Verlauf als eigene
 Ansicht je Serie (mit Verknüpfungen aus N3 möglich), Erinnerungen.
 
-### [ ] N4-01 · ADR-028 + Domain `Recurrence`
+### [x] N4-01 · ADR-028 + Domain `Recurrence` — 2026-10-21 · 29eaa94
 **Lies vorher:** `sync-strategy.md` §2, ADR-011, ADR-016, `crates/todo-core/src/domain/due.rs`, `domain/task.rs`.
 **Schritte:**
 1. ADR-028 „Wiederkehrende Tasks: Serie mit fortgeschriebener Fälligkeit + deterministische Verlaufseinträge"
@@ -336,7 +336,8 @@ Ansicht je Serie (mit Verknüpfungen aus N3 möglich), Erinnerungen.
    Wochengrenze, `interval` 2/3, `until`), Property-Tests: Ergebnis > `previous`, ≥ `min`, passt zur Regel, monoton.
 **Fertig wenn:** `just check` grün, ADR-028 eingetragen. Commit `feat(core): recurrence rule`.
 
-### [ ] N4-02 · Sync-Format und SQLite
+### [x] N4-02 · Sync-Format und SQLite — 2026-10-21 · 29eaa94
+> Notiz: Zusammen mit N4-01 committet (Feld `Recurrence` = Code 17, Golden-Datei `ops_v1_recurrence.bin`, Migration 0006).
 **Lies vorher:** `sync/op.rs`, `sync/merge.rs`, `sync/diff.rs`, ADR-016, `crates/todo-storage-sqlite/migrations/`,
 `mapping.rs`, Repository-Contract (`testing/`).
 **Schritte:**

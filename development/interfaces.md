@@ -371,6 +371,11 @@ pub trait Clock: MaybeSend + MaybeSync {
 ```
 Für Tests `FixedClock`/`SteppingClock`. Die HLC (`todo_core::sync::hlc`, ADR-015) basiert auf `Clock`.
 
+**TimeZones** (N4, ADR-028): `to_local(at, tz) -> Option<NaiveDateTime>`, `to_utc(local, tz) -> Option<Timestamp>`
+(Lücke → später, doppelt → früher). Optional über `CoreApi::with_time_zones`; ohne Port lehnen Serien **mit Uhrzeit**
+mit `Validation` ab, ganztägige gehen immer. Desktop: `JiffZones` (`apps/desktop/src-tauri/src/zones.rs`, System-tzdb);
+Tests: `FixedOffsetZones`.
+
 ## 7. Fassade für UI-Shells (`todo_core::api`) und `CoreClient` (TS)
 
 Stand P3-07 (`crates/todo-core/src/api/`). Nur DTOs (`api::dto`), IDs als `String`, Zeitpunkte UTC-ISO-8601
@@ -491,7 +496,10 @@ export interface CoreClient {
   deleteTask(id: string): Promise<void>;
   listTasks(query: TaskQueryDto, page: PageRequestDto): Promise<PageDto<TaskSummaryDto>>;
   // P0-02, ADR-021: ein Aufruf = ein Commit = ein onChange; unbekannte IDs übersprungen
-  completeTasks(ids: string[], done: boolean): Promise<TaskDto[]>;   // nur tatsächlich geänderte
+  // N4, ADR-028: Serie bleibt offen, rückt ab `today` vor; Verlaufseintrag (deterministische ID) in `tasks` hinten
+  completeTasks(ids: string[], done: boolean, today?: LocalDayDto): Promise<CompleteResultDto>; // {tasks, occurrences}
+  skipOccurrence(id: string, today?: LocalDayDto): Promise<TaskDto>;  // nur vorrücken, kein Verlauf
+  undoOccurrence(o: OccurrenceDto): Promise<TaskDto>;                  // {seriesId, occurrenceId|null, previousDue}
   deleteTasks(ids: string[]): Promise<TaskDto[]>;                    // Zustand vor dem Löschen
   moveTasks(ids: string[], target: MoveTargetDto): Promise<TaskDto[]>; // Block in Anzeigereihenfolge
   restoreTasks(tasks: TaskDto[]): Promise<TaskDto[]>;                // neue IDs, alter Sort-Key

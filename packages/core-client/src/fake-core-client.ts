@@ -1,16 +1,20 @@
 import type { CoreClient } from "./core-client";
 import { CoreClientError } from "./errors";
 import { FakeNotes } from "./fake-notes";
+import { anchored, dueDay, dueOn, firstOnOrAfter, nextOccurrence } from "./fake-recurrence";
 import type {
   AuthStepDto,
   ChangedEventDto,
+  CompleteResultDto,
   CreateTaskDto,
   DueDto,
   LocalDayDto,
   MoveListTargetDto,
   MoveTargetDto,
+  OccurrenceDto,
   PageDto,
   PageRequestDto,
+  RecurrenceDto,
   SessionDto,
   SyncStatusDto,
   TaskDto,
@@ -178,7 +182,9 @@ export class FakeCoreClient implements CoreClient {
         updatedAt: at,
         completedAt: null,
         trashedAt: null,
+        recurrence: null,
       };
+      if (input.recurrence) this.applyRule(task, input.recurrence);
       const row = { task, order: this.lastOrder(listId) + 1 };
       this.rows.set(task.id, row);
       this.emit([task.id], []);
@@ -196,6 +202,12 @@ export class FakeCoreClient implements CoreClient {
       if (patch.notes != null) next.notes = patch.notes;
       if (patch.priority != null) next.priority = patch.priority;
       if (patch.due !== undefined) next.due = patch.due === null ? null : validDue(patch.due);
+      // Ohne Fälligkeit keine Serie (wie der Core); eine neue Regel verankert sich an der Fälligkeit.
+      if (next.due === null) next.recurrence = null;
+      if (patch.recurrence !== undefined) {
+        if (patch.recurrence === null) next.recurrence = null;
+        else this.applyRule(next, patch.recurrence);
+      }
       if (JSON.stringify(next) !== JSON.stringify(t)) {
         row.task = next;
         this.touch(row);
@@ -207,13 +219,7 @@ export class FakeCoreClient implements CoreClient {
   completeTask = (id: string, done: boolean) =>
     this.run(() => {
       const row = this.row(id);
-      const status = done ? "done" : "open";
-      if (row.task.status !== status) {
-        row.task.status = status;
-        row.task.completedAt = done ? this.iso() : null;
-        this.touch(row);
-        this.emit([id], []);
-      }
+      this.emitRows(this.complete([row], done, this.iso().slice(0, 10)).rows);
       return this.dto(row);
     });
 
@@ -239,18 +245,86 @@ export class FakeCoreClient implements CoreClient {
       if (this.rows.delete(id)) this.emit([id], []);
     });
 
+  /** Abhaken/Öffnen wie `CompleteTasks` im Core; Serien bekommen einen Verlaufseintrag `${serie}:${tag}`. */
+  private complete(rows: Row[], done: boolean, today: string): { rows: Row[]; occurrences: OccurrenceDto[] } {
+    const status = done ? "done" : "open";
+    const changed: Row[] = [];
+    const entries: Row[] = [];
+    const occurrences: OccurrenceDto[] = [];
+    for (const row of rows) {
+      const t = row.task;
+      if (t.status === status) continue;
+      if (done && t.recurrence && t.due) {
+        const previousDue = { ...t.due };
+        const next = nextOccurrence(t.recurrence, dueDay(t.due), today);
+        let occurrenceId: string | null = null;
+        if (next) {
+          occurrenceId = `${t.id}:${dueDay(t.due)}`;
+          if (!this.rows.has(occurrenceId)) {
+            const at = this.iso();
+            const task: TaskDto = { ...t, id: occurrenceId, status: "done", recurrence: null, createdAt: at, updatedAt: at, completedAt: at, trashedAt: null };
+            const entry = { task, order: this.lastOrder(t.listId) + 1 };
+            this.rows.set(occurrenceId, entry);
+            entries.push(entry);
+          }
+          t.due = dueOn(next, t.due);
+        } else {
+          Object.assign(t, { status: "done", completedAt: this.iso() });
+        }
+        occurrences.push({ seriesId: t.id, occurrenceId, previousDue });
+      } else {
+        t.status = status;
+        t.completedAt = done ? this.iso() : null;
+      }
+      this.touch(row);
+      changed.push(row);
+    }
+    return { rows: [...changed, ...entries], occurrences };
+  }
+
+  /** Regel setzen: ohne Fälligkeit erst das erste Vorkommen ab heute (ganztägig). */
+  private applyRule(task: TaskDto, rule: RecurrenceDto) {
+    if (!task.due) {
+      const first = firstOnOrAfter(rule, this.iso().slice(0, 10));
+      if (!first) throw new CoreClientError("validation", "recurrence ends before today");
+      task.due = { kind: "date", date: first };
+    }
+    if (rule.interval < 1 || rule.interval > 999) throw new CoreClientError("validation", "interval must be 1..=999");
+    task.recurrence = anchored(rule, dueDay(task.due));
+  }
+
   // --- Sammelaktionen: ein Event je Aufruf, unbekannte IDs übersprungen (wie ADR-021) ---------
 
-  completeTasks = (ids: string[], done: boolean) =>
+  completeTasks = (ids: string[], done: boolean, today?: LocalDayDto) =>
+    this.run((): CompleteResultDto => {
+      const { rows, occurrences } = this.complete(this.existing(ids), done, today?.date ?? this.iso().slice(0, 10));
+      return { tasks: this.emitRows(rows), occurrences };
+    });
+
+  skipOccurrence = (id: string, today?: LocalDayDto) =>
     this.run(() => {
-      const status = done ? "done" : "open";
-      const changed = this.existing(ids).filter((row) => row.task.status !== status);
-      for (const row of changed) {
-        row.task.status = status;
-        row.task.completedAt = done ? this.iso() : null;
-        this.touch(row);
+      const row = this.row(id);
+      const t = row.task;
+      if (!t.recurrence || !t.due || t.status === "done") {
+        throw new CoreClientError("validation", `task ${id} is not an open recurring task`);
       }
-      return this.emitRows(changed);
+      const next = nextOccurrence(t.recurrence, dueDay(t.due), today?.date ?? this.iso().slice(0, 10));
+      if (next) t.due = dueOn(next, t.due);
+      else Object.assign(t, { status: "done", completedAt: this.iso() });
+      this.touch(row);
+      this.emit([id], []);
+      return this.dto(row);
+    });
+
+  undoOccurrence = (occurrence: OccurrenceDto) =>
+    this.run(() => {
+      const row = this.row(occurrence.seriesId);
+      Object.assign(row.task, { status: "open", completedAt: null, due: { ...occurrence.previousDue } });
+      this.touch(row);
+      const ids = [row.task.id];
+      if (occurrence.occurrenceId && this.rows.delete(occurrence.occurrenceId)) ids.push(occurrence.occurrenceId);
+      this.emit(ids, []);
+      return this.dto(row);
     });
 
   setDues = (dues: TaskDueDto[]) =>
@@ -699,5 +773,6 @@ function summary(t: TaskDto): TaskSummaryDto {
     sortKey: t.sortKey,
     completedAt: t.completedAt,
     trashedAt: t.trashedAt,
+    recurring: t.recurrence != null,
   };
 }

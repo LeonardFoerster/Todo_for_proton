@@ -24,6 +24,7 @@ mod notes;
 #[cfg(test)]
 mod notes_sync_tests;
 mod purge_notes;
+mod recurring;
 mod rename_task_list;
 mod reopen_task;
 mod restore_tasks;
@@ -38,7 +39,9 @@ use std::{fmt, sync::Arc};
 use futures::lock::{Mutex, MutexGuard};
 
 pub use complete_task::{CompleteTask, CompleteTaskInput};
-pub use complete_tasks::{CompleteTasks, CompleteTasksInput};
+pub use complete_tasks::{
+    CompleteTasks, CompleteTasksInput, CompleteTasksOutput, CompletedOccurrence,
+};
 pub use create_note::{CreateNote, CreateNoteInput};
 pub use create_note_folder::{
     CreateNoteFolder, CreateNoteFolderInput, RenameNoteFolder, RenameNoteFolderInput,
@@ -68,6 +71,7 @@ pub use purge_notes::{
     EmptyNoteTrash, ListNoteTrash, NoteTrashEntry, PurgeExpiredNotes, PurgeNoteItems,
     PurgeNoteItemsInput, NOTE_TRASH_RETENTION_MS,
 };
+pub use recurring::{SkipOccurrence, SkipOccurrenceInput, UndoOccurrence, UndoOccurrenceInput};
 pub use rename_task_list::{RenameTaskList, RenameTaskListInput};
 pub use reopen_task::{ReopenTask, ReopenTaskInput};
 pub use restore_tasks::{RestoreTasks, RestoreTasksInput};

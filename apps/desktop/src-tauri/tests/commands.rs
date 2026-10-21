@@ -196,7 +196,7 @@ fn bulk_commands_through_ipc() {
         json!({ "ids": [ids[0], ids[1], "0190f5c4-0000-7000-8000-000000000000"], "done": true }),
     );
     assert_eq!(
-        done.as_array().unwrap().len(),
+        done["tasks"].as_array().unwrap().len(),
         2,
         "unbekannte ID übersprungen"
     );
@@ -282,6 +282,42 @@ fn only_writing_commands_trigger_a_sync() {
         json!({ "dues": [{ "id": a["id"], "due": { "kind": "date", "date": "2026-10-20" } }, { "id": b["id"], "due": null }] }),
         1,
     );
+    // Serie mit Uhrzeit (ADR-028): Zeitzonen kommen aus der Shell (jiff).
+    let rule = json!({ "freq": "weekly", "interval": 1, "weekdays": [], "anchor": "schedule" });
+    let series = expect(
+        "create_task",
+        json!({ "input": { "title": "Serie", "recurrence": rule,
+            "due": { "kind": "dateTime", "at": "2026-10-24T12:00:00.000Z", "tz": "Europe/Berlin" } } }),
+        1,
+    );
+    let today = json!({ "date": "2026-10-24", "start": "2026-10-23T22:00:00.000Z", "end": "2026-10-24T22:00:00.000Z" });
+    let res = expect(
+        "complete_tasks",
+        json!({ "ids": [series["id"]], "done": true, "today": today }),
+        1,
+    );
+    assert_eq!(
+        res["tasks"].as_array().unwrap().len(),
+        2,
+        "Serie + Verlaufseintrag"
+    );
+    assert_eq!(
+        res["tasks"][0]["due"]["at"], "2026-10-31T13:00:00.000Z",
+        "14:00 Ortszeit nach der Zeitumstellung"
+    );
+    let skipped = expect(
+        "skip_occurrence",
+        json!({ "id": series["id"], "today": today }),
+        1,
+    );
+    assert_eq!(skipped["due"]["at"], "2026-11-07T13:00:00.000Z");
+    let undone = expect(
+        "undo_occurrence",
+        json!({ "occurrence": res["occurrences"][0] }),
+        1,
+    );
+    assert_eq!(undone["due"]["at"], "2026-10-24T12:00:00.000Z");
+    expect("delete_task", json!({ "id": series["id"] }), 1);
     expect("trash_tasks", json!({ "ids": [a["id"]] }), 1);
     expect("untrash_tasks", json!({ "ids": [a["id"]] }), 1);
     expect("trash_tasks", json!({ "ids": [b["id"]] }), 1);

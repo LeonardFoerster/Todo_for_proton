@@ -372,6 +372,7 @@ async fn execute(api: &CoreApi, command: Command, remote: Option<PathBuf>) -> Re
                 notes,
                 priority: prio.as_deref().map(parse_prio).transpose()?,
                 due: due.as_deref().map(parse_due),
+                recurrence: None,
             };
             let id = resolve_task(api, &id).await?;
             let task = api.update_task(id, patch).await?;

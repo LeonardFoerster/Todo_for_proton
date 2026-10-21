@@ -143,7 +143,10 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, options: &Options) -> Result<AppStat
     let dir = data_dir(app, options)?;
     let repo = SqliteTaskRepository::open(dir.join(DB_FILE)).map_err(|e| e.to_string())?;
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-    let api = Arc::new(CoreApi::new(Arc::new(repo), Arc::clone(&clock)));
+    let api = Arc::new(
+        CoreApi::new(Arc::new(repo), Arc::clone(&clock))
+            .with_time_zones(Arc::new(crate::zones::JiffZones)),
+    );
     api.subscribe(Box::new(ChangedEmitter::new(app.clone())));
     let settings = reminders::settings::load(&dir);
     let reminders = reminders::spawn(

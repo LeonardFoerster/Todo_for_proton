@@ -12,6 +12,7 @@ pub mod reminders;
 pub mod state;
 mod sync;
 mod tray;
+pub mod zones;
 
 use std::{
     env,
@@ -43,6 +44,8 @@ macro_rules! handlers {
             commands::move_task,
             commands::delete_task,
             commands::complete_tasks,
+            commands::skip_occurrence,
+            commands::undo_occurrence,
             commands::delete_tasks,
             commands::trash_tasks,
             commands::untrash_tasks,
@@ -115,6 +118,8 @@ macro_rules! handlers {
             commands::move_task,
             commands::delete_task,
             commands::complete_tasks,
+            commands::skip_occurrence,
+            commands::undo_occurrence,
             commands::delete_tasks,
             commands::trash_tasks,
             commands::untrash_tasks,

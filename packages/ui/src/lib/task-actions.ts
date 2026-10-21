@@ -100,7 +100,7 @@ export async function completeManyWithUndo(
 ): Promise<TaskDto[] | null> {
   let changed: TaskDto[];
   try {
-    changed = await inChunks(ids, (chunk) => client.completeTasks(chunk, done));
+    changed = await inChunks(ids, async (chunk) => (await client.completeTasks(chunk, done)).tasks);
   } catch (e) {
     failed("Nicht gespeichert", e);
     return null;
@@ -112,7 +112,7 @@ export async function completeManyWithUndo(
     onAction: () =>
       void inChunks(
         changed.map((t) => t.id),
-        (chunk) => client.completeTasks(chunk, !done),
+        async (chunk) => (await client.completeTasks(chunk, !done)).tasks,
       ).catch((e: unknown) => failed("Rückgängig fehlgeschlagen", e)),
   });
   return changed;

@@ -23,6 +23,7 @@ proton-adapter.workspace = true
 # Nur Debug-Builds: Verzeichnis-Backend für die Zwei-Geräte-Abnahme (`src/dev.rs`).
 todo-remote-fs.workspace = true
 async-trait.workspace = true
+chrono.workspace = true
 futures.workspace = true
 serde.workspace = true
 # `tasks.json` für Export/Import (ADR-032); ohnehin über Tauri im Binary.

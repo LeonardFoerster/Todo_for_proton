@@ -29,6 +29,7 @@ export function toSummary(t: TaskDto): TaskSummaryDto {
     sortKey: t.sortKey,
     completedAt: t.completedAt,
     trashedAt: t.trashedAt,
+    recurring: t.recurrence != null,
   };
 }
 

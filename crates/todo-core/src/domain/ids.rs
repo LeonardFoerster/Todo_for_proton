@@ -166,6 +166,19 @@ impl NoteId {
     }
 }
 
+impl TaskId {
+    /// Deterministische ID (UUIDv5) – Verlaufseintrag einer Serie (ADR-028): Zwei Geräte, die
+    /// offline dasselbe Vorkommen abhaken, erzeugen dieselbe ID und damit **einen** Eintrag.
+    #[must_use]
+    pub fn derived(parts: &[&[u8]]) -> Self {
+        let name: Vec<u8> = parts.concat();
+        Self(Uuid::new_v5(&TASK_ID_NAMESPACE, &name))
+    }
+}
+
+/// Fester Namensraum für [`TaskId::derived`]. **Nie ändern** (sonst doppeln sich Verlaufseinträge).
+const TASK_ID_NAMESPACE: Uuid = Uuid::from_u128(0x7461_736b_2d6f_6363_7572_0000_0000_0001);
+
 /// Fester Namensraum für [`NoteId::derived`]. **Nie ändern** (sonst entstehen neue Kopien).
 const NOTE_ID_NAMESPACE: Uuid = Uuid::from_u128(0x6e6f_7465_2d63_6f70_7900_0000_0000_0001);
 
