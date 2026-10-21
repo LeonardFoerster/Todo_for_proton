@@ -114,6 +114,9 @@ Protokoll: <ordner>/protocol.txt
 
 ## B · Live über Proton Drive (von Hand)
 
+> **2026-10-21:** vom User insgesamt abgenommen („Die Live-Abnahme ist alright“); die Zeilen unten wurden nicht
+> einzeln protokolliert.
+
 Vorbereitung (einmal):
 
 ```sh

@@ -452,7 +452,8 @@ erledigte FIX-Einträge mit Notizen im Archiv. Nächste freie Nummer: FIX-13.)_
   > O(n) → FIX-11 (ADR-024).
 - [ ] FIX-04 · Sidebar-Zähler (Eingang/Heute) zählen über `listTasks`-Seiten (bis 999); `count_tasks(query)` in
   Repository/CoreApi spart IPC. _(→ N0-03)_
-- [ ] FIX-06 · Live-Teil der Zwei-Geräte-Abnahme über Proton Drive + Messung angemeldet. _(→ N0-01)_
+- [x] FIX-06 · Live-Teil der Zwei-Geräte-Abnahme über Proton Drive + Messung angemeldet. _(→ N0-01)_ — 2026-10-21,
+  vom User abgenommen („Die Live-Abnahme ist alright“); Messung angemeldet nicht erhoben (N0-02 zurückgestellt).
 - [-] FIX-07 · (zurückgestellt 2026-10-18, User: RAM ok) RAM-Ziel < 250 MB PSS. _(→ N0-02)_
 - [x] FIX-08 · **Fehlgeschlagenes Löschen lässt die Zeile verschwinden.** `TaskList.deleteTask` entfernt die Zeile per
   `rows.remove()` *bevor* `deleteWithUndo` löscht; schlägt `getTask`/`deleteTask` fehl, kommt nur ein Fehler-Toast –
