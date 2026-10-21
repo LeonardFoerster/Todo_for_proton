@@ -4,9 +4,11 @@
   import RecurrenceField from "../recurrence/RecurrenceField.svelte";
   import Checklist from "./Checklist.svelte";
   import TagPicker from "../tags/TagPicker.svelte";
+  import type NoteLinkPickerType from "../links/NoteLinkPicker.svelte";
   import {
     CoreClientError,
     type ChecklistItemDto,
+    type LinkedNoteDto,
     type DueDto,
     type PriorityDto,
     type RecurrenceDto,
@@ -18,7 +20,7 @@
   import IconButton from "../../components/IconButton.svelte";
   import { toasts } from "../../components/toasts.svelte";
   import Button from "../../components/Button.svelte";
-  import { CalendarDays, Flag, Hash, ListChecks, Plus, Redo, Repeat, Tag, Trash, X } from "../../icons";
+  import { CalendarDays, FileCode, FileText, Flag, Hash, Link2, ListChecks, Plus, Redo, Repeat, Tag, Trash, X } from "../../icons";
   import { useCoreClient } from "../../lib/context";
   import type { ListsState } from "../../lib/lists.svelte";
   import { isoDate } from "../../lib/local-day";
@@ -31,9 +33,11 @@
     lists: ListsState;
     onclose: () => void;
     ondelete: (id: string) => void;
+    /** Verknüpfte Notiz öffnen (wechselt in den Modus „Notes“, ADR-036). */
+    onopennote?: (noteId: string) => void;
   }
 
-  let { taskId, lists, onclose, ondelete }: Props = $props();
+  let { taskId, lists, onclose, ondelete, onopennote }: Props = $props();
 
   const client = useCoreClient();
   const SAVE_DELAY_MS = 600;
@@ -72,11 +76,59 @@
 
   $effect(() => {
     void load(taskId);
+    void loadLinks(taskId);
   });
+
+  // --- Verknüpfte Notizen (N9-02, ADR-036) ---
+  let linked = $state.raw<LinkedNoteDto[]>([]);
+  let linkButton = $state<HTMLButtonElement>();
+  let NoteLinkPicker = $state<typeof NoteLinkPickerType | null>(null);
+  let linking = $state(false);
+
+  async function loadLinks(id: string) {
+    linked = await client.taskLinks(id).catch(() => []);
+  }
+
+  async function openPicker() {
+    NoteLinkPicker ??= (await import("../links/NoteLinkPicker.svelte")).default;
+    linking = !linking;
+  }
+
+  async function link(noteId: string) {
+    linking = false;
+    try {
+      await client.linkTaskNote(taskId, noteId);
+    } catch (e) {
+      toasts.show({ message: `Nicht verknüpft: ${(e as Error).message}`, tone: "danger" });
+    }
+  }
+
+  async function unlink(item: LinkedNoteDto) {
+    try {
+      await client.unlink(item.linkId);
+    } catch (e) {
+      toasts.show({ message: `Nicht gelöst: ${(e as Error).message}`, tone: "danger" });
+    }
+  }
+
+  /** Neue Notiz mit dem Titel der Task als Überschrift, verknüpft und geöffnet. */
+  async function createLinkedNote() {
+    linking = false;
+    if (!task) return;
+    try {
+      const note = await client.notes.create(null, "markdown");
+      await client.notes.updateBody(note.id, `# ${task.title}\n\n`, null);
+      await client.linkTaskNote(task.id, note.id);
+      onopennote?.(note.id);
+    } catch (e) {
+      toasts.show({ message: `Notiz nicht angelegt: ${(e as Error).message}`, tone: "danger" });
+    }
+  }
 
   onMount(() => {
     const off = client.onChange((e) => {
       if (e.tasks.includes(taskId)) void load(taskId);
+      if (e.links.length > 0 || e.notes.length > 0) void loadLinks(taskId);
     });
     return () => {
       flush();
@@ -249,6 +301,47 @@
         <Checklist items={task.checklist} onchange={setChecklist} />
       </section>
 
+      <section class="links" aria-labelledby="detail-links">
+        <h3 id="detail-links"><Link2 size={16} strokeWidth={1.75} aria-hidden="true" />Notizen</h3>
+        {#if linked.length > 0}
+          <ul>
+            {#each linked as item (item.linkId)}
+              {@const Icon = item.kind === "markdown" ? FileCode : FileText}
+              <li>
+                <button type="button" class="note" onclick={() => onopennote?.(item.noteId)} title="Notiz öffnen">
+                  <Icon size={14} strokeWidth={1.75} aria-hidden="true" />{item.name}
+                </button>
+                <button type="button" class="unlink" aria-label="Verknüpfung lösen: {item.name}" onclick={() => void unlink(item)}>
+                  <X size={14} strokeWidth={2} aria-hidden="true" />
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+        <button
+          bind:this={linkButton}
+          type="button"
+          class="add-tag"
+          aria-haspopup="dialog"
+          aria-expanded={linking}
+          onclick={() => void openPicker()}
+        >
+          <Plus size={14} strokeWidth={2} aria-hidden="true" />Notiz verknüpfen
+        </button>
+        {#if linking && linkButton && NoteLinkPicker}
+          <NoteLinkPicker
+            anchor={linkButton}
+            linked={linked.map((l) => l.noteId)}
+            onpick={(id) => void link(id)}
+            oncreate={() => void createLinkedNote()}
+            onclose={(refocus) => {
+              linking = false;
+              if (refocus) linkButton?.focus();
+            }}
+          />
+        {/if}
+      </section>
+
       <dl class="props">
         <dt><CalendarDays size={16} strokeWidth={1.75} aria-hidden="true" /><label for="detail-due">Fällig</label></dt>
         <dd>
@@ -414,10 +507,65 @@
   .notes::placeholder {
     color: var(--color-text-muted);
   }
-  .checklist {
+  .checklist,
+  .links {
     margin-top: var(--space-4);
   }
-  .checklist h3 {
+  .links ul {
+    margin: 0 0 var(--space-2);
+    padding: 0;
+    list-style: none;
+  }
+  .links li {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    border-radius: var(--radius-md);
+  }
+  .links li:hover {
+    background: var(--color-bg-hover);
+  }
+  .links .note {
+    display: inline-flex;
+    flex: 1;
+    min-width: 0;
+    align-items: center;
+    gap: var(--space-2);
+    height: 30px;
+    padding: 0 var(--space-2);
+    border: 0;
+    background: transparent;
+    color: var(--color-text);
+    font: inherit;
+    font-size: var(--text-sm);
+    text-align: left;
+    cursor: pointer;
+  }
+  .links .note :global(svg) {
+    flex: none;
+    color: var(--color-text-muted);
+  }
+  .links .unlink {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    opacity: 0;
+  }
+  .links li:hover .unlink,
+  .links li:focus-within .unlink {
+    opacity: 1;
+  }
+  .links .unlink:hover {
+    color: var(--color-danger);
+  }
+  .checklist h3,
+  .links h3 {
     display: flex;
     align-items: center;
     gap: var(--space-2);

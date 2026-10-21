@@ -462,7 +462,8 @@ ziehen, `Enter` neuer Punkt; Zeile/Karte: „2/5“; Suche findet Punkttext.
 
 ## N9 · Verknüpfung Task ↔ Notiz
 
-### [ ] N9-01 · ADR-036 + `Link` als Entität
+### [x] N9-01 · ADR-036 + `Link` als Entität — 2026-10-21 · 72df9f9
+> Notiz: ID aus beiden Enden (UUIDv5); verwaiste Verknüpfungen räumt `purge_dangling_links` täglich mit dem Papierkorb auf.
 **Schritte:** `Link { id, from: Task, to: Note }` (N3: eigenes Element statt Felder an `Task`, später auch `External`),
 nur anlegen/löschen; verschwindet ein Ende, wird der Link nicht angezeigt (und beim Aufräumen entfernt).
 ### [ ] N9-02 · UI

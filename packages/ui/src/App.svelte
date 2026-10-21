@@ -7,7 +7,7 @@
   import { toasts } from "./components/toasts.svelte";
   import Sidebar from "./features/sidebar/Sidebar.svelte";
   import NewTaskDialog from "./features/new-task/NewTaskDialog.svelte";
-  import TaskDetail from "./features/task-detail/TaskDetail.svelte";
+  import type TaskDetailType from "./features/task-detail/TaskDetail.svelte";
   import SelectionBar from "./features/task-list/SelectionBar.svelte";
   import TaskList from "./features/task-list/TaskList.svelte";
   import ShortcutHelp from "./features/shell/ShortcutHelp.svelte";
@@ -87,6 +87,13 @@
   let selectedId = $state<string | null>(null);
   /** Im Detail-Panel geöffnete Task; folgt der Auswahl, solange das Panel offen ist. */
   let openId = $state<string | null>(null);
+  /** Detail-Panel erst beim ersten Öffnen laden (hält das Start-Bundle klein). */
+  let TaskDetail = $state<typeof TaskDetailType | null>(null);
+  $effect(() => {
+    if (openId && !TaskDetail) {
+      void import("./features/task-detail/TaskDetail.svelte").then((m) => (TaskDetail = m.default));
+    }
+  });
   let showShortcuts = $state(false);
   /** Listen verwalten (P2-03): Menü, Inline-Umbenennen in der Seitenleiste, Dialoge. */
   let listMenu = $state<{ list: TaskListDto; x: number; y: number } | null>(null);
@@ -165,6 +172,8 @@
     if (notes) return;
     notesChunk = chunk;
     const state = new chunk.NotesState(client);
+    // Verknüpfte Tasks aus der Statuszeile der Notiz (ADR-036): in den Modus „Tasks“, Task öffnen.
+    state.openTask = (id) => void openTaskInTasks(id);
     notes = state;
     notesStop = state.start();
     notesShortcutsStop = shortcuts.register(...notesShortcuts(state));
@@ -361,6 +370,13 @@
   }
 
   function openFromPalette(id: string) {
+    selectedId = id;
+    openId = id;
+  }
+
+  /** Aus dem Modus „Notes“: zurück zu den Tasks und die Task öffnen. */
+  async function openTaskInTasks(id: string) {
+    await switchMode("tasks");
     selectedId = id;
     openId = id;
   }
@@ -1168,9 +1184,15 @@
     </div>
   </main>
 
-  {#if openId && appMode.mode === "tasks"}
+  {#if openId && appMode.mode === "tasks" && TaskDetail}
     <aside class="detail-slot">
-      <TaskDetail taskId={openId} {lists} onclose={closeDetail} ondelete={deleteFromDetail} />
+      <TaskDetail
+        taskId={openId}
+        {lists}
+        onclose={closeDetail}
+        ondelete={deleteFromDetail}
+        onopennote={(id) => void openNote(id, null)}
+      />
     </aside>
   {/if}
 </div>

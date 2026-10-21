@@ -58,6 +58,8 @@ export class NotesState {
   select = $state<{ id: string; start: number; end: number } | null>(null);
   /** Zen-Modus: Seitenleiste aus, Statuszeile nur bei Bewegung (`notes.md` §6.1). */
   zen = $state(readZen());
+  /** Verknüpfte Task öffnen (setzt die App; wechselt in den Modus „Tasks“, ADR-036). */
+  openTask: ((id: string) => void) | null = null;
   readonly rows: TreeRow[] = $derived(flatten(this.children, this.expanded));
 
   private pending: Promise<void> | null = null;

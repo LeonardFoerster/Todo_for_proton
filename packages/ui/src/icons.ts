@@ -38,6 +38,7 @@ export { default as Copy } from "@lucide/svelte/icons/copy";
 export { default as ExternalLink } from "@lucide/svelte/icons/external-link";
 export { default as ShieldCheck } from "@lucide/svelte/icons/shield-check";
 export { default as ListChecks } from "@lucide/svelte/icons/list-checks";
+export { default as Link2 } from "@lucide/svelte/icons/link-2";
 export { default as FolderInput } from "@lucide/svelte/icons/folder-input";
 export { default as Pencil } from "@lucide/svelte/icons/pencil";
 export { default as ChevronDown } from "@lucide/svelte/icons/chevron-down";

@@ -68,7 +68,7 @@
   class:dragging
   role="option"
   aria-selected={selectable ? checked : selected}
-  aria-label={[task.title, done ? "erledigt" : null, due?.long, task.recurring ? "wiederholt sich" : null, tagNames.length > 0 ? tagNames.map((t) => `#${t}`).join(" ") : null, done ? null : priorityInLabel(task.priority)].filter(Boolean).join(", ")}
+  aria-label={[task.title, done ? "erledigt" : null, due?.long, task.recurring ? "wiederholt sich" : null, task.hasLinks ? "mit Notiz verknüpft" : null, tagNames.length > 0 ? tagNames.map((t) => `#${t}`).join(" ") : null, done ? null : priorityInLabel(task.priority)].filter(Boolean).join(", ")}
   tabindex={selected ? 0 : -1}
   data-task-id={task.id}
   onclick={(e) => {

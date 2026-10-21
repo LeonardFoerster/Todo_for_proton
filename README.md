@@ -36,6 +36,8 @@ iOS folgen (siehe [Plattformen](#plattformen) und [Roadmap](#roadmap)).
 - Fenster „Neue Task" (`N`) mit natürlicher Eingabe: „Übungsblatt 3 **bis Fr 14:00 !1 @uni**" erkennt Tag
   (`morgen`, `Fr`, `24.10.`), Uhrzeit, Priorität (`!1`–`!3`) und Liste; dazu Chips zum Nachjustieren, optionale Notiz
   und „Weitere anlegen" für mehrere Tasks am Stück.
+- **Task ↔ Notiz:** Notizen an eine Task hängen (Suche oder „Neue Notiz zu dieser Task") und aus einer Notiz heraus
+  Tasks anlegen; beide Seiten zeigen die Verknüpfung.
 - **Tags und Checklisten:** „Blatt 3 **#uni #analysis**" vergibt Tags (eigene Ansicht je Tag in der Seitenleiste,
   Umbenennen, Löschen); im Detail eine Checkliste mit Punkten zum Abhaken („2/5" in der Zeile).
 - **Wiederkehrende Tasks:** „Blatt **jeden Fr**", „Gießen **alle 3 Tage nach Erledigung**", „Miete **jeden 1.**",

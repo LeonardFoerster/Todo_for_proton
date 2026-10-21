@@ -7,7 +7,7 @@
    */
   import type { TaskSummaryDto } from "@tasks/core-client";
   import { untrack } from "svelte";
-  import { Hash, ListChecks, Repeat, StickyNote } from "../../icons";
+  import { Hash, Link2, ListChecks, Repeat, StickyNote } from "../../icons";
   import { trashedLabel, type DueLabel } from "../../lib/format-date";
 
   interface Props {
@@ -72,6 +72,11 @@
       aria-label="Checkliste {task.checklistDone} von {task.checklistTotal}"
     >
       <ListChecks size={icon} strokeWidth={1.75} aria-hidden="true" />{task.checklistDone}/{task.checklistTotal}
+    </span>
+  {/if}
+  {#if task.hasLinks}
+    <span class="linked" title="Mit Notiz verknüpft" aria-label="mit Notiz verknüpft">
+      <Link2 size={icon} strokeWidth={1.75} aria-hidden="true" />
     </span>
   {/if}
   {#if task.hasNotes}
@@ -166,7 +171,8 @@
     color: var(--color-text-muted);
   }
   .notes,
-  .repeat {
+  .repeat,
+  .linked {
     display: grid;
     place-items: center;
   }
