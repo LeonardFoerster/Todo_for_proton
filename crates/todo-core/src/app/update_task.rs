@@ -2,7 +2,7 @@
 
 use super::{load_task, Deps};
 use crate::{
-    domain::{Due, Priority, Recurrence, Task, TaskId},
+    domain::{ChecklistItem, Due, Priority, Recurrence, Task, TaskId},
     ports::ChangeSet,
     CoreResult,
 };
@@ -16,6 +16,8 @@ pub struct TaskPatch {
     pub due: Option<Option<Due>>,
     /// `Some(None)` beendet die Wiederholung (N4).
     pub recurrence: Option<Option<Recurrence>>,
+    /// Ersetzt die ganze Checkliste (N8, ADR-034).
+    pub checklist: Option<Vec<ChecklistItem>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,7 +51,11 @@ impl UpdateTask {
             priority,
             due,
             recurrence,
+            checklist,
         } = input.patch;
+        if let Some(items) = checklist {
+            task.set_checklist(items, clock)?;
+        }
         if let Some(title) = title {
             task.rename(&title, clock)?;
         }
@@ -121,6 +127,7 @@ mod tests {
             priority: Some(Priority::High),
             due: Some(Some(due.clone())),
             recurrence: None,
+            checklist: None,
         };
         let updated = block_on(uc.execute(UpdateTaskInput {
             id: task.id(),

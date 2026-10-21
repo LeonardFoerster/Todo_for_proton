@@ -56,6 +56,7 @@ macro_rules! repository_contract_tests {
             filter_status_and_tag,
             trash_view_hides_trashed_everywhere_else,
             recurrence_roundtrips,
+            checklist_roundtrips_counts_and_is_searched,
             summary_matches_task,
             sync_device_id_is_stable,
             commit_writes_ops_to_outbox,
@@ -139,6 +140,7 @@ pub fn run_all<R: TaskRepository>(make: impl Fn() -> R) {
     filter_status_and_tag(make());
     trash_view_hides_trashed_everywhere_else(make());
     recurrence_roundtrips(make());
+    checklist_roundtrips_counts_and_is_searched(make());
     summary_matches_task(make());
     sync_device_id_is_stable(make());
     commit_writes_ops_to_outbox(make());
@@ -865,6 +867,58 @@ pub fn recurrence_roundtrips<R: TaskRepository>(repo: R) {
     let page = f.page(all(), None, 10).expect("page");
     let flags: Vec<bool> = page.items.iter().map(|s| s.recurring).collect();
     assert_eq!(flags, [true, false]);
+}
+
+/// Checkliste (N8): Punkte kommen in Reihenfolge zurück, die Zeile zählt „erledigt/alle“, die Suche
+/// findet Punkttexte (lange und kurze Wörter).
+pub fn checklist_roundtrips_counts_and_is_searched<R: TaskRepository>(repo: R) {
+    use crate::{
+        domain::{ChecklistItem, ChecklistItemId},
+        ports::SearchQuery,
+    };
+    let f = setup(repo);
+    let mut t = f.add_tasks(f.inbox.id(), 2);
+    let items = vec![
+        ChecklistItem::new(ChecklistItemId::new(), "Brot", true).expect("item"),
+        ChecklistItem::new(ChecklistItemId::new(), "Äpfel kaufen", false).expect("item"),
+        ChecklistItem::new(ChecklistItemId::new(), "Ei", false).expect("item"),
+    ];
+    t[0].set_checklist(items.clone(), &f.clock)
+        .expect("checklist");
+    f.save(&t);
+    let back = block_on(f.repo.get_task(t[0].id()))
+        .expect("get")
+        .expect("da");
+    assert_eq!(back.checklist(), items.as_slice());
+    assert_eq!(back, t[0]);
+    let page = f.page(all(), None, 10).expect("page");
+    let counts: Vec<(u16, u16)> = page
+        .items
+        .iter()
+        .map(|s| (s.checklist_done, s.checklist_total))
+        .collect();
+    assert_eq!(counts, [(1, 3), (0, 0)]);
+    for text in ["äpfel", "ei"] {
+        let hits = block_on(f.repo.search_tasks(&SearchQuery {
+            text: text.into(),
+            limit: 10,
+        }))
+        .expect("search");
+        assert_eq!(
+            hits.iter().map(|h| h.id).collect::<Vec<_>>(),
+            [t[0].id()],
+            "{text}"
+        );
+    }
+    // Leeren entfernt die Punkte aus Zeile und Suche.
+    t[0].set_checklist(Vec::new(), &f.clock).expect("clear");
+    f.save(&t[..1]);
+    assert!(block_on(f.repo.search_tasks(&SearchQuery {
+        text: "äpfel".into(),
+        limit: 10
+    }))
+    .expect("search")
+    .is_empty());
 }
 
 /// Die Zusammenfassung entspricht `TaskSummary::from(&task)`.

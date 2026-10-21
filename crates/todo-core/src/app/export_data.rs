@@ -296,6 +296,7 @@ mod tests {
                 completed_at: t.completed_at(),
                 trashed_at: t.trashed_at(),
                 recurrence: t.recurrence().cloned(),
+                checklist: t.checklist().to_vec(),
             })
             .collect();
         (lists, tasks)

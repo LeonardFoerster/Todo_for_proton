@@ -258,6 +258,11 @@ impl CoreApi {
                 .recurrence
                 .map(|r| r.as_ref().map(TryInto::try_into).transpose())
                 .transpose()?,
+            checklist: patch
+                .checklist
+                .as_deref()
+                .map(dto::checklist_from_dto)
+                .transpose()?,
         };
         let input = UpdateTaskInput {
             id: task_id(&id)?,

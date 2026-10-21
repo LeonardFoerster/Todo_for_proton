@@ -53,7 +53,7 @@
     />
     <span class="body">
       <span class="title">{task.title}</span>
-      {#if due || task.hasNotes || task.recurring}<TaskMeta {task} {due} size="card" />{/if}
+      {#if due || task.hasNotes || task.recurring || task.checklistTotal > 0}<TaskMeta {task} {due} size="card" />{/if}
     </span>
   </div>
 </div>

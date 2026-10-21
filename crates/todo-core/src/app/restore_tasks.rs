@@ -119,6 +119,7 @@ mod tests {
             completed_at: task.completed_at(),
             trashed_at: task.trashed_at(),
             recurrence: task.recurrence().cloned(),
+            checklist: task.checklist().to_vec(),
         }
     }
 

@@ -294,7 +294,7 @@ pub struct Page<T> {
 pub const SEARCH_TEXT_MAX_CHARS: usize = 200;
 
 /// Suche über Titel und Notizen (P4-05, ADR-027): **jedes** Wort aus `text` muss als Teilwort in
-/// Titel oder Notiz vorkommen, ohne Unterscheidung von Groß/Klein. Ergebnis: offene vor erledigten,
+/// Titel, Notiz oder einem Punkt der Checkliste (ADR-034) vorkommen, ohne Unterscheidung von Groß/Klein. Ergebnis: offene vor erledigten,
 /// Titeltreffer vor reinen Notiztreffern, dann `sort_key`, `id`; höchstens `limit`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchQuery {
@@ -332,7 +332,12 @@ impl SearchQuery {
     #[must_use]
     pub fn rank(terms: &[String], task: &Task) -> Option<(bool, bool, SortKey, TaskId)> {
         let title = task.title().to_lowercase();
-        let notes = task.notes().to_lowercase();
+        // Notiz und Punkte der Checkliste (ADR-034) zählen gleich: „in Notiz“.
+        let mut notes = task.notes().to_lowercase();
+        for item in task.checklist() {
+            notes.push('\n');
+            notes.push_str(&item.text().to_lowercase());
+        }
         let all = terms
             .iter()
             .all(|t| title.contains(t.as_str()) || notes.contains(t.as_str()));
@@ -364,6 +369,9 @@ pub struct TaskSummary {
     pub trashed_at: Option<Timestamp>,
     /// Wirksame Serie (Regel und Fälligkeit, N4) – Symbol in der Zeile.
     pub recurring: bool,
+    /// Checkliste (N8): erledigte / alle Punkte.
+    pub checklist_done: u16,
+    pub checklist_total: u16,
 }
 
 impl From<&Task> for TaskSummary {
@@ -380,6 +388,10 @@ impl From<&Task> for TaskSummary {
             completed_at: task.completed_at(),
             trashed_at: task.trashed_at(),
             recurring: task.is_recurring(),
+            // Höchstens 100 Punkte (ADR-034).
+            checklist_done: u16::try_from(task.checklist().iter().filter(|i| i.is_done()).count())
+                .unwrap_or(u16::MAX),
+            checklist_total: u16::try_from(task.checklist().len()).unwrap_or(u16::MAX),
         }
     }
 }

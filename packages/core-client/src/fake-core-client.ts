@@ -5,6 +5,7 @@ import { anchored, dueDay, dueOn, firstOnOrAfter, nextOccurrence } from "./fake-
 import type {
   AuthStepDto,
   ChangedEventDto,
+  ChecklistItemDto,
   CompleteResultDto,
   CreateTaskDto,
   DueDto,
@@ -183,6 +184,7 @@ export class FakeCoreClient implements CoreClient {
         completedAt: null,
         trashedAt: null,
         recurrence: null,
+        checklist: [],
       };
       if (input.recurrence) this.applyRule(task, input.recurrence);
       const row = { task, order: this.lastOrder(listId) + 1 };
@@ -208,6 +210,7 @@ export class FakeCoreClient implements CoreClient {
         if (patch.recurrence === null) next.recurrence = null;
         else this.applyRule(next, patch.recurrence);
       }
+      if (patch.checklist != null) next.checklist = this.validChecklist(patch.checklist);
       if (JSON.stringify(next) !== JSON.stringify(t)) {
         row.task = next;
         this.touch(row);
@@ -262,12 +265,24 @@ export class FakeCoreClient implements CoreClient {
           occurrenceId = `${t.id}:${dueDay(t.due)}`;
           if (!this.rows.has(occurrenceId)) {
             const at = this.iso();
-            const task: TaskDto = { ...t, id: occurrenceId, status: "done", recurrence: null, createdAt: at, updatedAt: at, completedAt: at, trashedAt: null };
+            const task: TaskDto = {
+              ...t,
+              id: occurrenceId,
+              status: "done",
+              recurrence: null,
+              checklist: t.checklist.map((i) => ({ ...i })),
+              createdAt: at,
+              updatedAt: at,
+              completedAt: at,
+              trashedAt: null,
+            };
             const entry = { task, order: this.lastOrder(t.listId) + 1 };
             this.rows.set(occurrenceId, entry);
             entries.push(entry);
           }
           t.due = dueOn(next, t.due);
+          // Nächstes Vorkommen ohne Haken; der Eintrag behält sie (wie der Core).
+          t.checklist = t.checklist.map((i) => ({ ...i, done: false }));
         } else {
           Object.assign(t, { status: "done", completedAt: this.iso() });
         }
@@ -280,6 +295,18 @@ export class FakeCoreClient implements CoreClient {
       changed.push(row);
     }
     return { rows: [...changed, ...entries], occurrences };
+  }
+
+  /** Wie `ChecklistItem`/`check_checklist` im Core: einzeilig, 1–500 Zeichen, ≤ 100, neue IDs für leere. */
+  private validChecklist(items: ChecklistItemDto[]): ChecklistItemDto[] {
+    if (items.length > 100) throw new CoreClientError("validation", "checklist must have at most 100 items");
+    const out = items.map((i) => ({
+      id: i.id || this.newId(),
+      text: validName(i.text.replace(/[\r\n\t]/g, " "), 500, "checklist item"),
+      done: i.done,
+    }));
+    if (new Set(out.map((i) => i.id)).size !== out.length) throw new CoreClientError("validation", "duplicate checklist item");
+    return out;
   }
 
   /** Regel setzen: ohne Fälligkeit erst das erste Vorkommen ab heute (ganztägig). */
@@ -309,8 +336,10 @@ export class FakeCoreClient implements CoreClient {
         throw new CoreClientError("validation", `task ${id} is not an open recurring task`);
       }
       const next = nextOccurrence(t.recurrence, dueDay(t.due), today?.date ?? this.iso().slice(0, 10));
-      if (next) t.due = dueOn(next, t.due);
-      else Object.assign(t, { status: "done", completedAt: this.iso() });
+      if (next) {
+        t.due = dueOn(next, t.due);
+        t.checklist = t.checklist.map((i) => ({ ...i, done: false }));
+      } else Object.assign(t, { status: "done", completedAt: this.iso() });
       this.touch(row);
       this.emit([id], []);
       return this.dto(row);
@@ -490,7 +519,8 @@ export class FakeCoreClient implements CoreClient {
         .flatMap((row) => {
           if (row.task.trashedAt != null) return [];
           const title = row.task.title.toLowerCase();
-          const notes = row.task.notes.toLowerCase();
+          // Punkte der Checkliste zählen wie die Notiz (ADR-034).
+          const notes = [row.task.notes, ...row.task.checklist.map((i) => i.text)].join("\n").toLowerCase();
           if (!terms.every((t) => title.includes(t) || notes.includes(t))) return [];
           return [{ row, done: row.task.status === "done", notesOnly: !terms.some((t) => title.includes(t)) }];
         })
@@ -774,5 +804,7 @@ function summary(t: TaskDto): TaskSummaryDto {
     completedAt: t.completedAt,
     trashedAt: t.trashedAt,
     recurring: t.recurrence != null,
+    checklistDone: t.checklist.filter((i) => i.done).length,
+    checklistTotal: t.checklist.length,
   };
 }

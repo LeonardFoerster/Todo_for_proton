@@ -14,4 +14,8 @@ trashedAt: string | null,
 /**
  * Wirksame Serie (N4) – Symbol in der Zeile.
  */
-recurring: boolean, };
+recurring: boolean, 
+/**
+ * Checkliste (N8): erledigte / alle Punkte („2/5“; 0 Punkte = keine Anzeige).
+ */
+checklistDone: number, checklistTotal: number, };

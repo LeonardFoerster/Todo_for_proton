@@ -2,8 +2,10 @@
   import DueField from "../due/DueField.svelte";
   import ListPicker from "../lists/ListPicker.svelte";
   import RecurrenceField from "../recurrence/RecurrenceField.svelte";
+  import Checklist from "./Checklist.svelte";
   import {
     CoreClientError,
+    type ChecklistItemDto,
     type DueDto,
     type PriorityDto,
     type RecurrenceDto,
@@ -15,7 +17,7 @@
   import IconButton from "../../components/IconButton.svelte";
   import { toasts } from "../../components/toasts.svelte";
   import Button from "../../components/Button.svelte";
-  import { CalendarDays, Flag, Hash, Redo, Repeat, Trash, X } from "../../icons";
+  import { CalendarDays, Flag, Hash, ListChecks, Redo, Repeat, Trash, X } from "../../icons";
   import { useCoreClient } from "../../lib/context";
   import type { ListsState } from "../../lib/lists.svelte";
   import { isoDate } from "../../lib/local-day";
@@ -114,6 +116,10 @@
   function schedule(field: "title" | "notes") {
     clearTimeout(timers[field]);
     timers[field] = setTimeout(field === "title" ? saveTitle : saveNotes, SAVE_DELAY_MS);
+  }
+
+  async function setChecklist(items: ChecklistItemDto[]) {
+    await save({ checklist: items });
   }
 
   function setDue(next: DueDto | null) {
@@ -216,6 +222,11 @@
         }}
         oninput={() => schedule("notes")}
       ></textarea>
+
+      <section class="checklist" aria-labelledby="detail-checklist">
+        <h3 id="detail-checklist"><ListChecks size={16} strokeWidth={1.75} aria-hidden="true" />Checkliste</h3>
+        <Checklist items={task.checklist} onchange={setChecklist} />
+      </section>
 
       <dl class="props">
         <dt><CalendarDays size={16} strokeWidth={1.75} aria-hidden="true" /><label for="detail-due">Fällig</label></dt>
@@ -347,6 +358,18 @@
   }
   .notes::placeholder {
     color: var(--color-text-muted);
+  }
+  .checklist {
+    margin-top: var(--space-4);
+  }
+  .checklist h3 {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0 0 var(--space-2);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
   }
   .props {
     margin: var(--space-6) 0 0;

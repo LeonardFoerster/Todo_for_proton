@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     domain::{
-        Due, Frequency, LocalDay, NaiveDate, Priority, Recurrence, RecurrenceAnchor, SortKey,
-        TagId, Task, TaskId, TaskList, TaskListId, TaskParts, TaskStatus, Timestamp, WeekdaySet,
+        ChecklistItem, ChecklistItemId, Due, Frequency, LocalDay, NaiveDate, Priority, Recurrence,
+        RecurrenceAnchor, SortKey, TagId, Task, TaskId, TaskList, TaskListId, TaskParts,
+        TaskStatus, Timestamp, WeekdaySet,
     },
     ports::{Page, SmartView, TaskQuery, TaskSummary},
     CoreError, CoreResult,
@@ -193,6 +194,49 @@ pub struct TaskDto {
     pub trashed_at: Option<String>,
     /// Wiederholung (N4, ADR-028).
     pub recurrence: Option<RecurrenceDto>,
+    /// Checkliste (N8, ADR-034), in Anzeigereihenfolge.
+    pub checklist: Vec<ChecklistItemDto>,
+}
+
+/// Punkt einer Checkliste. Beim Schreiben bekommt ein Punkt mit leerer `id` eine neue.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct ChecklistItemDto {
+    pub id: String,
+    pub text: String,
+    pub done: bool,
+}
+
+impl From<&ChecklistItem> for ChecklistItemDto {
+    fn from(item: &ChecklistItem) -> Self {
+        Self {
+            id: item.id().to_string(),
+            text: item.text().to_owned(),
+            done: item.is_done(),
+        }
+    }
+}
+
+impl TryFrom<&ChecklistItemDto> for ChecklistItem {
+    type Error = CoreError;
+
+    fn try_from(dto: &ChecklistItemDto) -> CoreResult<Self> {
+        let id = if dto.id.is_empty() {
+            ChecklistItemId::new()
+        } else {
+            ChecklistItemId::parse(&dto.id).map_err(|e| CoreError::Validation(e.to_string()))?
+        };
+        ChecklistItem::new(id, &dto.text, dto.done)
+    }
+}
+
+/// Liste von Punkten in Domain-Form (neue IDs für leere).
+///
+/// # Errors
+/// `CoreError::Validation` bei ungültigem Punkt.
+pub fn checklist_from_dto(items: &[ChecklistItemDto]) -> CoreResult<Vec<ChecklistItem>> {
+    items.iter().map(TryInto::try_into).collect()
 }
 
 impl From<&Task> for TaskDto {
@@ -211,6 +255,11 @@ impl From<&Task> for TaskDto {
             completed_at: task.completed_at().map(iso),
             trashed_at: task.trashed_at().map(iso),
             recurrence: task.recurrence().map(RecurrenceDto::from),
+            checklist: task
+                .checklist()
+                .iter()
+                .map(ChecklistItemDto::from)
+                .collect(),
         }
     }
 }
@@ -238,6 +287,7 @@ impl TryFrom<&TaskDto> for TaskParts {
             // Wiederhergestellt wird nie in den Papierkorb.
             trashed_at: None,
             recurrence: dto.recurrence.as_ref().map(TryInto::try_into).transpose()?,
+            checklist: checklist_from_dto(&dto.checklist)?,
         })
     }
 }
@@ -260,6 +310,9 @@ pub struct TaskSummaryDto {
     pub trashed_at: Option<String>,
     /// Wirksame Serie (N4) – Symbol in der Zeile.
     pub recurring: bool,
+    /// Checkliste (N8): erledigte / alle Punkte („2/5“; 0 Punkte = keine Anzeige).
+    pub checklist_done: u16,
+    pub checklist_total: u16,
 }
 
 impl From<&TaskSummary> for TaskSummaryDto {
@@ -276,6 +329,8 @@ impl From<&TaskSummary> for TaskSummaryDto {
             completed_at: s.completed_at.map(iso),
             trashed_at: s.trashed_at.map(iso),
             recurring: s.recurring,
+            checklist_done: s.checklist_done,
+            checklist_total: s.checklist_total,
         }
     }
 }
@@ -353,6 +408,10 @@ pub struct TaskPatchDto {
     )]
     #[cfg_attr(test, ts(as = "Option<RecurrenceDto>", optional = nullable))]
     pub recurrence: Option<Option<RecurrenceDto>>,
+    /// Ersetzt die ganze Checkliste (ADR-034); leere `id` = neuer Punkt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub checklist: Option<Vec<ChecklistItemDto>>,
 }
 
 /// Unterscheidet bei `Option<Option<T>>` „Feld fehlt" (`None`) von „Feld ist null" (`Some(None)`).

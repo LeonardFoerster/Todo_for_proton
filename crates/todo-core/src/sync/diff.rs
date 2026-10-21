@@ -88,6 +88,10 @@ pub fn task_fields(task: &Task) -> FieldMap {
             FieldName::Recurrence,
             FieldValue::Recurrence(task.recurrence().cloned()),
         ),
+        (
+            FieldName::Checklist,
+            FieldValue::Checklist(task.checklist().to_vec()),
+        ),
     ])
 }
 
@@ -291,6 +295,7 @@ mod tests {
             completed_at: None,
             trashed_at: None,
             recurrence: None,
+            checklist: Vec::new(),
         };
         parts.updated_at = Timestamp::from_millis(999_999);
         let touched = Task::from_parts(parts).unwrap();

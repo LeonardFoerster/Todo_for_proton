@@ -1,6 +1,9 @@
 //! Die zentrale Entity `Task`.
 
-use super::{text::normalize_name, Due, Recurrence, SortKey, TagId, TaskId, TaskListId, Timestamp};
+use super::{
+    check_checklist, text::normalize_name, ChecklistItem, Due, Recurrence, SortKey, TagId, TaskId,
+    TaskListId, Timestamp,
+};
 use crate::{ports::Clock, CoreError, CoreResult};
 
 /// Maximale Titellänge in Unicode-Zeichen.
@@ -46,6 +49,8 @@ pub struct Task {
     /// Wiederholung (N4, ADR-028): Die Task ist dann eine Serie, `due` ihr nächstes Vorkommen.
     /// Ohne `due` wirkungslos (kann nach einem Merge vorkommen – kein Grund, die Task zu verwerfen).
     recurrence: Option<Recurrence>,
+    /// Checkliste (N8, ADR-034), in Anzeigereihenfolge.
+    checklist: Vec<ChecklistItem>,
 }
 
 /// Alle Felder einer gespeicherten Task, zum Wiederherstellen per [`Task::from_parts`]
@@ -67,6 +72,7 @@ pub struct TaskParts {
     pub completed_at: Option<Timestamp>,
     pub trashed_at: Option<Timestamp>,
     pub recurrence: Option<Recurrence>,
+    pub checklist: Vec<ChecklistItem>,
 }
 
 impl Task {
@@ -85,6 +91,7 @@ impl Task {
                 parts.id
             )));
         }
+        check_checklist(&parts.checklist)?;
         Ok(Self {
             id: parts.id,
             list_id: parts.list_id,
@@ -101,6 +108,7 @@ impl Task {
             completed_at: parts.completed_at,
             trashed_at: parts.trashed_at,
             recurrence: parts.recurrence,
+            checklist: parts.checklist,
         })
     }
 
@@ -133,6 +141,7 @@ impl Task {
             completed_at: None,
             trashed_at: None,
             recurrence: None,
+            checklist: Vec::new(),
         })
     }
 
@@ -226,6 +235,38 @@ impl Task {
     #[must_use]
     pub fn is_recurring(&self) -> bool {
         self.recurrence.is_some() && self.due.is_some()
+    }
+
+    #[must_use]
+    pub fn checklist(&self) -> &[ChecklistItem] {
+        &self.checklist
+    }
+
+    /// Ersetzt die ganze Checkliste (ein LWW-Feld, ADR-034).
+    ///
+    /// # Errors
+    /// `CoreError::Validation` bei mehr als 100 Punkten oder doppelten IDs.
+    pub fn set_checklist(
+        &mut self,
+        items: Vec<ChecklistItem>,
+        clock: &(impl Clock + ?Sized),
+    ) -> CoreResult<()> {
+        check_checklist(&items)?;
+        if items != self.checklist {
+            self.checklist = items;
+            self.touch(clock);
+        }
+        Ok(())
+    }
+
+    /// Alle Haken der Checkliste weg (nächstes Vorkommen einer Serie, ADR-034).
+    pub fn reset_checklist(&mut self, clock: &(impl Clock + ?Sized)) {
+        if self.checklist.iter().any(ChecklistItem::is_done) {
+            for item in &mut self.checklist {
+                item.set_done(false);
+            }
+            self.touch(clock);
+        }
     }
 
     /// Ändert den Titel (gleiche Regeln wie in [`Task::new`]).
@@ -585,6 +626,7 @@ mod tests {
             completed_at: t.completed_at(),
             trashed_at: t.trashed_at(),
             recurrence: t.recurrence().cloned(),
+            checklist: t.checklist().to_vec(),
         }
     }
 

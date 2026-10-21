@@ -4,6 +4,7 @@ export type { AuthInfoDto } from "./generated/AuthInfoDto";
 export type { AuthStepDto } from "./generated/AuthStepDto";
 export type { BackgroundSettingsDto } from "./generated/BackgroundSettingsDto";
 export type { ChangedEventDto } from "./generated/ChangedEventDto";
+export type { ChecklistItemDto } from "./generated/ChecklistItemDto";
 export type { CompleteResultDto } from "./generated/CompleteResultDto";
 export type { CreateTaskDto } from "./generated/CreateTaskDto";
 export type { DueDto } from "./generated/DueDto";

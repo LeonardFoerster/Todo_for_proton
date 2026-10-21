@@ -194,6 +194,8 @@ pub fn materialize_task(id: TaskId, registers: &Registers) -> Option<Task> {
         trashed_at: trashed(registers).flatten(),
         // Seit ADR-028; fehlt bei älteren Tasks → keine Wiederholung (nie `?`, s. o.).
         recurrence: recurrence(registers).flatten(),
+        // Seit ADR-034; fehlt bei älteren Tasks → leer (nie `?`, s. o.).
+        checklist: checklist(registers).unwrap_or_default(),
     };
     Task::from_parts(parts).ok()
 }
@@ -333,6 +335,13 @@ fn priority(registers: &Registers) -> Option<Priority> {
 fn due(registers: &Registers) -> Option<Option<Due>> {
     match value(registers, FieldName::Due)? {
         FieldValue::Due(d) => Some(d.clone()),
+        _ => None,
+    }
+}
+
+fn checklist(registers: &Registers) -> Option<Vec<crate::domain::ChecklistItem>> {
+    match value(registers, FieldName::Checklist)? {
+        FieldValue::Checklist(items) => Some(items.clone()),
         _ => None,
     }
 }
@@ -654,6 +663,8 @@ mod tests {
             Trash(usize, bool),
             /// Wiederholung täglich/keine (ADR-028).
             Rule(usize, bool),
+            /// Checkliste mit n Punkten (ADR-034).
+            Checklist(usize, u8),
             Delete(usize),
         }
 
@@ -666,6 +677,7 @@ mod tests {
                 2 => (entity.clone(), any::<bool>()).prop_map(|(e, d)| Action::Done(e, d)),
                 2 => (entity.clone(), any::<bool>()).prop_map(|(e, t)| Action::Trash(e, t)),
                 2 => (entity.clone(), any::<bool>()).prop_map(|(e, r)| Action::Rule(e, r)),
+                2 => (entity.clone(), 0u8..4).prop_map(|(e, n)| Action::Checklist(e, n)),
                 1 => entity.prop_map(Action::Delete),
             ]
         }
@@ -731,6 +743,24 @@ mod tests {
                                         crate::domain::Frequency::Daily,
                                     )
                                 })),
+                            },
+                        ),
+                        Action::Checklist(e, n) => (
+                            ids[*e],
+                            OpKind::Set {
+                                field: FieldName::Checklist,
+                                value: FieldValue::Checklist(
+                                    (0..*n)
+                                        .map(|i| {
+                                            crate::domain::ChecklistItem::new(
+                                                crate::domain::ChecklistItemId::new(),
+                                                &format!("P{i}"),
+                                                i % 2 == 0,
+                                            )
+                                            .unwrap()
+                                        })
+                                        .collect(),
+                                ),
                             },
                         ),
                         Action::Delete(e) => (ids[*e], OpKind::Delete),

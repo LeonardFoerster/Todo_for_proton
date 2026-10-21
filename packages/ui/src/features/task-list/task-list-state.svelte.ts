@@ -30,6 +30,8 @@ export function toSummary(t: TaskDto): TaskSummaryDto {
     completedAt: t.completedAt,
     trashedAt: t.trashedAt,
     recurring: t.recurrence != null,
+    checklistDone: t.checklist.filter((i) => i.done).length,
+    checklistTotal: t.checklist.length,
   };
 }
 

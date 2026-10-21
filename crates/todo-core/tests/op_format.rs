@@ -328,6 +328,52 @@ fn recurrence_op_encoding_matches_golden_file() {
     assert_eq!(decode_ops(&golden).unwrap(), recurrence_sample());
 }
 
+/// Checkliste (ADR-034): Feld `Checklist` (Code 18). Eigene Datei.
+fn checklist_sample() -> Vec<Op> {
+    use todo_core::domain::{ChecklistItem, ChecklistItemId};
+    let device: DeviceId = id("0192f0c4-7a3b-7c2d-8e4f-0123456789ab");
+    let task = EntityRef::Task(id::<TaskId>("0192f0c4-7a3b-7c2d-8e4f-000000000041"));
+    let item = |n: u8, text: &str, done: bool| {
+        let item_id: ChecklistItemId = id(&format!("0192f0c4-7a3b-7c2d-8e4f-0000000001{n:02}"));
+        ChecklistItem::new(item_id, text, done).unwrap()
+    };
+    let stamp = |seq: u64, value| Op {
+        id: OpId { device, seq },
+        hlc: Hlc {
+            wall_ms: 1_760_000_000_000 + seq,
+            counter: 0,
+            device,
+        },
+        entity: task,
+        kind: OpKind::Set {
+            field: FieldName::Checklist,
+            value,
+        },
+    };
+    vec![
+        stamp(
+            1,
+            FieldValue::Checklist(vec![
+                item(1, "Brot", true),
+                item(2, "Äpfel – 6 Stück", false),
+            ]),
+        ),
+        stamp(2, FieldValue::Checklist(Vec::new())),
+    ]
+}
+
+#[test]
+fn checklist_op_encoding_matches_golden_file() {
+    let encoded = encode_ops(&checklist_sample());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/ops_v1_checklist.bin");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(&path, &encoded).unwrap();
+    }
+    let golden = std::fs::read(&path).expect("golden file missing – see module docs");
+    assert_eq!(encoded, golden, "Op-Binärformat hat sich geändert");
+    assert_eq!(decode_ops(&golden).unwrap(), checklist_sample());
+}
+
 /// Eine App ohne Notizen kennt die neuen Varianten nicht: Dekodieren scheitert sauber (das
 /// Segment wird übersprungen), es gibt keinen Absturz. Nachgestellt durch eine Variante, die
 /// auch diese Version nicht kennt.

@@ -41,6 +41,7 @@ pub enum OpKind {
   „Rückgängig" (Tombstone) nimmt erneutes Abhaken die nächste ID-Variante. Ältere Apps kennen Code 17 nicht und
   überspringen solche Segmente (Hinweis „alle Geräte aktualisieren").
 - **Notizen**: v1 LWW für das ganze Feld. Später ggf. Text-CRDT (z. B. `yrs`) nur für `notes`.
+- **Checkliste (N8, ADR-034)**: Feld `Checklist` (Code 18), LWW auf die ganze Liste der Punkte `{id, text, done}`.
 - **Tags**: v1 LWW auf die ganze Menge; bei Bedarf Upgrade auf OR-Set über `AddToSet`/`RemoveFromSet`.
 - **Reihenfolge**: `sort_key` als Fractional Index (String, z. B. Base62). Verschieben ändert nur
   das eine Feld der bewegten Task. Gleiche Keys nach parallelen Moves → Tie-Break über `TaskId`.

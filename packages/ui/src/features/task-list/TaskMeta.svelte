@@ -7,7 +7,7 @@
    */
   import type { TaskSummaryDto } from "@tasks/core-client";
   import { untrack } from "svelte";
-  import { Hash, Repeat, StickyNote } from "../../icons";
+  import { Hash, ListChecks, Repeat, StickyNote } from "../../icons";
   import { trashedLabel, type DueLabel } from "../../lib/format-date";
 
   interface Props {
@@ -52,6 +52,16 @@
   {#if task.recurring && !trashed}
     <span class="repeat" title="Wiederholt sich" aria-label="wiederholt sich">
       <Repeat size={icon} strokeWidth={1.75} aria-hidden="true" />
+    </span>
+  {/if}
+  {#if task.checklistTotal > 0}
+    <span
+      class="checklist"
+      class:complete={task.checklistDone === task.checklistTotal}
+      title="Checkliste: {task.checklistDone} von {task.checklistTotal} erledigt"
+      aria-label="Checkliste {task.checklistDone} von {task.checklistTotal}"
+    >
+      <ListChecks size={icon} strokeWidth={1.75} aria-hidden="true" />{task.checklistDone}/{task.checklistTotal}
     </span>
   {/if}
   {#if task.hasNotes}
@@ -113,6 +123,19 @@
   .done .due {
     color: var(--color-text-muted);
     font-weight: var(--weight-regular);
+  }
+  .checklist {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .checklist.complete {
+    color: var(--color-success);
+  }
+  .done .checklist {
+    color: var(--color-text-muted);
   }
   .notes,
   .repeat {

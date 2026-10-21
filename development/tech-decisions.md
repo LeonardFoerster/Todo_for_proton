@@ -847,6 +847,26 @@ Wiederherstellen; Verknüpfungen (N9) gehen dabei verloren, bis das Format sie a
 Tauri-Features `tray-icon`; Größe und PSS im Commit. Ohne Portal oder Tray (andere Desktops) läuft die App normal
 weiter (Warnung im Log), Meldungen fehlen dann.
 
+## ADR-034 · Checkliste an der Task: ein LWW-Feld mit Punkten
+
+**Status:** akzeptiert (2026-10-21, N8-01)
+**Kontext:** Der User will Unterpunkte als **Checkliste in der Task** (2026-10-21), keine Subtasks mit eigener
+Fälligkeit. Das bestehende `parent_id` bleibt ungenutzt.
+**Entscheidung:**
+1. `Task.checklist: Vec<ChecklistItem { id: ChecklistItemId (UUIDv7), text, done }>`, Reihenfolge = Anzeige. Text
+   einzeilig wie ein Titel (Steuerzeichen raus, 1–500 Zeichen), höchstens **100** Punkte, IDs eindeutig – lokal,
+   beim Wiederherstellen und beim Lesen aus dem Sync geprüft.
+2. **Ein Feld** `Checklist` (Code 18), LWW auf die ganze Liste (wie die Tags in v1): parallele Änderungen an der
+   Checkliste derselben Task → die spätere gewinnt ganz. Bewusst einfach; Punkte als eigene Entitäten (OR-Set) erst,
+   wenn das im Alltag stört. Fehlt das Register (ältere Tasks) → leer.
+3. API: `TaskDto.checklist`, `TaskPatchDto.checklist` ersetzt die ganze Liste (leere `id` = neuer Punkt, der Core
+   vergibt sie); `TaskSummaryDto.checklistDone/checklistTotal` für „2/5" in der Zeile ohne die Punkte zu laden.
+4. SQLite (Migration 0007): Spalte `checklist` (Zeilen `id<TAB>0|1<TAB>Text`), `checklist_text` (nur Texte) im
+   Volltextindex (`tasks_fts` mit dritter Spalte neu aufgebaut), Zähler als eigene Spalten.
+5. Serien (ADR-028): Das nächste Vorkommen beginnt ohne Haken, der Verlaufseintrag behält sie.
+**Konsequenzen:** Ältere Apps kennen Code 18 nicht und überspringen solche Segmente (wie bei ADR-028/031) –
+„alle Geräte aktualisieren". Die Suche zählt Punkttreffer wie Notiztreffer.
+
 ---
 
 ## Spikes

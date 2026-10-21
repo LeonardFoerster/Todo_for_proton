@@ -143,6 +143,10 @@ define_id!(
     TagId
 );
 define_id!(
+    /// ID eines Punkts einer Checkliste (N8, ADR-034).
+    ChecklistItemId
+);
+define_id!(
     /// ID eines Geräts (eine Installation der App).
     DeviceId
 );

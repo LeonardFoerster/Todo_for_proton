@@ -398,13 +398,14 @@ impl CoreApi {
     // Tasks
     pub async fn create_task(&self, input: CreateTaskDto) -> CoreResult<TaskDto>;      // { title, listId?, notes?, priority?, due? } – ein Commit
     pub async fn get_task(&self, id: String) -> CoreResult<TaskDto>;
-    pub async fn update_task(&self, id: String, patch: TaskPatchDto) -> CoreResult<TaskDto>; // due: null = entfernen
+    pub async fn update_task(&self, id: String, patch: TaskPatchDto) -> CoreResult<TaskDto>; // due: null = entfernen,
+        // recurrence: null = Serie beenden (ADR-028), checklist: ganze Liste ersetzen, id "" = neu (ADR-034)
     pub async fn complete_task(&self, id: String, done: bool) -> CoreResult<TaskDto>;
     pub async fn move_task(&self, id: String, target: MoveTargetDto) -> CoreResult<TaskDto>;  // { listId?, after?, before? }
     pub async fn delete_task(&self, id: String) -> CoreResult<()>;
     // Sammelaktionen (P0-01, ADR-021): je ein Commit + ein Changed-Event; unbekannte IDs übersprungen,
     // Ergebnis = tatsächlich geänderte Tasks; höchstens BULK_LIMIT_MAX (2 000) je Aufruf.
-    pub async fn complete_tasks(&self, ids: Vec<String>, done: bool) -> CoreResult<Vec<TaskDto>>;
+    pub async fn complete_tasks(&self, ids: Vec<String>, done: bool, today: Option<LocalDayDto>) -> CoreResult<CompleteResultDto>; // ADR-028
     pub async fn delete_tasks(&self, ids: Vec<String>) -> CoreResult<Vec<TaskDto>>;       // Zustand vor dem Löschen
     pub async fn move_tasks(&self, ids: Vec<String>, target: MoveTargetDto) -> CoreResult<Vec<TaskDto>>; // Block
     pub async fn restore_tasks(&self, tasks: Vec<TaskDto>) -> CoreResult<Vec<TaskDto>>;  // neue IDs, alter Sort-Key

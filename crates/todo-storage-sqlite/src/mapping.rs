@@ -5,9 +5,9 @@ use chrono::Datelike;
 use rusqlite::{named_params, Connection, Row};
 use todo_core::{
     domain::{
-        Due, NaiveDate, Note, NoteFolder, NoteFolderId, NoteFolderParts, NoteId, NoteKind,
-        NoteParts, Priority, RevisionId, SortKey, TagId, Task, TaskId, TaskList, TaskListId,
-        TaskListParts, TaskParts, TaskStatus, Timestamp,
+        ChecklistItem, ChecklistItemId, Due, NaiveDate, Note, NoteFolder, NoteFolderId,
+        NoteFolderParts, NoteId, NoteKind, NoteParts, Priority, RevisionId, SortKey, TagId, Task,
+        TaskId, TaskList, TaskListId, TaskListParts, TaskParts, TaskStatus, Timestamp,
     },
     ports::{NoteSummary, NoteTreeItem, TaskSummary},
     CoreResult,
@@ -16,14 +16,15 @@ use todo_core::{
 use crate::error::{corrupt, storage};
 
 pub(crate) const TASK_COLUMNS: &str = "id, list_id, parent_id, title, notes, status, priority, \
-     due_date, due_at, due_tz, tags, sort_key, created_at, updated_at, completed_at, trashed_at, recurrence";
+     due_date, due_at, due_tz, tags, sort_key, created_at, updated_at, completed_at, trashed_at, recurrence, checklist";
 
 pub(crate) const LIST_COLUMNS: &str = "id, name, sort_key, created_at, updated_at, is_inbox";
 
 /// Spalten für [`TaskSummary`] – ohne Notiztext, nur ob es einen gibt.
 pub(crate) const SUMMARY_COLUMNS: &str = "id, list_id, title, status, priority, due_date, due_at, \
      due_tz, notes <> '' AS has_notes, sort_key, completed_at, trashed_at, \
-     (recurrence IS NOT NULL AND (due_date IS NOT NULL OR due_at IS NOT NULL)) AS recurring";
+     (recurrence IS NOT NULL AND (due_date IS NOT NULL OR due_at IS NOT NULL)) AS recurring, \
+     checklist_done, checklist_total";
 
 pub(crate) const NOTE_COLUMNS: &str = "id, folder_id, name, auto_name, kind, body, body_rev, \
      sort_key, created_at, modified_at, trashed_at";
@@ -55,17 +56,19 @@ const UPSERT_FOLDER: &str = "\
 const UPSERT_TASK: &str = "\
     INSERT INTO tasks (id, list_id, parent_id, title, notes, status, priority, due_date, due_at,
                        due_tz, tags, sort_key, created_at, updated_at, completed_at, trashed_at,
-                       recurrence)
+                       recurrence, checklist, checklist_text, checklist_done, checklist_total)
     VALUES (:id, :list_id, :parent_id, :title, :notes, :status, :priority, :due_date, :due_at,
             :due_tz, :tags, :sort_key, :created_at, :updated_at, :completed_at, :trashed_at,
-            :recurrence)
+            :recurrence, :checklist, :checklist_text, :checklist_done, :checklist_total)
     ON CONFLICT (id) DO UPDATE SET
         list_id = excluded.list_id, parent_id = excluded.parent_id, title = excluded.title,
         notes = excluded.notes, status = excluded.status, priority = excluded.priority,
         due_date = excluded.due_date, due_at = excluded.due_at, due_tz = excluded.due_tz,
         tags = excluded.tags, sort_key = excluded.sort_key, created_at = excluded.created_at,
         updated_at = excluded.updated_at, completed_at = excluded.completed_at,
-        trashed_at = excluded.trashed_at, recurrence = excluded.recurrence";
+        trashed_at = excluded.trashed_at, recurrence = excluded.recurrence,
+        checklist = excluded.checklist, checklist_text = excluded.checklist_text,
+        checklist_done = excluded.checklist_done, checklist_total = excluded.checklist_total";
 
 const UPSERT_LIST: &str = "\
     INSERT INTO task_lists (id, name, sort_key, created_at, updated_at, is_inbox)
@@ -98,6 +101,11 @@ pub(crate) fn write_task(conn: &Connection, task: &Task) -> CoreResult<()> {
         ":completed_at": task.completed_at().map(Timestamp::as_millis),
         ":trashed_at": task.trashed_at().map(Timestamp::as_millis),
         ":recurrence": task.recurrence().map(ToString::to_string),
+        ":checklist": encode_checklist(task.checklist()),
+        ":checklist_text": task.checklist().iter().map(ChecklistItem::text).collect::<Vec<_>>().join("\n"),
+        // Höchstens 100 Punkte (ADR-034) – passt immer.
+        ":checklist_done": i64::try_from(task.checklist().iter().filter(|i| i.is_done()).count()).unwrap_or(i64::MAX),
+        ":checklist_total": i64::try_from(task.checklist().len()).unwrap_or(i64::MAX),
     })
     .map_err(storage)?;
     Ok(())
@@ -282,6 +290,7 @@ pub(crate) fn read_task(row: &Row<'_>) -> CoreResult<Task> {
         recurrence: get::<Option<String>>(row, 16)?
             .map(|s| s.parse().map_err(|e| corrupt("recurrence", e)))
             .transpose()?,
+        checklist: decode_checklist(&get::<String>(row, 17)?)?,
     };
     Task::from_parts(parts).map_err(|e| corrupt("task", e))
 }
@@ -313,6 +322,8 @@ pub(crate) fn read_summary(row: &Row<'_>) -> CoreResult<TaskSummary> {
         completed_at: get::<Option<i64>>(row, 10)?.map(Timestamp::from_millis),
         trashed_at: get::<Option<i64>>(row, 11)?.map(Timestamp::from_millis),
         recurring: get(row, 12)?,
+        checklist_done: get(row, 13)?,
+        checklist_total: get(row, 14)?,
     })
 }
 
@@ -410,6 +421,30 @@ fn encode_tags(tags: &[TagId]) -> String {
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Checkliste als Zeilen `id<TAB>0|1<TAB>Text` (Texte sind einzeilig ohne Steuerzeichen, ADR-034).
+fn encode_checklist(items: &[ChecklistItem]) -> String {
+    items
+        .iter()
+        .map(|i| format!("{}\t{}\t{}", i.id(), u8::from(i.is_done()), i.text()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn decode_checklist(s: &str) -> CoreResult<Vec<ChecklistItem>> {
+    s.lines()
+        .filter(|l| !l.is_empty())
+        .map(|line| {
+            let mut parts = line.splitn(3, '\t');
+            let (Some(id), Some(done), Some(text)) = (parts.next(), parts.next(), parts.next())
+            else {
+                return Err(corrupt("checklist item", line));
+            };
+            let id = ChecklistItemId::parse(id).map_err(|e| corrupt("checklist item id", e))?;
+            ChecklistItem::new(id, text, done == "1").map_err(|e| corrupt("checklist item", e))
+        })
+        .collect()
 }
 
 fn decode_tags(s: &str) -> CoreResult<Vec<TagId>> {

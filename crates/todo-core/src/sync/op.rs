@@ -15,8 +15,8 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use super::Hlc;
 use crate::{
     domain::{
-        DeviceId, Due, NoteFolderId, NoteKind, Priority, Recurrence, RevisionId, SortKey, TagId,
-        TaskId, TaskListId, Timestamp, NOTE_BODY_MAX_BYTES,
+        ChecklistItem, DeviceId, Due, NoteFolderId, NoteKind, Priority, Recurrence, RevisionId,
+        SortKey, TagId, TaskId, TaskListId, Timestamp, NOTE_BODY_MAX_BYTES,
     },
     ports::EntityRef,
     CoreError, CoreResult,
@@ -109,11 +109,13 @@ pub enum FieldName {
     Trashed,
     /// Wiederholung einer Task (N4, ADR-028); LWW auf die ganze Regel.
     Recurrence,
+    /// Checkliste einer Task (N8, ADR-034); LWW auf die ganze Liste.
+    Checklist,
 }
 
 impl FieldName {
     /// Alle Felder (für Tests und Validierung).
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::ListId,
         Self::ParentId,
         Self::Title,
@@ -131,10 +133,11 @@ impl FieldName {
         Self::AutoName,
         Self::Trashed,
         Self::Recurrence,
+        Self::Checklist,
     ];
 
-    /// Felder einer Task (`Trashed` seit ADR-031, `Recurrence` seit ADR-028).
-    pub const TASK: [Self; 12] = [
+    /// Felder einer Task (`Trashed` seit ADR-031, `Recurrence` seit ADR-028, `Checklist` seit ADR-034).
+    pub const TASK: [Self; 13] = [
         Self::ListId,
         Self::ParentId,
         Self::Title,
@@ -147,6 +150,7 @@ impl FieldName {
         Self::CreatedAt,
         Self::Trashed,
         Self::Recurrence,
+        Self::Checklist,
     ];
 
     /// Felder einer Liste.
@@ -193,6 +197,7 @@ impl FieldName {
             Self::AutoName => 15,
             Self::Trashed => 16,
             Self::Recurrence => 17,
+            Self::Checklist => 18,
         }
     }
 
@@ -232,6 +237,7 @@ impl FieldName {
                 | (Self::NoteKind, FieldValue::NoteKind(_))
                 | (Self::Trashed, FieldValue::Trashed(_))
                 | (Self::Recurrence, FieldValue::Recurrence(_))
+                | (Self::Checklist, FieldValue::Checklist(_))
         )
     }
 }
@@ -271,6 +277,8 @@ pub enum FieldValue {
     Trashed(Option<Timestamp>),
     /// Wiederholung (N4); kompakt: Codes, Wochentage als Bitmaske, Ende als Tageszahl.
     Recurrence(#[serde(with = "recurrence_wire")] Option<Recurrence>),
+    /// Checkliste (N8): Punkte als (ID, Text, Haken), beim Lesen geprüft.
+    Checklist(#[serde(with = "checklist_wire")] Vec<ChecklistItem>),
 }
 
 impl Op {
@@ -546,6 +554,44 @@ mod recurrence_wire {
     }
 }
 
+/// Checkliste (ADR-034): je Punkt ID (16 Bytes), Text, Haken; beim Lesen wie lokal geprüft
+/// (Text einzeilig und begrenzt, höchstens 100 Punkte, IDs eindeutig).
+mod checklist_wire {
+    use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+
+    use crate::domain::{check_checklist, ChecklistItem, ChecklistItemId};
+
+    #[derive(Serialize, Deserialize)]
+    struct Wire {
+        id: ChecklistItemId,
+        text: String,
+        done: bool,
+    }
+
+    pub(super) fn serialize<S: Serializer>(
+        items: &[ChecklistItem],
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        s.collect_seq(items.iter().map(|i| Wire {
+            id: i.id(),
+            text: i.text().to_owned(),
+            done: i.is_done(),
+        }))
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Vec<ChecklistItem>, D::Error> {
+        let items = Vec::<Wire>::deserialize(d)?
+            .into_iter()
+            .map(|w| ChecklistItem::new(w.id, &w.text, w.done))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(de::Error::custom)?;
+        check_checklist(&items).map_err(de::Error::custom)?;
+        Ok(items)
+    }
+}
+
 /// Sortierschlüssel als String, beim Lesen mit Formatprüfung.
 mod sort_key_str {
     use serde::{de, Deserialize, Deserializer, Serializer};
@@ -617,6 +663,15 @@ mod tests {
                         .parse()
                         .unwrap(),
                 )),
+            ),
+            (
+                FieldName::Checklist,
+                FieldValue::Checklist(vec![ChecklistItem::new(
+                    crate::domain::ChecklistItemId::new(),
+                    "Punkt",
+                    true,
+                )
+                .unwrap()]),
             ),
         ]
     }

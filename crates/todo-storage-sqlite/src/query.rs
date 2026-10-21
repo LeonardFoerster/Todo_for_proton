@@ -232,9 +232,13 @@ pub(crate) fn search_tasks_sql(terms: &[String], limit: u32) -> (String, Vec<Val
         params.push(Value::Text(all.join(" ")));
     }
     for term in &short {
-        conditions.push(r"(title LIKE ? ESCAPE '\' OR notes LIKE ? ESCAPE '\')".into());
-        params.push(Value::Text(like_pattern(term)));
-        params.push(Value::Text(like_pattern(term)));
+        conditions.push(
+            r"(title LIKE ? ESCAPE '\' OR notes LIKE ? ESCAPE '\' OR checklist_text LIKE ? ESCAPE '\')"
+                .into(),
+        );
+        for _ in 0..3 {
+            params.push(Value::Text(like_pattern(term)));
+        }
     }
 
     // Titeltreffer: irgendein Wort im Titel.

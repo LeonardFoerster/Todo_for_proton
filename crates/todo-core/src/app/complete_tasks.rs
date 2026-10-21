@@ -93,6 +93,8 @@ impl CompleteTasks {
                     }
                     occurrence = Some(id);
                     task.set_due(Some(next), clock)?;
+                    // Das nächste Vorkommen beginnt mit leerer Checkliste; der Eintrag behält die Haken.
+                    task.reset_checklist(clock);
                 } else {
                     task.complete(clock);
                 }
@@ -301,6 +303,44 @@ mod tests {
         .items
         .len();
         assert_eq!(before, after);
+    }
+
+    #[test]
+    fn the_next_occurrence_starts_with_an_unticked_checklist() {
+        use crate::{
+            app::{TaskPatch, UpdateTask, UpdateTaskInput},
+            domain::{ChecklistItem, ChecklistItemId, Frequency, Recurrence},
+        };
+        let (deps, repo) = deps();
+        let task = series(
+            &deps,
+            Due::Date(day("2026-10-21")),
+            Recurrence::every(Frequency::Daily),
+        );
+        let items = vec![
+            ChecklistItem::new(ChecklistItemId::new(), "Wasser", true).unwrap(),
+            ChecklistItem::new(ChecklistItemId::new(), "Dünger", false).unwrap(),
+        ];
+        block_on(UpdateTask::new(deps.clone()).execute(UpdateTaskInput {
+            id: task.id(),
+            patch: TaskPatch {
+                checklist: Some(items.clone()),
+                ..TaskPatch::default()
+            },
+        }))
+        .unwrap();
+        let out = complete_on(&CompleteTasks::new(deps), task.id(), "2026-10-21").unwrap();
+        let next = block_on(repo.get_task(task.id())).unwrap().unwrap();
+        assert!(next.checklist().iter().all(|i| !i.is_done()));
+        assert_eq!(next.checklist().len(), 2);
+        let entry = block_on(repo.get_task(out.occurrences[0].occurrence.unwrap()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            entry.checklist(),
+            items.as_slice(),
+            "Eintrag behält die Haken"
+        );
     }
 
     #[test]

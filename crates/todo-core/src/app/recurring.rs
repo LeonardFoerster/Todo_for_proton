@@ -142,6 +142,7 @@ pub(crate) fn occurrence_of(
         completed_at: Some(now),
         trashed_at: None,
         recurrence: None,
+        checklist: series.checklist().to_vec(),
     })
 }
 
@@ -179,7 +180,10 @@ impl SkipOccurrence {
         let clock = self.deps.clock.as_ref();
         let today = today_or(input.today, clock.now());
         match next_due(&task, today, self.deps.zones.as_deref())? {
-            Some(next) => task.set_due(Some(next), clock)?,
+            Some(next) => {
+                task.set_due(Some(next), clock)?;
+                task.reset_checklist(clock);
+            }
             None => task.complete(clock),
         }
         repo.commit(ChangeSet::new().upsert_task(task.clone()))

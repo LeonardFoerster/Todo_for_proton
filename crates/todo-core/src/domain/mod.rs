@@ -3,6 +3,7 @@
 //!
 //! Reine Logik ohne IO; Invarianten werden in Konstruktoren und Methoden geprüft.
 
+mod checklist;
 mod due;
 mod ids;
 mod note;
@@ -16,8 +17,13 @@ mod task_list;
 mod text;
 mod timestamp;
 
+pub use checklist::{
+    check_checklist, ChecklistItem, CHECKLIST_ITEM_MAX_CHARS, CHECKLIST_MAX_ITEMS,
+};
 pub use due::{Due, LocalDay, NaiveDate, DUE_TZ_MAX_CHARS};
-pub use ids::{DeviceId, NoteFolderId, NoteId, ParseIdError, TagId, TaskId, TaskListId};
+pub use ids::{
+    ChecklistItemId, DeviceId, NoteFolderId, NoteId, ParseIdError, TagId, TaskId, TaskListId,
+};
 pub use note::{
     check_body, normalize_line_endings, Note, NoteKind, NoteParts, RevisionId, NOTE_BODY_MAX_BYTES,
 };
