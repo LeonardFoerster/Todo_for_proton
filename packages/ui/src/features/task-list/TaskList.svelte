@@ -23,6 +23,8 @@
     untrashWithToast,
   } from "../../lib/task-actions";
   import { listName, routeIcon, viewMeta } from "../../lib/views";
+  import { DEFAULT_OPTIONS, isDefault, type ViewOptions } from "../../lib/view-options";
+  import { sortedByDue } from "./view-match";
   import PurgeDialog from "./PurgeDialog.svelte";
   import { SelectionState } from "./selection.svelte";
   import { TaskListState, toSummary } from "./task-list-state.svelte";
@@ -40,9 +42,20 @@
     onnewtask?: () => void;
     /** Kontextmenü „Fälligkeit…“ für diese Tasks an Position (P4-04). */
     ondue?: (tasks: TaskSummaryDto[], x: number, y: number) => void;
+    /** Sortierung/Filter der Ansicht (N10-01); fest je Instanz (App rendert per `{#key}`). */
+    options?: ViewOptions;
   }
 
-  let { route, lists, selectedId = $bindable(null), onopen, onready, onnewtask, ondue }: Props = $props();
+  let {
+    route,
+    lists,
+    selectedId = $bindable(null),
+    onopen,
+    onready,
+    onnewtask,
+    ondue,
+    options = DEFAULT_OPTIONS,
+  }: Props = $props();
 
   /** Zeilenhöhe: 36 px, bei Touch/schmal 44 px (P5-09). */
   const ROW = $derived(density.rowHeight);
@@ -50,10 +63,15 @@
   // Pro Ansicht eine Instanz (App rendert TaskList per {#key}); Route ist hier fest.
   // svelte-ignore state_referenced_locally
   const view = route;
-  const rows = new TaskListState(client, () => ({ route: view, inboxId: lists.inbox?.id, day: localDay() }));
+  // svelte-ignore state_referenced_locally
+  const opts = options;
+  const rows = new TaskListState(client, () => ({ route: view, inboxId: lists.inbox?.id, day: localDay(), options: opts }));
 
-  /** Reihenfolge ist nur in einer einzelnen Liste änderbar (Sammelansichten mischen Listen). */
-  const sortable = view.view === "inbox" || view.view === "list";
+  /**
+   * Reihenfolge ist nur in einer einzelnen Liste änderbar (Sammelansichten mischen Listen) – und nur
+   * in der eigenen Reihenfolge ohne Filter (N10-01).
+   */
+  const sortable = (view.view === "inbox" || view.view === "list") && isDefault(opts);
   const showListNames = view.view !== "list" && view.view !== "inbox";
   const names = $derived(new Map(lists.lists.map((l) => [l.id, listName(l)])));
   const EmptyIcon = routeIcon(view);
@@ -75,7 +93,11 @@
   // --- Abschnitte (P4: Heute = Überfällig/Heute, Geplant = nach Tagen) ------------------------
 
   /** Angezeigte Einträge: Tasks, in Heute/Geplant mit Abschnittsüberschriften dazwischen. */
-  const entries = $derived<Entry<TaskSummaryDto>[]>(groupEntries(rows.items, view) ?? rows.items.map(flatEntry));
+  // Abschnitte (Heute/Geplant nach Tagen, Erledigt) nur in der Reihenfolge der Ansicht.
+  const grouped = view.view === "completed" || sortedByDue(view, opts.sort);
+  const entries = $derived<Entry<TaskSummaryDto>[]>(
+    (grouped ? groupEntries(rows.items, view) : null) ?? rows.items.map(flatEntry),
+  );
   /** Flache Ansichten: ein Eintrag je Task-Objekt, über Änderungen hinweg dasselbe (keine Neuanlage je Zeile). */
   const flat = new WeakMap<TaskSummaryDto, Entry<TaskSummaryDto>>();
   function flatEntry(task: TaskSummaryDto): Entry<TaskSummaryDto> {
@@ -83,7 +105,6 @@
     if (!entry) flat.set(task, (entry = { kind: "task", task, dueMode: "full" }));
     return entry;
   }
-  const grouped = view.view === "today" || view.view === "upcoming" || view.view === "completed";
   /** Eintrags-Index je Task-ID, gebaut je `entries`-Array (nicht je Tastendruck). */
   let entryIndex = new Map<string, number>();
   let entryIndexOf: Entry<TaskSummaryDto>[] | null = null;

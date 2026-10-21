@@ -50,6 +50,8 @@ fn view(api: &CoreApi, view: ViewDto) -> Vec<(String, TaskStatusDto)> {
         view,
         status: None,
         tag: None,
+        priority: None,
+        sort: None,
     };
     let page = block_on(api.list_tasks(
         query,
@@ -169,6 +171,8 @@ fn full_flow_inbox_create_move_complete_list() {
         view: ViewDto::All,
         status: Some(TaskStatusDto::Open),
         tag: None,
+        priority: None,
+        sort: None,
     };
     let page = block_on(api.list_tasks(
         open,
@@ -317,6 +321,8 @@ fn tags_assign_filter_and_survive_export_import() {
             view: ViewDto::All,
             status: None,
             tag: Some(uni.id.clone()),
+            priority: None,
+            sort: None,
         },
         PageRequestDto {
             cursor: None,
@@ -360,6 +366,8 @@ fn tags_assign_filter_and_survive_export_import() {
             view: ViewDto::All,
             status: None,
             tag: Some(tags[0].id.clone()),
+            priority: None,
+            sort: None,
         },
         PageRequestDto {
             cursor: None,

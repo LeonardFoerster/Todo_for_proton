@@ -911,6 +911,26 @@ Verknüpfungen (externe Adressen, Kalender) vor – Felder an `Task` würden das
 **Konsequenzen:** Ältere Apps überspringen Segmente mit `EntityRef::Link` – „alle Geräte aktualisieren". Export
 enthält (noch) keine Verknüpfungen.
 
+## ADR-037 · Sortieren und Filtern im Core (Keyset je Sortierung)
+
+**Status:** akzeptiert (2026-10-21, N10-01)
+**Kontext:** Ansichten sollen sich nach Fälligkeit, Priorität oder Titel sortieren und nach Priorität/Tag filtern
+lassen. Sortieren im Client hieße alles laden – gegen die Budgets (virtualisierte Listen, Seiten zu 200).
+**Entscheidung:**
+1. `TaskQuery` bekommt `sort: TaskSort` (`View` = wie bisher, `Due`, `Priority`, `Title`) und `priority:
+   Option<Priority>` (genau diese). `TaskQuery::order()` ergibt die wirksame Reihenfolge; „Erledigt" und Papierkorb
+   bleiben immer nach Zeitpunkt sortiert, Heute/Geplant sortieren bei `View`/`Due` weiter relativ zum Tag (ADR-026).
+2. Reihenfolgen: Fälligkeit = `Due::rough_instant` (Zeitpunkt bzw. Mitternacht UTC; ohne Fälligkeit zuletzt), dann
+   `sort_key`, `id`; Priorität absteigend, dann `sort_key`, `id`; Titel ohne Groß/Klein **nur bei ASCII** (wie SQLite
+   `NOCASE`, im Core `to_ascii_lowercase`), dann `id`. Jede Reihenfolge hat eine eigene Cursor-Art (Keyset, kein
+   `OFFSET`); der Titel steht im Cursor zuletzt (darf `:` enthalten). Contract-Test für beide Speicher.
+3. UI: Einstellung pro Ansicht im `localStorage` (pro Gerät, nicht synchronisiert), Button „Sortieren und filtern"
+   in der Kopfzeile (Popover), aktive Abweichungen als Chips mit ×. Umsortieren per Ziehen nur in der eigenen
+   Reihenfolge ohne Filter; Abschnitte (Heute/Geplant) nur bei Sortierung nach Fälligkeit. Das Board bleibt
+   unverändert.
+**Konsequenzen:** Umlaute sortieren beim Titel nach Codepunkt (Ä nach Z) – bewusst, damit beide Speicher gleich
+sortieren und der Cursor stabil bleibt.
+
 ---
 
 ## Spikes

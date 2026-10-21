@@ -59,6 +59,7 @@ macro_rules! repository_contract_tests {
             checklist_roundtrips_counts_and_is_searched,
             tags_roundtrip_sort_by_name_and_filter_tasks,
             links_roundtrip_filter_and_mark_tasks,
+            sorts_and_filters_page_like_the_core,
             summary_matches_task,
             sync_device_id_is_stable,
             commit_writes_ops_to_outbox,
@@ -145,6 +146,7 @@ pub fn run_all<R: TaskRepository>(make: impl Fn() -> R) {
     checklist_roundtrips_counts_and_is_searched(make());
     tags_roundtrip_sort_by_name_and_filter_tasks(make());
     links_roundtrip_filter_and_mark_tasks(make());
+    sorts_and_filters_page_like_the_core(make());
     summary_matches_task(make());
     sync_device_id_is_stable(make());
     commit_writes_ops_to_outbox(make());
@@ -956,9 +958,8 @@ pub fn tags_roundtrip_sort_by_name_and_filter_tasks<R: TaskRepository>(repo: R) 
     let page = f.page(all(), None, 10).expect("page");
     assert_eq!(page.items[0].tags, [b.id(), a.id()]);
     let tagged = TaskQuery {
-        view: SmartView::All,
-        status: None,
         tag: Some(a.id()),
+        ..TaskQuery::view(SmartView::All)
     };
     let page = f.page(tagged, None, 10).expect("page");
     assert_eq!(
@@ -1015,6 +1016,60 @@ pub fn links_roundtrip_filter_and_mark_tasks<R: TaskRepository>(repo: R) {
     let page = f.page(all(), None, 10).expect("page");
     let flags: Vec<bool> = page.items.iter().map(|s| s.has_links).collect();
     assert_eq!(flags, [true, false]);
+}
+
+/// Sortierungen und Prioritätsfilter (N10-01, ADR-037), seitenweise zu je 2 – alle Cursor-Arten.
+pub fn sorts_and_filters_page_like_the_core<R: TaskRepository>(repo: R) {
+    use crate::{
+        domain::{Priority, Timestamp},
+        ports::TaskSort,
+    };
+    let f = setup(repo);
+    let mut t = f.add_tasks(f.inbox.id(), 5);
+    let titles = ["banane", "Apfel", "cola", "apfelmus", "Dattel"];
+    let prios = [
+        Priority::Low,
+        Priority::High,
+        Priority::None,
+        Priority::High,
+        Priority::Medium,
+    ];
+    let dues = [
+        Some(Due::Date(date(22))),
+        None,
+        Some(Due::DateTime {
+            at: Timestamp::from_millis(1_792_584_000_000), // 21.10.2026 12:00 UTC
+            tz: "Europe/Berlin".into(),
+        }),
+        Some(Due::Date(date(21))),
+        None,
+    ];
+    for (i, task) in t.iter_mut().enumerate() {
+        task.rename(titles[i], &f.clock).expect("title");
+        task.set_priority(prios[i], &f.clock);
+        task.set_due(dues[i].clone(), &f.clock).expect("due");
+    }
+    f.save(&t);
+    let ids = |sort: TaskSort, priority: Option<Priority>| {
+        f.ids(
+            TaskQuery {
+                sort,
+                priority,
+                ..all()
+            },
+            2,
+        )
+    };
+    let by = |order: &[usize]| order.iter().map(|&i| t[i].id()).collect::<Vec<_>>();
+    assert_eq!(ids(TaskSort::View, None), by(&[0, 1, 2, 3, 4]));
+    // Fälligkeit: 21. ganztägig (Mitternacht UTC) < 21. 12:00 < 22.; ohne zuletzt (eigene Reihenfolge).
+    assert_eq!(ids(TaskSort::Due, None), by(&[3, 2, 0, 1, 4]));
+    // Priorität: hoch (1, 3), mittel (4), niedrig (0), keine (2).
+    assert_eq!(ids(TaskSort::Priority, None), by(&[1, 3, 4, 0, 2]));
+    // Titel ohne Groß/Klein: Apfel, apfelmus, banane, cola, Dattel.
+    assert_eq!(ids(TaskSort::Title, None), by(&[1, 3, 0, 2, 4]));
+    assert_eq!(ids(TaskSort::Title, Some(Priority::High)), by(&[1, 3]));
+    assert_eq!(ids(TaskSort::View, Some(Priority::None)), by(&[2]));
 }
 
 /// Die Zusammenfassung entspricht `TaskSummary::from(&task)`.

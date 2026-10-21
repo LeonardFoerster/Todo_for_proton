@@ -11,7 +11,7 @@ use crate::{
         RecurrenceAnchor, SortKey, Tag, TagId, Task, TaskId, TaskList, TaskListId, TaskParts,
         TaskStatus, Timestamp, WeekdaySet,
     },
-    ports::{Page, SmartView, TaskQuery, TaskSummary},
+    ports::{Page, SmartView, TaskQuery, TaskSort, TaskSummary},
     CoreError, CoreResult,
 };
 
@@ -719,6 +719,36 @@ pub struct TaskQueryDto {
     #[serde(default)]
     #[cfg_attr(test, ts(optional = nullable))]
     pub tag: Option<String>,
+    /// Nur diese Priorität (N10-01).
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub priority: Option<PriorityDto>,
+    /// Sortierung (N10-01); fehlt = wie die Ansicht.
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub sort: Option<TaskSortDto>,
+}
+
+/// Sortierung einer Ansicht (ADR-037).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum TaskSortDto {
+    View,
+    Due,
+    Priority,
+    Title,
+}
+
+impl From<TaskSortDto> for TaskSort {
+    fn from(s: TaskSortDto) -> Self {
+        match s {
+            TaskSortDto::View => Self::View,
+            TaskSortDto::Due => Self::Due,
+            TaskSortDto::Priority => Self::Priority,
+            TaskSortDto::Title => Self::Title,
+        }
+    }
 }
 
 impl TryFrom<&TaskQueryDto> for TaskQuery {
@@ -738,6 +768,8 @@ impl TryFrom<&TaskQueryDto> for TaskQuery {
             view,
             status: dto.status.map(Into::into),
             tag: dto.tag.as_deref().map(TagId::parse).transpose()?,
+            priority: dto.priority.map(Into::into),
+            sort: dto.sort.map(Into::into).unwrap_or_default(),
         })
     }
 }

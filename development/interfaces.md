@@ -495,7 +495,7 @@ export interface CoreClient {
   completeTask(id: string, done: boolean): Promise<TaskDto>;
   moveTask(id: string, target: MoveTargetDto): Promise<TaskDto>;
   deleteTask(id: string): Promise<void>;
-  listTasks(query: TaskQueryDto, page: PageRequestDto): Promise<PageDto<TaskSummaryDto>>;
+  listTasks(query: TaskQueryDto, page: PageRequestDto): Promise<PageDto<TaskSummaryDto>>; // query: view, status?, tag?, priority?, sort? (ADR-037)
   // P0-02, ADR-021: ein Aufruf = ein Commit = ein onChange; unbekannte IDs übersprungen
   // N4, ADR-028: Serie bleibt offen, rückt ab `today` vor; Verlaufseintrag (deterministische ID) in `tasks` hinten
   completeTasks(ids: string[], done: boolean, today?: LocalDayDto): Promise<CompleteResultDto>; // {tasks, occurrences}

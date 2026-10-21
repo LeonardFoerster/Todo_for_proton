@@ -152,6 +152,8 @@ impl Device {
                 view: ViewDto::All,
                 status: None,
                 tag: None,
+                priority: None,
+                sort: None,
             },
             PageRequestDto {
                 cursor: None,
@@ -169,6 +171,8 @@ impl Device {
                 view: ViewDto::Trash,
                 status: None,
                 tag: None,
+                priority: None,
+                sort: None,
             },
             PageRequestDto {
                 cursor: None,
@@ -189,6 +193,8 @@ impl Device {
                     view: ViewDto::All,
                     status: None,
                     tag: None,
+                    priority: None,
+                    sort: None,
                 },
                 PageRequestDto { cursor, limit: 500 },
             ))

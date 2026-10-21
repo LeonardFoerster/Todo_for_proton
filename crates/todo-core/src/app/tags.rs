@@ -134,9 +134,8 @@ impl DeleteTag {
         let mut ids = Vec::new();
         for view in [SmartView::All, SmartView::Trash] {
             let query = TaskQuery {
-                view,
-                status: None,
                 tag: Some(id),
+                ..TaskQuery::view(view)
             };
             ids.extend(collect_all(repo, &query).await?.into_iter().map(|t| t.id));
         }

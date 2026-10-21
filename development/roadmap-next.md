@@ -466,7 +466,8 @@ ziehen, `Enter` neuer Punkt; Zeile/Karte: „2/5“; Suche findet Punkttext.
 > Notiz: ID aus beiden Enden (UUIDv5); verwaiste Verknüpfungen räumt `purge_dangling_links` täglich mit dem Papierkorb auf.
 **Schritte:** `Link { id, from: Task, to: Note }` (N3: eigenes Element statt Felder an `Task`, später auch `External`),
 nur anlegen/löschen; verschwindet ein Ende, wird der Link nicht angezeigt (und beim Aufräumen entfernt).
-### [ ] N9-02 · UI
+### [x] N9-02 · UI — 2026-10-21 · a7a57be
+> Notiz: Notiz-Suche als lazy Popover; „Neue Notiz zu dieser Task“ und „Neue Task aus dieser Notiz“. Dabei das Detail-Panel lazy geladen (Start-JS 80,4 → 55,8 KB gzip).
 **Schritte:** Detail-Panel „Notizen“ (verknüpfen über Suche, öffnen, lösen); Notiz-Statuszeile „Tasks“ (verknüpfte Tasks,
 neue Task aus der Notiz); Icon in Zeile/Karte.
 

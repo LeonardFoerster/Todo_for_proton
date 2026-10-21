@@ -51,6 +51,7 @@ export type { TaskDueDto } from "./generated/TaskDueDto";
 export type { TaskListDto } from "./generated/TaskListDto";
 export type { TaskPatchDto } from "./generated/TaskPatchDto";
 export type { TaskQueryDto } from "./generated/TaskQueryDto";
+export type { TaskSortDto } from "./generated/TaskSortDto";
 export type { TaskStatusDto } from "./generated/TaskStatusDto";
 export type { TaskSummaryDto } from "./generated/TaskSummaryDto";
 export type { ViewDto } from "./generated/ViewDto";

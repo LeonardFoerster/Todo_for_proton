@@ -431,7 +431,7 @@ fn decode_status(v: i64) -> CoreResult<TaskStatus> {
     }
 }
 
-fn encode_priority(priority: Priority) -> i64 {
+pub(crate) fn encode_priority(priority: Priority) -> i64 {
     match priority {
         Priority::None => 0,
         Priority::Low => 1,

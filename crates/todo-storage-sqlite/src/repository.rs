@@ -345,7 +345,7 @@ impl TaskRepository for SqliteTaskRepository {
         let after = page
             .cursor
             .as_deref()
-            .map(|c| Position::decode(c, &query.view))
+            .map(|c| Position::decode(c, query.order()))
             .transpose()?;
         let query = *query;
         let limit = page.limit as usize;
@@ -367,7 +367,7 @@ impl TaskRepository for SqliteTaskRepository {
                 }
                 let next_cursor = (items.len() > limit).then(|| {
                     items.truncate(limit);
-                    Position::of(&items[limit - 1], &query.view).encode()
+                    Position::of(&items[limit - 1], query.order()).encode()
                 });
                 Ok(Page { items, next_cursor })
             })
@@ -852,9 +852,8 @@ mod tests {
             let cursor = cursor.cloned();
             let plan = block_on(repo.db.call(move |conn| {
                 let query = TaskQuery {
-                    view,
                     status,
-                    tag: None,
+                    ..TaskQuery::view(view)
                 };
                 let query = resolve_inbox(conn, query)?.expect("inbox exists");
                 let (sql, params) = list_tasks_sql(&query, cursor.as_ref(), 51);

@@ -44,7 +44,8 @@ pub use remote_store::{
 };
 pub use repository::{
     Change, ChangeSet, CommitReceipt, EntityRef, Page, PageRequest, SearchQuery, SmartView,
-    TaskQuery, TaskRepository, TaskSummary, PAGE_LIMIT_MAX, SEARCH_TEXT_MAX_CHARS,
+    TaskOrder, TaskQuery, TaskRepository, TaskSort, TaskSummary, PAGE_LIMIT_MAX,
+    SEARCH_TEXT_MAX_CHARS,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use time_zones::FixedOffsetZones;

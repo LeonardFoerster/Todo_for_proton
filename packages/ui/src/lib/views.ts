@@ -2,6 +2,7 @@ import type { TagDto, TaskListDto, TaskQueryDto } from "@tasks/core-client";
 import { CalendarDays, CircleCheck, Hash, Inbox, List, Sun, Tag, Trash, type IconComponent } from "../icons";
 import { localDay } from "./local-day";
 import type { Route, SmartViewKind } from "./router.svelte";
+import type { ViewOptions } from "./view-options";
 
 export interface SmartViewMeta {
   kind: SmartViewKind;
@@ -58,8 +59,19 @@ export function routeIcon(route: Route): IconComponent {
   return viewMeta(route.view).icon;
 }
 
-/** Abfrage der offenen Tasks einer Ansicht (Erledigt: die erledigten). */
-export function routeQuery(route: Route, now: Date = new Date()): TaskQueryDto {
+/** Abfrage der offenen Tasks einer Ansicht (Erledigt: die erledigten), mit Sortierung/Filtern (N10-01). */
+export function routeQuery(route: Route, now: Date = new Date(), options?: ViewOptions): TaskQueryDto {
+  const base = baseQuery(route, now);
+  if (!options) return base;
+  return {
+    ...base,
+    sort: options.sort === "view" ? null : options.sort,
+    priority: options.priority,
+    tag: base.tag ?? options.tag,
+  };
+}
+
+function baseQuery(route: Route, now: Date): TaskQueryDto {
   switch (route.view) {
     case "list":
       return { view: { kind: "list", listId: route.listId }, status: "open" };

@@ -45,6 +45,8 @@ fn inbox_view(device: &Device) -> Vec<TaskSummaryDto> {
             view: ViewDto::Inbox,
             status: None,
             tag: None,
+            priority: None,
+            sort: None,
         },
         PageRequestDto {
             cursor: None,

@@ -1622,6 +1622,8 @@ mod tests {
                 view: dto::ViewDto::All,
                 status: None,
                 tag: None,
+                priority: None,
+                sort: None,
             },
             PageRequestDto {
                 cursor: None,

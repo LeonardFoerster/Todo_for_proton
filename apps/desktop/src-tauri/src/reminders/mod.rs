@@ -194,6 +194,8 @@ async fn collect(
                     view: ViewDto::All,
                     status: Some(TaskStatusDto::Open),
                     tag: None,
+                    priority: None,
+                    sort: None,
                 },
                 PageRequestDto { cursor, limit: 500 },
             )

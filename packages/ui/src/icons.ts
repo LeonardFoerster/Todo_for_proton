@@ -44,6 +44,7 @@ export { default as Pencil } from "@lucide/svelte/icons/pencil";
 export { default as ChevronDown } from "@lucide/svelte/icons/chevron-down";
 export { default as ChevronLeft } from "@lucide/svelte/icons/chevron-left";
 export { default as SquareKanban } from "@lucide/svelte/icons/square-kanban";
+export { default as SlidersHorizontal } from "@lucide/svelte/icons/sliders-horizontal";
 export { default as Tag } from "@lucide/svelte/icons/tag";
 // Befehlspalette (P4-05, lazy – landen nur in deren Chunk).
 export { default as Circle } from "@lucide/svelte/icons/circle";

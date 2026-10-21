@@ -27,6 +27,8 @@ async fn titles(api: &CoreApi, view: ViewDto) -> Vec<String> {
                 view,
                 status: None,
                 tag: None,
+                priority: None,
+                sort: None,
             },
             PageRequestDto {
                 cursor: None,

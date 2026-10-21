@@ -11,6 +11,8 @@ const task = (over: Partial<TaskLike> = {}): TaskLike => ({
   sortKey: "a0",
   completedAt: null,
   tags: [],
+  title: "t",
+  priority: "none",
   trashedAt: null,
   ...over,
 });

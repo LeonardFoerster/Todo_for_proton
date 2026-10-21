@@ -23,6 +23,7 @@
     PanelLeft,
     Plus,
     Pencil,
+    SlidersHorizontal,
     SquareKanban,
     Trash,
     Undo,
@@ -54,6 +55,16 @@
   import { todayPlus } from "./lib/format-date";
   import { viewSubtitle } from "./lib/subtitle";
   import { routeListId, routeTitle } from "./lib/views";
+  import {
+    isDefault,
+    optionsKey,
+    PRIORITY_LABELS,
+    readOptions,
+    sortLabel,
+    writeOptions,
+    type ViewOptions,
+  } from "./lib/view-options";
+  import ViewOptionsPopover from "./features/view-options/ViewOptionsPopover.svelte";
   import { completedBefore, trashManyWithUndo } from "./lib/task-actions";
   import CleanupCompletedDialog from "./features/task-list/CleanupCompletedDialog.svelte";
   import { addDays } from "./lib/local-day";
@@ -145,6 +156,30 @@
   let reportedReady = false;
 
   const route = $derived(router.route);
+  /** Sortierung/Filter der Ansicht (N10-01), gemerkt pro Gerät. */
+  // Beschreibbar abgeleitet: neue Ansicht → gemerkte Werte; `setOptions` überschreibt bis zum Wechsel.
+  let viewOptions = $derived<ViewOptions>(readOptions(route));
+  let optionsOpen = $state(false);
+  let optionsButton = $state<HTMLButtonElement>();
+
+  function setOptions(next: ViewOptions) {
+    viewOptions = next;
+    writeOptions(route, next);
+  }
+
+  /** Aktive Abweichungen als Chips unter der Kopfzeile. */
+  const optionChips = $derived.by(() => {
+    const chips: { label: string; clear: () => void }[] = [];
+    if (viewOptions.sort !== "view") {
+      chips.push({ label: `Sortiert: ${sortLabel(viewOptions.sort, { view: "all" })}`, clear: () => setOptions({ ...viewOptions, sort: "view" }) });
+    }
+    if (viewOptions.priority) {
+      chips.push({ label: `Priorität: ${PRIORITY_LABELS[viewOptions.priority]}`, clear: () => setOptions({ ...viewOptions, priority: null }) });
+    }
+    const tag = viewOptions.tag && route.view !== "tag" ? lists.tags.find((t) => t.id === viewOptions.tag) : undefined;
+    if (tag) chips.push({ label: `#${tag.name}`, clear: () => setOptions({ ...viewOptions, tag: null }) });
+    return chips;
+  });
   const title = $derived(routeTitle(route, lists.lists, lists.tags));
   /** Das Board zeigt alle Listen; umschaltbar in Eingang, Listen und „Alle Tasks“. */
   const boardCapable = $derived(route.view === "inbox" || route.view === "list" || route.view === "all");
@@ -1003,6 +1038,18 @@
       <div class="titles">
         <h1 id="view-title">{title}</h1>
         {#if subtitle}<p class="subtitle">{subtitle}</p>{/if}
+        {#if optionChips.length > 0 && !showBoard}
+          <div class="option-chips" role="group" aria-label="Aktive Sortierung und Filter">
+            {#each optionChips as chip (chip.label)}
+              <span class="option-chip">
+                {chip.label}
+                <button type="button" aria-label="{chip.label} aufheben" onclick={chip.clear}>
+                  <X size={12} strokeWidth={2} aria-hidden="true" />
+                </button>
+              </span>
+            {/each}
+          </div>
+        {/if}
       </div>
       {#if selection?.active && taskList}
         {@const flags = taskList.selectionFlags()}
@@ -1100,6 +1147,19 @@
               />
             </span>
           {/if}
+          {#if !showBoard}
+            <IconButton
+              label="Sortieren und filtern"
+              icon={SlidersHorizontal}
+              pressed={!isDefault(viewOptions)}
+              aria-haspopup="dialog"
+              aria-expanded={optionsOpen}
+              onclick={(e) => {
+                optionsButton = e.currentTarget;
+                optionsOpen = !optionsOpen;
+              }}
+            />
+          {/if}
           <IconButton
             label={showBoard ? "Auswählen (nur in der Listenansicht)" : "Auswählen"}
             shortcut={showBoard ? undefined : "Strg+A"}
@@ -1154,7 +1214,7 @@
     {/if}
     <div class="pane-body">
       {#if ready && (route.view !== "list" || lists.lists.some((l) => l.id === route.listId))}
-        {#key routeHash(route)}
+        {#key `${routeHash(route)}|${optionsKey(viewOptions)}`}
           <div class="list-slot">
             {#if showBoard}
               <Board
@@ -1176,6 +1236,7 @@
                 onready={listReady}
                 onnewtask={newTask}
                 ondue={(tasks, x, y) => openDueMenu(tasks, { x, y })}
+                options={viewOptions}
               />
             {/if}
           </div>
@@ -1325,6 +1386,19 @@
 {/if}
 {#if deleteTarget}
   <DeleteListDialog list={deleteTarget} {lists} onconfirm={() => void confirmDelete()} onclose={() => (deleteTarget = null)} />
+{/if}
+{#if optionsOpen && optionsButton}
+  <ViewOptionsPopover
+    anchor={optionsButton}
+    {route}
+    options={viewOptions}
+    tags={lists.tags}
+    onchange={setOptions}
+    onclose={(refocus) => {
+      optionsOpen = false;
+      if (refocus) optionsButton?.focus();
+    }}
+  />
 {/if}
 {#if tagMenu && currentTag}
   <Menu
@@ -1625,5 +1699,33 @@
     display: flex;
     justify-content: flex-end;
     gap: var(--space-2);
+  }
+  .option-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin-top: var(--space-1);
+  }
+  .option-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    height: 22px;
+    padding: 0 2px 0 var(--space-2);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-selected);
+    color: var(--color-accent-text);
+    font-size: var(--text-xs);
+  }
+  .option-chip button {
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
   }
 </style>

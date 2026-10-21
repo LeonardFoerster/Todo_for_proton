@@ -5,6 +5,8 @@
 
 use std::ops::Range;
 
+use chrono::Datelike;
+
 pub use chrono::NaiveDate;
 
 use super::{text::normalize_name, Timestamp};
@@ -12,6 +14,9 @@ use crate::{CoreError, CoreResult};
 
 /// Maximale Länge eines Zeitzonen-Namens (IANA-Namen sind deutlich kürzer).
 pub const DUE_TZ_MAX_CHARS: usize = 64;
+
+/// Tageszahl (seit 1.1.0001) des 1.1.1970 – Bezug von [`Due::rough_instant`].
+pub const UNIX_EPOCH_DAYS_FROM_CE: i64 = 719_163;
 
 /// Ein Kalendertag in der lokalen Zone des Nutzers, vom Aufrufer berechnet (der Core rechnet
 /// keine Zonen): Datum plus Tagesgrenzen `start..end` (`end` = Beginn des Folgetags).
@@ -105,6 +110,20 @@ impl Due {
     pub fn sort_instant(&self, day: &LocalDay) -> Timestamp {
         match self {
             Self::Date(date) => day.approx_start_of(*date),
+            Self::DateTime { at, .. } => *at,
+        }
+    }
+
+    /// Sortierzeitpunkt ohne Bezugstag (Sortierung „Fälligkeit“ außerhalb von Heute/Geplant,
+    /// ADR-037): der Zeitpunkt bzw. Mitternacht UTC des Tages – ganztägig vor Uhrzeiten desselben
+    /// UTC-Tages. Gleich in allen Speichern berechenbar (SQLite: Tageszahl · 24 h).
+    #[must_use]
+    pub fn rough_instant(&self) -> Timestamp {
+        match self {
+            Self::Date(date) => {
+                let days = i64::from(date.num_days_from_ce()) - UNIX_EPOCH_DAYS_FROM_CE;
+                Timestamp::from_millis(days * 86_400_000)
+            }
             Self::DateTime { at, .. } => *at,
         }
     }

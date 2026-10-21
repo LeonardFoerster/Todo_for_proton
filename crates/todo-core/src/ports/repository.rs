@@ -221,6 +221,35 @@ pub enum SmartView {
     Trash,
 }
 
+/// Sortierung einer Ansicht (N10-01, ADR-037). Gilt nicht für „Erledigt“ und den Papierkorb (die
+/// sind immer nach Zeitpunkt sortiert).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TaskSort {
+    /// Wie die Ansicht: eigene Reihenfolge, in Heute/Geplant nach Fälligkeit.
+    #[default]
+    View,
+    /// Fälligkeit (ohne zuletzt), dann eigene Reihenfolge.
+    Due,
+    /// Priorität (hoch zuerst), dann eigene Reihenfolge.
+    Priority,
+    /// Titel (Groß/Klein bei ASCII egal), dann `id`.
+    Title,
+}
+
+/// Wirksame Reihenfolge einer Abfrage – daraus folgen Sortierung und Cursor-Art.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskOrder {
+    SortKey,
+    Completion,
+    Trashed,
+    /// Fälligkeit relativ zum Tag der Ansicht (Heute/Geplant, ADR-026).
+    DueInView(LocalDay),
+    /// Fälligkeit ohne Bezugstag ([`Due::rough_instant`](crate::domain::Due::rough_instant)).
+    Due,
+    Priority,
+    Title,
+}
+
 /// Abfrage für [`TaskRepository::list_tasks`]: eine Ansicht plus optionale UND-Filter.
 ///
 /// Sortierung: [`SmartView::Completed`] nach `completed_at` absteigend, [`SmartView::Trash`] nach
@@ -235,6 +264,10 @@ pub struct TaskQuery {
     /// [`SmartView::Completed`] liefert unabhängig davon nur erledigte Tasks.
     pub status: Option<TaskStatus>,
     pub tag: Option<TagId>,
+    /// Nur Tasks mit genau dieser Priorität (N10-01).
+    pub priority: Option<Priority>,
+    /// Sortierung (N10-01); Standard = wie die Ansicht.
+    pub sort: TaskSort,
 }
 
 impl TaskQuery {
@@ -245,6 +278,8 @@ impl TaskQuery {
             view,
             status: None,
             tag: None,
+            priority: None,
+            sort: TaskSort::View,
         }
     }
 
@@ -252,9 +287,24 @@ impl TaskQuery {
     #[must_use]
     pub fn open(view: SmartView) -> Self {
         Self {
-            view,
             status: Some(TaskStatus::Open),
-            tag: None,
+            ..Self::view(view)
+        }
+    }
+
+    /// Wirksame Reihenfolge (Erledigt und Papierkorb immer nach Zeitpunkt).
+    #[must_use]
+    pub fn order(&self) -> TaskOrder {
+        match (self.view, self.sort) {
+            (SmartView::Completed, _) => TaskOrder::Completion,
+            (SmartView::Trash, _) => TaskOrder::Trashed,
+            (SmartView::Today(day) | SmartView::Upcoming(day), TaskSort::View | TaskSort::Due) => {
+                TaskOrder::DueInView(day)
+            }
+            (_, TaskSort::View) => TaskOrder::SortKey,
+            (_, TaskSort::Due) => TaskOrder::Due,
+            (_, TaskSort::Priority) => TaskOrder::Priority,
+            (_, TaskSort::Title) => TaskOrder::Title,
         }
     }
 
@@ -277,6 +327,7 @@ impl TaskQuery {
             && trash_ok
             && self.status.is_none_or(|s| task.status() == s)
             && self.tag.is_none_or(|t| task.tags().contains(&t))
+            && self.priority.is_none_or(|p| task.priority() == p)
     }
 }
 

@@ -14,7 +14,7 @@ use crate::{
     ports::{
         check_page_limit, decode_tree_cursor, encode_tree_cursor, Change, ChangeSet, CommitReceipt,
         EntityRef, FolderItemsQuery, NoteRepository, NoteSummary, NoteTreeItem, Page, PageRequest,
-        SmartView, TaskQuery, TaskRepository, TaskSummary, PAGE_LIMIT_MAX,
+        TaskOrder, TaskQuery, TaskRepository, TaskSummary, PAGE_LIMIT_MAX,
     },
     sync::{
         self, EntityState, FieldName, HlcState, Op, OpClock, OpKind, Registers, RemoteBatch,
@@ -102,7 +102,7 @@ impl InMemoryTaskRepository {
     }
 }
 
-/// Sortierposition einer Task innerhalb einer Ansicht; zugleich Inhalt des Cursors.
+/// Sortierposition einer Task innerhalb einer Abfrage; zugleich Inhalt des Cursors.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[allow(clippy::enum_variant_names)] // „sortiert nach …“; `SortKey` hieße wie der Typ
 enum Position {
@@ -112,36 +112,65 @@ enum Position {
     ByDue(Timestamp, SortKey, TaskId),
     /// Papierkorb (ADR-031): zuletzt gelöschte zuerst.
     ByTrashed(Reverse<Timestamp>, TaskId),
+    /// Sortierung „Fälligkeit“ ohne Bezugstag (ADR-037).
+    ByDueAny(Timestamp, SortKey, TaskId),
+    /// Sortierung „Priorität“: hoch zuerst.
+    ByPriority(Reverse<u8>, SortKey, TaskId),
+    /// Sortierung „Titel“ (ASCII ohne Groß/Klein wie SQLite `NOCASE`).
+    ByTitle(String, TaskId),
 }
 
-/// Cursor-Kennung der Sortierart einer Ansicht (ein Cursor gehört zu genau einer).
-fn cursor_kind(view: &SmartView) -> &'static str {
-    match view {
-        SmartView::Completed => "c",
-        SmartView::Trash => "t",
-        SmartView::Today(_) | SmartView::Upcoming(_) => "d",
-        _ => "s",
+/// Cursor-Kennung der Reihenfolge (ein Cursor gehört zu genau einer).
+fn cursor_kind(order: TaskOrder) -> &'static str {
+    match order {
+        TaskOrder::Completion => "c",
+        TaskOrder::Trashed => "t",
+        TaskOrder::DueInView(_) => "d",
+        TaskOrder::Due => "u",
+        TaskOrder::Priority => "p",
+        TaskOrder::Title => "n",
+        TaskOrder::SortKey => "s",
+    }
+}
+
+fn priority_rank(p: crate::domain::Priority) -> u8 {
+    match p {
+        crate::domain::Priority::None => 0,
+        crate::domain::Priority::Low => 1,
+        crate::domain::Priority::Medium => 2,
+        crate::domain::Priority::High => 3,
     }
 }
 
 impl Position {
-    fn of(task: &Task, view: &SmartView) -> Self {
-        match view {
-            SmartView::Completed => Self::ByCompletion(
+    fn of(task: &Task, order: TaskOrder) -> Self {
+        let none = Timestamp::from_millis(i64::MAX);
+        match order {
+            TaskOrder::Completion => Self::ByCompletion(
                 Reverse(task.completed_at().unwrap_or(Timestamp::EPOCH)),
                 task.id(),
             ),
-            SmartView::Trash => Self::ByTrashed(
+            TaskOrder::Trashed => Self::ByTrashed(
                 Reverse(task.trashed_at().unwrap_or(Timestamp::EPOCH)),
                 task.id(),
             ),
-            SmartView::Today(day) | SmartView::Upcoming(day) => Self::ByDue(
-                task.due()
-                    .map_or(Timestamp::from_millis(i64::MAX), |d| d.sort_instant(day)),
+            TaskOrder::DueInView(day) => Self::ByDue(
+                task.due().map_or(none, |d| d.sort_instant(&day)),
                 task.sort_key().clone(),
                 task.id(),
             ),
-            _ => Self::BySortKey(task.sort_key().clone(), task.id()),
+            TaskOrder::Due => Self::ByDueAny(
+                task.due().map_or(none, crate::domain::Due::rough_instant),
+                task.sort_key().clone(),
+                task.id(),
+            ),
+            TaskOrder::Priority => Self::ByPriority(
+                Reverse(priority_rank(task.priority())),
+                task.sort_key().clone(),
+                task.id(),
+            ),
+            TaskOrder::Title => Self::ByTitle(task.title().to_ascii_lowercase(), task.id()),
+            TaskOrder::SortKey => Self::BySortKey(task.sort_key().clone(), task.id()),
         }
     }
 
@@ -151,23 +180,37 @@ impl Position {
             Self::ByCompletion(Reverse(at), id) => format!("c:{}:{id}", at.as_millis()),
             Self::ByDue(at, key, id) => format!("d:{}:{key}:{id}", at.as_millis()),
             Self::ByTrashed(Reverse(at), id) => format!("t:{}:{id}", at.as_millis()),
+            Self::ByDueAny(at, key, id) => format!("u:{}:{key}:{id}", at.as_millis()),
+            Self::ByPriority(Reverse(rank), key, id) => format!("p:{rank}:{key}:{id}"),
+            // Titel zuletzt: darf `:` enthalten.
+            Self::ByTitle(title, id) => format!("n:{id}:{title}"),
         }
     }
 
-    fn decode(cursor: &str, view: &SmartView) -> CoreResult<Self> {
+    fn decode(cursor: &str, order: TaskOrder) -> CoreResult<Self> {
         let invalid = || CoreError::Validation(format!("invalid cursor: {cursor:?}"));
-        let parts: Vec<&str> = cursor.split(':').collect();
-        if parts.first() != Some(&cursor_kind(view)) {
+        if !cursor.starts_with(&format!("{}:", cursor_kind(order))) {
             return Err(invalid());
         }
         let millis = |v: &str| v.parse().map(Timestamp::from_millis).map_err(|_| invalid());
         let key = |v: &str| SortKey::parse(v).map_err(|_| invalid());
         let id = |v: &str| TaskId::parse(v).map_err(|_| invalid());
+        if let Some(rest) = cursor.strip_prefix("n:") {
+            let (i, title) = rest.split_once(':').ok_or_else(invalid)?;
+            return Ok(Self::ByTitle(title.to_owned(), id(i)?));
+        }
+        let parts: Vec<&str> = cursor.split(':').collect();
         match parts.as_slice() {
             ["s", k, i] => Ok(Self::BySortKey(key(k)?, id(i)?)),
             ["c", at, i] => Ok(Self::ByCompletion(Reverse(millis(at)?), id(i)?)),
             ["d", at, k, i] => Ok(Self::ByDue(millis(at)?, key(k)?, id(i)?)),
             ["t", at, i] => Ok(Self::ByTrashed(Reverse(millis(at)?), id(i)?)),
+            ["u", at, k, i] => Ok(Self::ByDueAny(millis(at)?, key(k)?, id(i)?)),
+            ["p", r, k, i] => Ok(Self::ByPriority(
+                Reverse(r.parse().map_err(|_| invalid())?),
+                key(k)?,
+                id(i)?,
+            )),
             _ => Err(invalid()),
         }
     }
@@ -384,7 +427,7 @@ impl TaskRepository for InMemoryTaskRepository {
         let after = page
             .cursor
             .as_deref()
-            .map(|c| Position::decode(c, &query.view))
+            .map(|c| Position::decode(c, query.order()))
             .transpose()?;
 
         let state = self.state();
@@ -397,7 +440,7 @@ impl TaskRepository for InMemoryTaskRepository {
                     .get(&task.list_id())
                     .is_some_and(|list| query.matches(task, list))
             })
-            .map(|task| (Position::of(task, &query.view), task))
+            .map(|task| (Position::of(task, query.order()), task))
             .filter(|(pos, _)| after.as_ref().is_none_or(|a| pos > a))
             .collect();
         matching.sort_by(|a, b| a.0.cmp(&b.0));
@@ -772,6 +815,7 @@ mod tests {
     /// Fake-spezifisch: Cursor-Format und Sortierart des Cursors.
     #[test]
     fn rejects_malformed_or_foreign_cursors() {
+        use crate::ports::SmartView;
         let repo = InMemoryTaskRepository::new();
         let clock = FixedClock(Timestamp::EPOCH);
         let inbox = TaskList::inbox(SortKey::first(), &clock);

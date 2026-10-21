@@ -612,16 +612,26 @@ export class FakeCoreClient implements CoreClient {
         // Papierkorb nur in seiner Ansicht (ADR-031).
         const trashOk = (t.trashedAt != null) === (view.kind === "trash");
         const tagOk = query.tag == null || t.tags.includes(query.tag);
-        return inView && trashOk && tagOk && (query.status == null || t.status === query.status);
+        const prioOk = query.priority == null || t.priority === query.priority;
+        return inView && trashOk && tagOk && prioOk && (query.status == null || t.status === query.status);
       });
+      // Sortierung (ADR-037) wie `TaskQuery::order` im Core.
+      const sort = query.sort ?? "view";
+      const order = byOrder(this.lists);
       rows =
         view.kind === "trash"
           ? rows.sort(byTrashed)
           : view.kind === "completed"
           ? rows.sort(byCompleted)
-          : view.kind === "today" || view.kind === "upcoming"
-            ? rows.sort(byDue(view.day, byOrder(this.lists)))
-            : rows.sort(byOrder(this.lists));
+          : (view.kind === "today" || view.kind === "upcoming") && (sort === "view" || sort === "due")
+            ? rows.sort(byDue(view.day, order))
+            : sort === "due"
+              ? rows.sort((a, b) => roughInstant(a.task.due) - roughInstant(b.task.due) || order(a, b))
+              : sort === "priority"
+                ? rows.sort((a, b) => PRIORITY_RANK[b.task.priority] - PRIORITY_RANK[a.task.priority] || order(a, b))
+                : sort === "title"
+                  ? rows.sort((a, b) => cmp(asciiLower(a.task.title), asciiLower(b.task.title)) || cmp(a.task.id, b.task.id))
+                  : rows.sort(order);
       const start = page.cursor ? Number(page.cursor) : 0;
       const items = rows.slice(start, start + page.limit).map((r) => summary(this.dto(r), this.hasLinks(r.task.id)));
       const end = start + items.length;
@@ -879,6 +889,17 @@ function byDue(day: LocalDayDto, then: (a: Row, b: Row) => number) {
     return Date.parse(day.start) + days * 86_400_000;
   };
   return (a: Row, b: Row) => instant(a.task.due) - instant(b.task.due) || then(a, b);
+}
+
+const PRIORITY_RANK: Record<string, number> = { none: 0, low: 1, medium: 2, high: 3 };
+const asciiLower = (s: string) => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
+
+/** Wie `Due::rough_instant` im Core. */
+function roughInstant(due: DueDto | null): number {
+  if (!due) return Number.MAX_SAFE_INTEGER;
+  if (due.kind === "dateTime") return Date.parse(due.at);
+  const [y, m, d] = due.date.split("-").map(Number);
+  return Date.UTC(y, m - 1, d);
 }
 
 function byCompleted(a: Row, b: Row): number {
