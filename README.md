@@ -160,6 +160,12 @@ cd Todo_for_proton
 `rust-toolchain.toml` und die JavaScript-Abhängigkeiten, baut die App und installiert sie wie `just desktop-install`.
 Erneut ausführen ist unschädlich und aktualisiert die App; `--noconfirm` reicht an `pacman` durch.
 
+### Als Paket (Arch Linux, AUR-Entwurf)
+
+`packaging/aur/PKGBUILD` baut `tasks-app-git` aus dem Git-Stand (`makepkg -si` in diesem Ordner). Es installiert
+`/usr/bin/tasks-app`, den Starter und die Icons; Daten bleiben in `~/.local/share/dev.tasks.app`. Im AUR ist es noch
+nicht veröffentlicht (Lizenz steht noch aus).
+
 ### Voraussetzungen
 
 ```sh

@@ -14,7 +14,9 @@ arch=('x86_64')
 url="https://github.com/LeonardFoerster/Todo_for_proton"
 # TODO(User): Lizenz festlegen (README „Lizenz“) und hier als SPDX-Kennung eintragen, vor dem Veröffentlichen.
 license=('LicenseRef-unspecified')
-depends=('webkit2gtk-4.1' 'gtk3' 'libayatana-appindicator' 'dbus' 'hicolor-icon-theme')
+# libayatana-appindicator lädt das Tray-Symbol zur Laufzeit (dlopen) – namcap sieht es nicht.
+depends=('webkit2gtk-4.1' 'gtk3' 'libsoup3' 'glib2' 'cairo' 'gdk-pixbuf2' 'glibc' 'gcc-libs'
+         'libayatana-appindicator' 'dbus' 'hicolor-icon-theme')
 makedepends=('git' 'rustup' 'nodejs' 'pnpm')
 optdepends=(
   'xdg-desktop-portal: Erinnerungen als Benachrichtigung, Datei-Dialoge für Export/Import'
@@ -44,7 +46,7 @@ prepare() {
 build() {
   cd "$_name"
   export RUSTUP_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
-  export CARGO_TARGET_DIR=target
+  export CARGO_TARGET_DIR="$PWD/target"
   cd apps/desktop
   pnpm tauri build --no-bundle -- --frozen
 }

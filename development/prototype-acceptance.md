@@ -273,3 +273,18 @@ Abschnitt 9 (`ONLY=series tools/acceptance-two-devices.sh`, 2026-10-21: bestande
 | 6 | Detail › Wiederholung › Benutzerdefiniert…: alle 2 Wochen, Mo und Do, endet am 20.12. | Klartext stimmt, Regel übernommen | |
 | 7 | Detail › Wiederholung › „Wiederholung beenden" | Icon weg; Abhaken erledigt die Task normal | |
 
+## I · Checklisten, Tags, Verknüpfungen, Sortieren (N8–N10) – Abnahme durch den User am Desktop: **offen**
+
+Automatisch geprüft: Core-/Contract-Tests (beide Speicher), Szenario-Tests (Tag offline doppelt angelegt → einer,
+Umbenennen vs. Zuweisen, Verknüpfung auf zwei Geräten → eine), Vitest, Selbsttest `n8`.
+
+| # | Schritt | Erwartung | Ergebnis |
+|---|---|---|---|
+| 1 | Task öffnen, Checkliste: drei Punkte (Enter), einen abhaken, einen per `Alt+↑` verschieben | „1 von 3 erledigt“, Zeile zeigt „1/3“ | |
+| 2 | „Neue Task“: `Blatt 4 #uni morgen` | `#uni` markiert, Chip „Tags: #uni“; Seitenleiste „Tags“ mit „uni“ | |
+| 3 | Tag-Ansicht „#uni“ › ⋯ › Umbenennen in „studium“, dann Löschen… | Titel „#studium“; nach dem Löschen weg, Tasks bleiben | |
+| 4 | Detail › „Notiz verknüpfen“ › Notiz suchen und wählen; Notiz öffnen | Wechsel zu „Notes“, Statuszeile „1 Task“ → zurück zur Task | |
+| 5 | „Sortieren und filtern“ › Titel, dann Priorität „Hoch“ | Liste sortiert/gefiltert, Chips unter dem Titel, nach Ansichtswechsel gemerkt | |
+| 6 | Zwei Listen gleichen Namens anlegen, App neu starten | Toast „2 Listen heißen …“ › Zusammenführen | |
+| 7 | Neues Profil (`TODO_DATA_DIR=…`) starten | Karte „Willkommen“ im Eingang; „Ausblenden“ bleibt aus | |
+

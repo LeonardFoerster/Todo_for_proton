@@ -24,9 +24,11 @@ Schnelleingabe) umgesetzt; Sichtprüfung durch den
 User offen (`prototype-acceptance.md` F). Live-Abnahme über Proton (N0-01) am 2026-10-21 vom User abgenommen. N6
 (Papierkorb, Export/Import, ADR-031/032), N7 (Erinnerungen, Tray, Autostart, ADR-033) und N4 (wiederkehrende Tasks
 mit Verlauf, Überspringen, Rückgängig, ADR-028) umgesetzt und automatisiert abgenommen; Abnahme durch den User offen
-(`prototype-acceptance.md` G, H). Als Nächstes N8 (Checklisten + Tags), N9 (Task ↔ Notiz), N10 (Bedienung), N11
-(AUR-Paket), dann die Web-App (`development/roadmap-next.md`); langfristige Ideen (Kalender, GitHub) stehen dort
-unter N3.
+(`prototype-acceptance.md` G, H). N8 (Checklisten, Tags als Entity, ADR-034/035), N9 (Verknüpfung Task ↔ Notiz,
+ADR-036), N10 (Sortieren/Filtern im Core, ADR-037; `count_tasks`; Listen zusammenführen; Erste Schritte) und N11
+(AUR-`PKGBUILD` in `packaging/aur/`, Veröffentlichen macht der User) umgesetzt; Abnahme durch den User offen
+(`prototype-acceptance.md` I). Als Nächstes die Web-App (N1, `development/roadmap-next.md`); langfristige Ideen
+(Kalender, GitHub) stehen dort unter N3.
 
 ## 2. Wo was liegt
 
@@ -48,6 +50,7 @@ unter N3.
 | `packages/ui/` | Gemeinsame Svelte-5-Komponenten + Design-Tokens |
 | `packages/core-client/` | TS-Interface `CoreClient` + Implementierungen (Tauri-IPC / WASM-Worker) |
 | `tools/` | Mess- und Abnahmeskripte (`measure-desktop.sh`, `acceptance-two-devices.sh`) |
+| `packaging/aur/` | `PKGBUILD` (`tasks-app-git`), Starter `dev.tasks.app.desktop` – Veröffentlichen im AUR macht der User |
 
 Detaildokumente in `development/`:
 `roadmap-next.md` (**geordnete Arbeitsliste nach dem Prototyp – hier steht, was als Nächstes zu tun ist**),

@@ -485,7 +485,7 @@ neue Task aus der Notiz); Icon in Zeile/Karte.
 ### [x] N10-03 · Gleichnamige Listen zusammenführen (ADR-020) — 2026-10-21 · 475db74
 **Schritte:** Aktion „Mit … zusammenführen“ im Listenmenü (Tasks verschieben, Liste löschen, ein Commit) + Hinweis nach
 dem ersten Login, wenn es gleichnamige Listen gibt.
-### [ ] N10-04 · Erste Schritte
+### [x] N10-04 · Erste Schritte — 2026-10-21 · 752b2d0
 **Schritte:** Leerer Eingang beim ersten Start mit kurzer Einführung (Texterkennung, Kürzel, Anmelden für Sync),
 ausblendbar.
 
@@ -493,7 +493,8 @@ ausblendbar.
 
 ## N11 · Paket für Arch Linux (AUR)
 
-### [ ] N11-01 · `PKGBUILD`
+### [x] N11-01 · `PKGBUILD` — 2026-10-21 · 391c839
+> Notiz: Lokal mit `makepkg -f --nodeps` gebaut (rustup lokal aus dem Installer, nicht aus pacman); Paket enthält Binary, Starter, Icons. namcap: einziger Fehler ist die noch offene Lizenz (`LicenseRef-unspecified`) – Lizenz wählen und Veröffentlichen im AUR macht der User.
 **Schritte:** `packaging/aur/PKGBUILD` (+ `.desktop`, Icons, Lizenz), baut aus dem Git-Stand mit `cargo`/`pnpm`;
 lokal mit `makepkg` geprüft (ohne Installation); Veröffentlichen im AUR macht der User.
 
