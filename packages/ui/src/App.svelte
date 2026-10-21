@@ -44,6 +44,7 @@
   import { routeHash, Router, type SmartViewKind } from "./lib/router.svelte";
   import { formatKeys, ShortcutRegistry, type Shortcut } from "./lib/shortcuts";
   import { AppMode, type Mode } from "./lib/app-mode.svelte";
+  import { exportAll, importFile } from "./lib/data-actions";
   import { density } from "./lib/density.svelte";
   import PurgeDialog from "./features/task-list/PurgeDialog.svelte";
   import type * as NotesChunk from "./features/notes/index";
@@ -581,6 +582,9 @@
     // „/“ nur außerhalb von Feldern – beim Tippen bleibt es ein Zeichen.
     { keys: ["/"], description: "Suchen (außerhalb von Feldern)", group: "Allgemein", run: () => void openPalette() },
     { keys: [], description: "Einstellungen", group: "Allgemein", palette: "Einstellungen öffnen", run: () => void openSettings() },
+    // Nur Desktop (ADR-032): Export/Import über System-Dialoge.
+    { keys: [], description: "Daten exportieren", group: "Allgemein", palette: "Daten exportieren…", when: () => !!client.data, run: () => void exportAll(client) },
+    { keys: [], description: "Aus Export wiederherstellen", group: "Allgemein", palette: "Aus Export wiederherstellen…", when: () => !!client.data, run: () => void importFile(client) },
     {
       keys: [],
       description: "Seitenleiste ein-/ausklappen",

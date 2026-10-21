@@ -55,6 +55,8 @@ const COMMANDS: &[&str] = &[
     "close_ready",
     "open_external",
     "import_notes_folder",
+    "export_data",
+    "import_data",
     "set_online",
     "app_ready",
     "dev_selftest",

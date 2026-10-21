@@ -210,7 +210,10 @@ Task im Papierkorb).
 (`purge_expired_notes_daily`); `CoreClient`, Tauri-Client, Fake (gleiche Semantik), `view-match.ts`.
 **Fertig wenn:** `just check` grün, `interfaces.md` ergänzt.
 
-### [ ] N6-03 · UI: Löschen = Papierkorb, Ansicht „Papierkorb“
+### [x] N6-03 · UI: Löschen = Papierkorb, Ansicht „Papierkorb“ — 2026-10-21 · d98dca1
+> Notiz: Kein Detail-Panel im Papierkorb (statt „nur lesend“): Klick setzt nur den Cursor, Wiederherstellen/Endgültig
+> löschen an Zeile, Kontextmenü und Auswahlleiste. Ausgeblendete IDs werden nach Erfolg freigegeben (`release`), damit
+> „Rückgängig“ mit gleichen IDs die Zeilen per Event zurückbringt.
 **Schritte:** `Entf`, Kontextmenü, Detail und Auswahl legen in den Papierkorb (Toast „In den Papierkorb“ + Rückgängig =
 `untrash`, gleiche IDs, keine Neuzuordnung von Auswahl/Cursor); Seitenleiste „Papierkorb“ unten im Modus „Tasks“ mit
 Zahl; Ansicht mit „gelöscht vor 3 Tagen“, Wiederherstellen, Endgültig löschen (Bestätigung), `⋯` → „Papierkorb leeren“;

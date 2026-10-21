@@ -7,6 +7,8 @@ export { default as CircleCheck } from "@lucide/svelte/icons/circle-check";
 export { default as CircleHelp } from "@lucide/svelte/icons/circle-help";
 export { default as Cloud } from "@lucide/svelte/icons/cloud";
 export { default as CloudOff } from "@lucide/svelte/icons/cloud-off";
+export { default as Download } from "@lucide/svelte/icons/download";
+export { default as Upload } from "@lucide/svelte/icons/upload";
 export { default as Ellipsis } from "@lucide/svelte/icons/ellipsis";
 export { default as Flag } from "@lucide/svelte/icons/flag";
 export { default as GripVertical } from "@lucide/svelte/icons/grip-vertical";

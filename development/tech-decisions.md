@@ -763,6 +763,29 @@ Repository weiter und suchte per O(n)-Standard statt FTS5.
 
 ---
 
+## ADR-032 · Export/Import: `tasks.json` + Notizen als Dateien, Import mit neuen IDs
+
+**Status:** akzeptiert (2026-10-21, N6-04)
+**Kontext:** Es gab keinen Weg, die Daten außerhalb der App zu sichern oder zu lesen. Für eine verschlüsselte,
+offline-first App ist das auch eine Vertrauensfrage (User 2026-10-21: „JSON + Notizen als Dateien“, mit Import).
+**Entscheidung:**
+1. Export (nur Desktop) in einen gewählten Ordner: `Tasks-Export-JJJJ-MM-TT/` (Datum lokal aus der UI; gibt es den
+   Ordner schon, „… (2)“) mit `tasks.json` = `ExportDto { format: "tasks-export", version: 1, exportedAt, lists,
+   tasks }` (`TaskDto` mit allen Feldern, auch erledigte und Papierkorb; der Eingang heißt „Eingang“) und
+   `notizen/<Ordner>/<Name>.md|.txt` für alle Notizen außerhalb des Papierkorbs (Namen bereinigt, Gleichnamige
+   „(2)“). Schreiben macht die Shell; der Core liefert `export_data` und `export_notes`.
+2. Import liest eine `tasks.json` (≤ 64 MB, Version ≤ 1): Listen über den Namen (Groß/Klein egal), der Eingang auf
+   den Eingang, fehlende werden angelegt. Tasks bekommen **neue IDs** – eine alte ID kann auf einem anderen Gerät
+   schon gelöscht sein, „Delete gewinnt“ nähme sie dort sofort wieder weg – und behalten sonst alle Felder (wie
+   `RestoreTasks`, ADR-021); Papierkorb-Tasks landen wieder im Papierkorb. Übersprungen wird, was es schon gibt
+   (gleiche Liste, gleicher Titel, gleiches `createdAt`), so ist ein zweiter Import harmlos. Commits zu je 500.
+3. Notizen werden über das vorhandene „Ordner importieren…“ (N5-11) zurückgespielt – der `notizen/`-Ordner passt.
+4. Auswahl über das XDG-Desktop-Portal (ashpd, wie N5-11), keine neue Abhängigkeit; `serde_json` war schon im Binary.
+**Konsequenzen:** Export ist lesend (kein Sync-Auslöser), Import meldet eine Änderung. IDs ändern sich beim
+Wiederherstellen; Verknüpfungen (N9) gehen dabei verloren, bis das Format sie abbildet (dann `version: 2`).
+
+---
+
 ## Spikes
 
 | ID | Frage | Ergebnis entscheidet | Stand |

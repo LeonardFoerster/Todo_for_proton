@@ -12,6 +12,7 @@
 //! - Notizen (ADR-029): `create_note`, `discard_empty_note` (nur wenn verworfen), `rename_note`,
 //!   `set_note_kind`, `move_note`, `create_note_folder`, `rename_note_folder`, `move_note_folder`,
 //!   `trash_note_items`, `restore_note_items`, `purge_note_items`, `empty_note_trash`
+//! - Daten (ADR-032): `import_data` (nur wenn eingespielt; `export_data` liest nur)
 //! - **Inhalt:** `update_note_body` meldet `state.sync.content_change()` statt `local_change()`
 //!   (Debounce 3 s, höchstens 30 s, damit Tippen nicht alle paar Sekunden den ganzen Text lädt).
 //!   `sync_flush` lädt sofort hoch, wenn etwas wartet (Notiz- oder Moduswechsel in der UI).
@@ -483,13 +484,47 @@ pub fn is_external_url(url: &str) -> bool {
 /// `None`, wenn die Auswahl abgebrochen wurde.
 #[tauri::command]
 pub async fn import_notes_folder(state: State<'_, AppState>) -> Result<Option<ImportReportDto>> {
-    let Some(root) = crate::import::pick_folder()
+    let Some(root) = crate::import::pick_folder("Ordner importieren", "Importieren")
         .await
         .map_err(ErrorDto::unavailable)?
     else {
         return Ok(None);
     };
     let report = crate::import::import_path(&state.api, root).await?;
+    state.sync.local_change();
+    Ok(Some(report))
+}
+
+/// Export (ADR-032): Zielordner per Portal wählen, darin `Tasks-Export-<today>/` anlegen.
+/// `today` = lokales Datum `JJJJ-MM-TT` der UI. `None`, wenn die Auswahl abgebrochen wurde. Liest nur.
+#[tauri::command]
+pub async fn export_data(
+    state: State<'_, AppState>,
+    today: String,
+) -> Result<Option<crate::export::ExportResultDto>> {
+    let Some(parent) = crate::import::pick_folder("Export speichern in", "Exportieren")
+        .await
+        .map_err(ErrorDto::unavailable)?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(
+        crate::export::write_export(&state.api, &parent, &today).await?,
+    ))
+}
+
+/// Import (ADR-032): `tasks.json` per Portal wählen und einspielen. `None` = abgebrochen.
+#[tauri::command]
+pub async fn import_data(
+    state: State<'_, AppState>,
+) -> Result<Option<todo_core::api::export_dto::ImportDataReportDto>> {
+    let Some(file) = crate::export::pick_export_file()
+        .await
+        .map_err(ErrorDto::unavailable)?
+    else {
+        return Ok(None);
+    };
+    let report = crate::export::import_file(&state.api, &file).await?;
     state.sync.local_change();
     Ok(Some(report))
 }

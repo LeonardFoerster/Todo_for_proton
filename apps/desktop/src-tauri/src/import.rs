@@ -170,11 +170,11 @@ pub async fn import_path(api: &CoreApi, root: PathBuf) -> CoreResult<ImportRepor
 /// # Errors
 /// Kein Portal verfügbar oder unlesbare Antwort.
 #[cfg(target_os = "linux")]
-pub async fn pick_folder() -> Result<Option<PathBuf>, String> {
+pub async fn pick_folder(title: &str, accept: &str) -> Result<Option<PathBuf>, String> {
     use ashpd::desktop::{file_chooser::SelectedFiles, ResponseError};
     let request = SelectedFiles::open_file()
-        .title("Ordner importieren")
-        .accept_label("Importieren")
+        .title(title)
+        .accept_label(accept)
         .directory(true)
         .modal(true)
         .multiple(false)
@@ -189,12 +189,12 @@ pub async fn pick_folder() -> Result<Option<PathBuf>, String> {
 }
 
 #[cfg(not(target_os = "linux"))]
-pub async fn pick_folder() -> Result<Option<PathBuf>, String> {
+pub async fn pick_folder(_title: &str, _accept: &str) -> Result<Option<PathBuf>, String> {
     Err("folder selection is only available on Linux".into())
 }
 
 /// `file:///a/b%20c` → `/a/b c` (Prozent-Kodierung als Bytes, nicht nur UTF-8).
-fn file_path(uri: &str) -> Option<PathBuf> {
+pub(crate) fn file_path(uri: &str) -> Option<PathBuf> {
     let rest = uri.strip_prefix("file://")?;
     let path = rest.strip_prefix("localhost").unwrap_or(rest);
     let bytes = path.as_bytes();

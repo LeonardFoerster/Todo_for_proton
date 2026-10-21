@@ -10,7 +10,8 @@
   import Dialog from "../../components/Dialog.svelte";
   import ThemeSwitch from "../../components/ThemeSwitch.svelte";
   import { toasts } from "../../components/toasts.svelte";
-  import { Cloud, CloudOff, Copy, ExternalLink, Keyboard, LogIn, LogOut, RefreshCw, ShieldCheck } from "../../icons";
+  import { Cloud, CloudOff, Copy, Download, ExternalLink, Keyboard, LogIn, LogOut, RefreshCw, ShieldCheck, Upload } from "../../icons";
+  import { exportAll, importFile } from "../../lib/data-actions";
   import { useCoreClient } from "../../lib/context";
   import { defaultKind, limitWidth, setDefaultKind, setLimitWidth } from "../../lib/note-preferences";
   import type { SyncState } from "../../lib/sync.svelte";
@@ -40,6 +41,17 @@
   let now = $state(Date.now());
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
   let clock: ReturnType<typeof setInterval> | undefined;
+
+  /** Export/Import läuft (System-Dialog offen). */
+  let dataBusy = $state(false);
+  async function runData(action: typeof exportAll) {
+    dataBusy = true;
+    try {
+      await action(client);
+    } finally {
+      dataBusy = false;
+    }
+  }
 
   const DATE = new Intl.DateTimeFormat("de-DE", { dateStyle: "medium", timeStyle: "short" });
   const status = $derived(sync.status);
@@ -279,6 +291,22 @@
     </div>
   </section>
 
+  {#if client.data}
+    <section aria-labelledby="data-title">
+      <h3 id="data-title">Daten</h3>
+      <p class="data-hint">
+        Alle Listen und Tasks als <code>tasks.json</code>, Notizen als Dateien in ihren Ordnern – lesbar ohne
+        diese App. Wiederherstellen legt fehlende Tasks neu an und überspringt vorhandene.
+      </p>
+      <div class="data-actions">
+        <Button icon={Download} disabled={dataBusy} onclick={() => void runData(exportAll)}>Exportieren…</Button>
+        <Button variant="ghost" icon={Upload} disabled={dataBusy} onclick={() => void runData(importFile)}>
+          Aus Export wiederherstellen…
+        </Button>
+      </div>
+    </section>
+  {/if}
+
   <section aria-labelledby="keys-title">
     <h3 id="keys-title">Tastatur</h3>
     <Button variant="ghost" icon={Keyboard} onclick={onshortcuts}>Alle Tastaturkürzel anzeigen</Button>
@@ -288,6 +316,20 @@
 <style>
   section + section {
     margin-top: var(--space-6);
+  }
+  .data-hint {
+    margin: 0 0 var(--space-3);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+  }
+  .data-hint code {
+    font-size: var(--text-xs);
+  }
+  .data-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
   }
   .note-prefs {
     display: grid;

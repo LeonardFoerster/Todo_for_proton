@@ -4,6 +4,7 @@
 //! meldet die tatsächlich geschriebenen Entities als [`CoreEvent::Changed`] an alle [`EventSink`]s.
 
 pub mod dto;
+pub mod export_dto;
 pub mod note_dto;
 
 use std::{
@@ -45,6 +46,7 @@ use crate::{
         EmptyTaskTrash, PurgeExpiredTasks, PurgeTasks, PurgeTasksInput, TrashTasks,
         TrashTasksInput, UntrashTasks, UntrashTasksInput,
     },
+    app::{ExportData, ExportNotes, ImportData, ImportDataInput},
     domain::{
         DeviceId, Note, NoteFolder, NoteFolderId, NoteId, SortKey, Task, TaskId, TaskList,
         TaskListId, TaskParts,
@@ -421,6 +423,46 @@ impl CoreApi {
                 .execute(RestoreTasksInput { tasks })
                 .await?,
         ))
+    }
+
+    /// Alle Listen und Tasks als Inhalt von `tasks.json` (ADR-032).
+    ///
+    /// # Errors
+    /// Fehler des Repositories.
+    pub async fn export_data(&self) -> CoreResult<export_dto::ExportDto> {
+        let snapshot = ExportData::new(self.deps.clone()).execute().await?;
+        Ok(export_dto::ExportDto::from_snapshot(
+            &snapshot,
+            self.deps.clock.now(),
+        ))
+    }
+
+    /// Alle Notizen außerhalb des Papierkorbs mit Ordnerpfad (die Shell schreibt sie als Dateien).
+    ///
+    /// # Errors
+    /// Fehler des Repositories.
+    pub async fn export_notes(&self) -> CoreResult<Vec<export_dto::ExportNoteDto>> {
+        Ok(ExportNotes::new(self.deps.clone())
+            .execute()
+            .await?
+            .iter()
+            .map(export_dto::ExportNoteDto::from)
+            .collect())
+    }
+
+    /// Spielt einen Export ein: neue IDs, Listen über den Namen, Vorhandenes übersprungen.
+    ///
+    /// # Errors
+    /// `Validation` (Format, Version, Felder); Fehler des Repositories.
+    pub async fn import_data(
+        &self,
+        export: export_dto::ExportDto,
+    ) -> CoreResult<export_dto::ImportDataReportDto> {
+        let (lists, tasks) = export.into_import()?;
+        Ok(ImportData::new(self.deps.clone())
+            .execute(ImportDataInput { lists, tasks })
+            .await?
+            .into())
     }
 
     /// Eine Seite einer Ansicht.

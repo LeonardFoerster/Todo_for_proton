@@ -3,6 +3,8 @@ import type {
   AuthStepDto,
   ChangedEventDto,
   CreateTaskDto,
+  ExportResultDto,
+  ImportDataReportDto,
   ImportReportDto,
   MoveListTargetDto,
   MoveTargetDto,
@@ -92,6 +94,14 @@ export interface NotesClient {
   importFolder?(): Promise<ImportReportDto | null>;
 }
 
+/** Nur Desktop (ADR-032): Export und Import über System-Dialoge; `null` = abgebrochen. */
+export interface DataClient {
+  /** Zielordner wählen und darin `Tasks-Export-<today>/` anlegen (`tasks.json` + Notizen als Dateien). */
+  exportAll(today: string): Promise<ExportResultDto | null>;
+  /** Eine `tasks.json` wählen und einspielen (neue IDs, Vorhandenes wird übersprungen). */
+  importFile(): Promise<ImportDataReportDto | null>;
+}
+
 /**
  * Einzige Schnittstelle der UI zum Core. Alle Methoden lehnen mit `CoreClientError` ab.
  * Schreibende Methoden lösen zusätzlich `onChange` mit genau den geschriebenen IDs aus.
@@ -143,6 +153,8 @@ export interface CoreClient {
   notes: NotesClient;
   auth: AuthClient;
   sync: SyncClient;
+  /** Nur Desktop: Export/Import (ADR-032). */
+  data?: DataClient;
 
   /** Erste Ansicht ist gerendert (Startzeitmessung, Sync-Start). */
   ready(): Promise<void>;

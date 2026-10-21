@@ -23,6 +23,8 @@ proton-adapter.workspace = true
 todo-remote-fs.workspace = true
 async-trait.workspace = true
 serde.workspace = true
+# `tasks.json` für Export/Import (ADR-032); ohnehin über Tauri im Binary.
+serde_json.workspace = true
 # Tauri läuft auf tokio; hier nur Kanal, Timer und `select!` für den Sync-Scheduler.
 tokio = { version = "1.53.3", default-features = false, features = ["sync", "time", "macros"] }
 # Logs der Shell und der Adapter (proton-adapter loggt über `tracing`) auf stderr. Ohne Farben,

@@ -14,6 +14,7 @@ mod delete_task_list;
 mod delete_tasks;
 mod edit_note;
 mod ensure_inbox;
+mod export_data;
 mod import_notes;
 mod move_note_items;
 mod move_task;
@@ -49,6 +50,10 @@ pub use delete_task_list::{DeleteTaskList, DeleteTaskListInput, DeleteTaskListOu
 pub use delete_tasks::{DeleteTasks, DeleteTasksInput};
 pub use edit_note::{RenameNote, RenameNoteInput, SetNoteKind, SetNoteKindInput};
 pub use ensure_inbox::EnsureInbox;
+pub use export_data::{
+    DataSnapshot, ExportData, ExportNote, ExportNotes, ImportData, ImportDataInput,
+    ImportDataReport, ImportList, IMPORT_TASK_CHUNK,
+};
 pub use import_notes::{
     ImportNoteFile, ImportNotes, ImportNotesInput, ImportReport, ImportSkip, IMPORT_CHUNK,
 };
@@ -226,6 +231,12 @@ mod send_tests {
         assert_send(EmptyNoteTrash::new(deps.clone()).execute());
         assert_send(TrashTasks::new(deps.clone()).execute(TrashTasksInput { ids: Vec::new() }));
         assert_send(EmptyTaskTrash::new(deps.clone()).execute());
+        assert_send(ExportData::new(deps.clone()).execute());
+        assert_send(ExportNotes::new(deps.clone()).execute());
+        assert_send(ImportData::new(deps.clone()).execute(ImportDataInput {
+            lists: Vec::new(),
+            tasks: Vec::new(),
+        }));
         assert_send(PurgeExpiredTasks::new(deps.clone()).execute());
         assert_send(PurgeExpiredNotes::new(deps.clone()).execute());
         assert_send(ListNoteTrash::new(deps.clone()).execute());

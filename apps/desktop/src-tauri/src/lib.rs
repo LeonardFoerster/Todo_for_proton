@@ -5,6 +5,7 @@ mod commands;
 mod dev;
 pub mod dto;
 mod events;
+pub mod export;
 pub mod import;
 pub mod state;
 mod sync;
@@ -80,6 +81,8 @@ macro_rules! handlers {
             commands::close_ready,
             commands::open_external,
             commands::import_notes_folder,
+            commands::export_data,
+            commands::import_data,
             commands::set_online,
             commands::app_ready,
             commands::dev_selftest,
@@ -146,6 +149,8 @@ macro_rules! handlers {
             commands::close_ready,
             commands::open_external,
             commands::import_notes_folder,
+            commands::export_data,
+            commands::import_data,
             commands::set_online,
             commands::app_ready,
         ]

@@ -427,6 +427,9 @@ export class FakeCoreClient implements CoreClient {
 
   // --- Anmeldung & Sync ----------------------------------------------------------------------
 
+  /** Export/Import gibt es nur in der Desktop-Shell; Tests setzen es bei Bedarf (ADR-032). */
+  data?: CoreClient["data"];
+
   auth: CoreClient["auth"] = {
     info: () =>
       this.run(() => ({ provider: "Demo", notice: "Demo-Anmeldung ohne Server.", available: true })),

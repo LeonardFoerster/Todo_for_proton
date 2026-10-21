@@ -62,6 +62,8 @@
     "allow-close-ready",
     "allow-open-external",
     "allow-import-notes-folder",
+    "allow-export-data",
+    "allow-import-data",
     "allow-set-online",
     "allow-app-ready",
     "allow-dev-selftest",
