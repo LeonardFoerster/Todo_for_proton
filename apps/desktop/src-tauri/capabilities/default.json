@@ -22,6 +22,7 @@
     "allow-delete-tag",
     "allow-move-task-list",
     "allow-delete-task-list",
+    "allow-merge-task-lists",
     "allow-create-task",
     "allow-get-task",
     "allow-update-task",

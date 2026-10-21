@@ -168,6 +168,27 @@ export class FakeCoreClient implements CoreClient {
       return moved.filter((r) => r.task.trashedAt == null).length;
     });
 
+  mergeTaskLists = (source: string, target: string) =>
+    this.run(() => {
+      if (source === target) throw new CoreClientError("validation", "a list cannot be merged into itself");
+      const from = this.list(source);
+      this.list(target);
+      if (from.isInbox) throw new CoreClientError("validation", "the inbox cannot be merged away");
+      const moved = [...this.rows.values()].filter((r) => r.task.listId === source).sort((a, b) => a.order - b.order);
+      let last = this.lastOrder(target);
+      for (const row of moved) {
+        row.task.listId = target;
+        row.order = ++last;
+        this.touch(row);
+      }
+      this.lists.delete(source);
+      this.emit(
+        moved.map((r) => r.task.id),
+        [source],
+      );
+      return moved.filter((r) => r.task.trashedAt == null).length;
+    });
+
   // --- Verknüpfungen (ADR-036) ---------------------------------------------------------------
 
   private links = new Map<string, LinkDto>();

@@ -23,6 +23,9 @@
     PanelLeft,
     Plus,
     Pencil,
+    Hash,
+    Inbox as InboxIcon,
+    Merge,
     SlidersHorizontal,
     SquareKanban,
     Trash,
@@ -589,9 +592,64 @@
         disabled: i < 0 || i >= user.length - 1,
         action: () => void moveList(list.id, i + 2),
       },
+      {
+        label: "Zusammenführen mit…",
+        icon: Merge,
+        disabled: lists.lists.length < 2,
+        action: () => (mergeMenu = { list, x: listMenu?.x ?? 0, y: listMenu?.y ?? 0 }),
+      },
       { label: "Löschen…", icon: Trash, danger: true, action: () => (deleteTarget = list) },
     ];
   }
+
+  // --- Listen zusammenführen (N10-03, ADR-020) ---
+  let mergeMenu = $state<{ list: TaskListDto; x: number; y: number } | null>(null);
+
+  function mergeTargets(source: TaskListDto): MenuItem[] {
+    return lists.lists
+      .filter((l) => l.id !== source.id)
+      .map((l) => ({
+        id: l.id,
+        label: l.isInbox ? "Eingang" : l.name,
+        icon: l.isInbox ? InboxIcon : Hash,
+        action: () => void mergeLists(source, l),
+      }));
+  }
+
+  async function mergeLists(source: TaskListDto, target: TaskListDto) {
+    try {
+      const moved = await lists.merge(source.id, target.id);
+      if (route.view === "list" && route.listId === source.id) {
+        router.navigate(target.isInbox ? { view: "inbox" } : { view: "list", listId: target.id }, { replace: true });
+      }
+      const name = target.isInbox ? "Eingang" : target.name;
+      const rest = moved === 0 ? "" : ` · ${moved === 1 ? "1 Task" : `${moved} Tasks`} verschoben`;
+      toasts.show({ message: `„${source.name}“ in „${name}“ zusammengeführt${rest}` });
+    } catch (e) {
+      toasts.show({ message: `Nicht zusammengeführt: ${(e as Error).message}`, tone: "danger" });
+    }
+  }
+
+  /** Gleichnamige Listen (z. B. nach dem ersten Login auf einem zweiten Gerät): einmal je Sitzung anbieten. */
+  const hinted: string[] = [];
+  $effect(() => {
+    if (!lists.loaded) return;
+    for (const group of lists.duplicateGroups()) {
+      const key = group.map((l) => l.id).join("|");
+      if (hinted.includes(key)) continue;
+      hinted.push(key);
+      const [first, ...rest] = group;
+      toasts.show({
+        message: `${group.length} Listen heißen „${first.name}“`,
+        actionLabel: "Zusammenführen",
+        timeoutMs: 10_000,
+        onAction: () =>
+          void (async () => {
+            for (const other of rest) await mergeLists(other, first);
+          })(),
+      });
+    }
+  });
 
   /** Fokussierter Benutzerlisten-Eintrag in der Seitenleiste (für Kürzel). */
   function focusedList(): TaskListDto | undefined {
@@ -1398,6 +1456,16 @@
       optionsOpen = false;
       if (refocus) optionsButton?.focus();
     }}
+  />
+{/if}
+{#if mergeMenu}
+  {@const source = mergeMenu.list}
+  <Menu
+    label="„{source.name}“ zusammenführen mit"
+    items={mergeTargets(source)}
+    x={mergeMenu.x}
+    y={mergeMenu.y}
+    onclose={() => (mergeMenu = null)}
   />
 {/if}
 {#if tagMenu && currentTag}

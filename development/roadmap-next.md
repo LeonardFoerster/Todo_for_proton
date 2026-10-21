@@ -479,7 +479,8 @@ neue Task aus der Notiz); Icon in Zeile/Karte.
 > Notiz: ADR-037. Filter Priorität (genau) und Tag; Titel ohne Groß/Klein nur bei ASCII (wie SQLite `NOCASE`). Das Board bleibt ungefiltert.
 **Schritte:** Pro Ansicht sortieren (Eigene Reihenfolge, Fälligkeit, Priorität, Titel; gemerkt pro Gerät), Filter-Chips
 (Priorität, Tag) in der Kopfzeile; Core-Abfrage mit Sortierschlüssel statt O(n) im Client.
-### [ ] N10-02 · Zähler über `count_tasks` (FIX-04)
+### [x] N10-02 · Zähler über `count_tasks` (FIX-04) — 2026-10-21 · b4daf53
+> Notiz: „Heute“ zählt die Überfälligen weiter seitenweise (braucht die Fälligkeiten, ist klein); alle anderen über `COUNT(*)`.
 **Schritte:** `count_tasks(query)` in Port/SQLite/API; Seitenleiste und Unterzeile der Kopfzeile auch für Listen/Geplant.
 ### [ ] N10-03 · Gleichnamige Listen zusammenführen (ADR-020)
 **Schritte:** Aktion „Mit … zusammenführen“ im Listenmenü (Tasks verschieben, Liste löschen, ein Commit) + Hinweis nach

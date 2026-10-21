@@ -134,6 +134,8 @@ export interface CoreClient {
   moveTaskList(id: string, target: MoveListTargetDto): Promise<TaskListDto>;
   /** Liefert die Anzahl der in die Inbox verschobenen Tasks. */
   deleteTaskList(id: string): Promise<number>;
+  /** Führt `source` in `target` zusammen (ADR-020): Tasks ans Ende, `source` weg; liefert deren Zahl. */
+  mergeTaskLists(source: string, target: string): Promise<number>;
 
   // Tags (ADR-035): Namen ohne `#`, Groß/Klein egal eindeutig; Tasks tragen IDs.
   /** Alle Tags nach Name. */

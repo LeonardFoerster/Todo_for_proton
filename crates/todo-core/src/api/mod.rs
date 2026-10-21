@@ -29,11 +29,11 @@ use crate::{
         check_bulk_len, CompleteTask, CompleteTaskInput, CompleteTasks, CompleteTasksInput,
         CreateTask, CreateTaskInput, CreateTaskList, CreateTaskListInput, DeleteTag, DeleteTask,
         DeleteTaskInput, DeleteTaskList, DeleteTaskListInput, DeleteTasks, DeleteTasksInput, Deps,
-        EnsureInbox, EnsureTag, LinkTaskNote, ListLinks, MoveTask, MoveTaskInput, MoveTaskList,
-        MoveTaskListInput, MoveTasks, MoveTasksInput, PurgeDanglingLinks, RenameTag,
-        RenameTagInput, RenameTaskList, RenameTaskListInput, ReopenTask, ReopenTaskInput,
-        RestoreTasks, RestoreTasksInput, SetDues, SetDuesInput, TaskPatch, UnlinkTaskNote,
-        UpdateTask, UpdateTaskInput,
+        EnsureInbox, EnsureTag, LinkTaskNote, ListLinks, MergeTaskLists, MergeTaskListsInput,
+        MoveTask, MoveTaskInput, MoveTaskList, MoveTaskListInput, MoveTasks, MoveTasksInput,
+        PurgeDanglingLinks, RenameTag, RenameTagInput, RenameTaskList, RenameTaskListInput,
+        ReopenTask, ReopenTaskInput, RestoreTasks, RestoreTasksInput, SetDues, SetDuesInput,
+        TaskPatch, UnlinkTaskNote, UpdateTask, UpdateTaskInput,
     },
     app::{
         CreateNote, CreateNoteFolder, CreateNoteFolderInput, CreateNoteInput, DiscardEmptyNote,
@@ -211,6 +211,21 @@ impl CoreApi {
             .execute(DeleteTaskListInput { id: list_id(&id)? })
             .await?;
         Ok(u32::try_from(out.moved_tasks).unwrap_or(u32::MAX))
+    }
+
+    /// Führt `source` in `target` zusammen (ADR-020): Tasks ans Ende, `source` weg. Liefert die
+    /// Zahl verschobener Tasks.
+    ///
+    /// # Errors
+    /// `NotFound`, `Validation` (Inbox als Quelle, gleiche Listen, ungültige ID).
+    pub async fn merge_task_lists(&self, source: String, target: String) -> CoreResult<u32> {
+        let n = MergeTaskLists::new(self.deps.clone())
+            .execute(MergeTaskListsInput {
+                source: list_id(&source)?,
+                target: list_id(&target)?,
+            })
+            .await?;
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
     }
 
     // --- Tasks ----------------------------------------------------------------------------------

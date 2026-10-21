@@ -95,6 +95,20 @@ export class ListsState {
     }
   }
 
+  /** `source` in `target` zusammenführen (ADR-020); liefert die Zahl verschobener Tasks. */
+  async merge(source: string, target: string): Promise<number> {
+    const moved = await this.client.mergeTaskLists(source, target);
+    await this.reloadLists();
+    return moved;
+  }
+
+  /** Benutzerlisten mit gleichem Namen (Groß/Klein egal), je Gruppe in Reihenfolge der Seitenleiste. */
+  duplicateGroups(): TaskListDto[][] {
+    const groups: Record<string, TaskListDto[]> = {};
+    for (const l of this.userLists) (groups[l.name.trim().toLowerCase()] ??= []).push(l);
+    return Object.values(groups).filter((g) => g.length > 1);
+  }
+
   /** Löschen (Tasks wandern im Core in den Eingang); liefert deren Anzahl. */
   async remove(id: string): Promise<number> {
     const moved = await this.client.deleteTaskList(id);

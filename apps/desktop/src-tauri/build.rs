@@ -15,6 +15,7 @@ const COMMANDS: &[&str] = &[
     "delete_tag",
     "move_task_list",
     "delete_task_list",
+    "merge_task_lists",
     "create_task",
     "get_task",
     "update_task",

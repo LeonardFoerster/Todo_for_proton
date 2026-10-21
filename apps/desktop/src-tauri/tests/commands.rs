@@ -362,6 +362,12 @@ fn only_writing_commands_trigger_a_sync() {
     let deleted = expect("delete_tasks", json!({ "ids": [a["id"]] }), 1);
     expect("restore_tasks", json!({ "tasks": deleted }), 1);
     expect("delete_task", json!({ "id": b["id"] }), 1);
+    let twin = expect("create_task_list", json!({ "name": "Büro" }), 1);
+    expect(
+        "merge_task_lists",
+        json!({ "source": twin["id"], "target": list["id"] }),
+        1,
+    );
     expect("delete_task_list", json!({ "id": list["id"] }), 1);
 
     expect("list_task_lists", json!({}), 0);

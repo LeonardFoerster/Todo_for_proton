@@ -51,7 +51,9 @@ pub use create_note_folder::{
 pub use create_task::{CreateTask, CreateTaskInput};
 pub use create_task_list::{CreateTaskList, CreateTaskListInput};
 pub use delete_task::{DeleteTask, DeleteTaskInput};
-pub use delete_task_list::{DeleteTaskList, DeleteTaskListInput, DeleteTaskListOutput};
+pub use delete_task_list::{
+    DeleteTaskList, DeleteTaskListInput, DeleteTaskListOutput, MergeTaskLists, MergeTaskListsInput,
+};
 pub use delete_tasks::{DeleteTasks, DeleteTasksInput};
 pub use edit_note::{RenameNote, RenameNoteInput, SetNoteKind, SetNoteKindInput};
 pub use ensure_inbox::EnsureInbox;

@@ -415,6 +415,10 @@ Snapshot). Doppelte Listennamen sind nach dem ersten Login möglich und für den
 
 ---
 
+**Nachtrag (2026-10-21, N10-03):** Zusammenführen umgesetzt – `merge_task_lists(source, target)` hängt alle Tasks
+(auch erledigte und im Papierkorb) ans Ende des Ziels und löscht die Quelle in einem Commit; die UI bietet
+gleichnamige Listen (Groß/Klein egal) einmal je Sitzung per Toast an.
+
 ## ADR-021 · Sammel-Operationen in der Core-API
 
 **Status:** akzeptiert (2026-10-18, P0-01)

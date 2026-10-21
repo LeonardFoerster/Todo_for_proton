@@ -153,6 +153,18 @@ pub async fn delete_task_list(state: State<'_, AppState>, id: String) -> Result<
     Ok(moved)
 }
 
+/// Gleichnamige Listen zusammenführen (ADR-020).
+#[tauri::command]
+pub async fn merge_task_lists(
+    state: State<'_, AppState>,
+    source: String,
+    target: String,
+) -> Result<u32> {
+    let moved = state.api.merge_task_lists(source, target).await?;
+    state.sync.local_change();
+    Ok(moved)
+}
+
 // --- Tasks -------------------------------------------------------------------------------------
 
 #[tauri::command]
