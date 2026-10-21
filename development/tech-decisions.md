@@ -786,6 +786,36 @@ Wiederherstellen; Verknüpfungen (N9) gehen dabei verloren, bis das Format sie a
 
 ---
 
+## ADR-033 · Erinnerungen: lokal je Gerät, ein Timer, Tray und Autostart
+
+**Status:** akzeptiert (2026-10-21, N7-01/02)
+**Kontext:** Fälligkeiten mit Uhrzeit meldeten sich nie. Der User will Meldungen zur Fälligkeit, ganztägige morgens
+(einstellbar), auch bei geschlossenem Fenster; Autostart optional (2026-10-21).
+**Entscheidung:**
+1. **Nur lokal, nicht synchronisiert.** Jedes Gerät meldet selbst; Einstellungen (an/aus, Uhrzeit für ganztägige
+   `HH:MM`, Standard 09:00, „im Hintergrund weiterlaufen“, Autostart) liegen in `settings.json` im Datenordner
+   der Shell, „schon gemeldet“ als `(Task-ID, Zeitpunkt)` in `reminders.json` (verschobene Fälligkeit = neuer
+   Zeitpunkt = neue Meldung; Einträge älter als 2 Tage fallen weg).
+2. **Planung als reine Funktion** (`reminders/plan.rs`): mit Uhrzeit genau dann, ganztägig um die Uhrzeit in der
+   Systemzone (`jiff`, System-tzdb; Lücke → später, doppelt → früher). Fällig = Zeitpunkt in (jetzt − 24 h, jetzt]
+   und noch nicht gemeldet – verpasste (App aus, Ruhezustand) kommen beim Start/Aufwachen **zusammengefasst**,
+   ältere nicht mehr. Nur offene Tasks außerhalb des Papierkorbs.
+3. **Kein Polling:** ein einziger Timer auf die nächste Erinnerung, neu geplant bei jeder Task-Änderung (Core-Event,
+   entprellt), Einstellungen und Fokus. Damit ein Ruhezustand den Timer nicht verschiebt (monotone Uhr), wacht er
+   höchstens alle 15 min auf – **nur solange eine Erinnerung ansteht**; ohne anstehende gibt es keinen Timer.
+4. **Benachrichtigung über das XDG-Desktop-Portal** (ashpd, Feature `notification`; ashpd/zbus sind schon im
+   Binary), Klick öffnet die Task (Fenster zeigen, `app://open-task`).
+5. **Hintergrund:** Ist „im Hintergrund weiterlaufen“ an, versteckt das Schließen das Fenster (Notizen werden wie
+   bisher erst gespeichert) und ein Tray-Symbol (Tauri `tray-icon`, StatusNotifierItem über libayatana-appindicator)
+   bietet Öffnen, Neue Task, Beenden. Autostart = `~/.config/autostart/dev.tasks.app.desktop` mit `--hidden`.
+   Eine zweite Instanz (Starter, während die App im Tray läuft) meldet sich über einen Unix-Socket im Datenordner
+   bei der ersten (Fenster zeigen) und beendet sich – zwei Prozesse auf derselben Datenbank darf es nicht geben.
+**Konsequenzen:** Neue Abhängigkeit `jiff` (System-tzdb, ohne eingebaute Datenbank; später auch für N4) und die
+Tauri-Features `tray-icon`; Größe und PSS im Commit. Ohne Portal oder Tray (andere Desktops) läuft die App normal
+weiter (Warnung im Log), Meldungen fehlen dann.
+
+---
+
 ## Spikes
 
 | ID | Frage | Ergebnis entscheidet | Stand |

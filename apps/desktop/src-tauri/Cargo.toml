@@ -25,6 +25,9 @@ async-trait.workspace = true
 serde.workspace = true
 # `tasks.json` für Export/Import (ADR-032); ohnehin über Tauri im Binary.
 serde_json.workspace = true
+# Erinnerungen (N7): ganztägige Fälligkeiten um eine Ortszeit, über die Zeitumstellung (System-tzdb, keine
+# eingebaute Datenbank). Später auch für wiederkehrende Tasks (N4, Port `TimeZones`).
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 # Tauri läuft auf tokio; hier nur Kanal, Timer und `select!` für den Sync-Scheduler.
 tokio = { version = "1.53.3", default-features = false, features = ["sync", "time", "macros"] }
 # Logs der Shell und der Adapter (proton-adapter loggt über `tracing`) auf stderr. Ohne Farben,

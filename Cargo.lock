@@ -5731,6 +5731,7 @@ version = "0.1.0"
 dependencies = [
  "ashpd",
  "async-trait",
+ "jiff",
  "proton-adapter",
  "serde",
  "serde_json",

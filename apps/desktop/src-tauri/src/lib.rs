@@ -7,6 +7,7 @@ pub mod dto;
 mod events;
 pub mod export;
 pub mod import;
+pub mod reminders;
 pub mod state;
 mod sync;
 
