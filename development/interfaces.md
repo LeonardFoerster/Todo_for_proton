@@ -464,7 +464,7 @@ kennen keine Events. Abweichung vom Entwurf: `Changed` trennt Tasks und Listen (
 
 Desktop-Shell (P7-03, `apps/desktop/src-tauri`): Commands `snake_case` gleichnamig zu `CoreApi` (Argumente in JS
 camelCase, z. B. `invoke("complete_task", { id, done })`), dazu `auth_info`, `auth_current`, `auth_begin_login`
-(öffnet den Browser selbst per `xdg-open`), `auth_open_browser(flow)`, `auth_poll_login(flow)`, `auth_cancel_login(flow)`,
+(öffnet keinen Browser, die UI zeigt die URL zum Kopieren – ADR-038), `auth_poll_login(flow)`, `auth_cancel_login(flow)`,
 `auth_logout`, `sync_status`, `sync_now`, `sync_flush` (N5-06: sofort hochladen, wenn etwas wartet – Notiz-/Moduswechsel),
 `set_online(online)`, `app_ready` (erster Frame → Startzeit + Scheduler `AppStarted` + Auto-Leeren des
 Notiz-Papierkorbs, danach höchstens täglich bei Fokus); Notiz-Commands gleichnamig zu `CoreApi`

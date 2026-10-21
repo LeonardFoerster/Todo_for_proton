@@ -708,10 +708,6 @@ export class FakeCoreClient implements CoreClient {
         this.flows.set(flow, this.loginPolls);
         return { kind: "openBrowser", flow, url: "https://login.example.invalid/", pollIntervalS: 1, expiresInS: 600 };
       }),
-    openBrowser: (flow) =>
-      this.run(() => {
-        this.flow(flow);
-      }),
     pollLogin: (flow) =>
       this.run((): AuthStepDto => {
         const left = this.flow(flow);

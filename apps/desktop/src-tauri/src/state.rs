@@ -2,7 +2,6 @@
 //! Proton-Konto. Die App ist sofort lokal benutzbar; Sync startet erst mit einer Sitzung.
 
 use std::{
-    collections::HashMap,
     env, fs,
     path::{Path, PathBuf},
     sync::{
@@ -263,8 +262,6 @@ impl AppState {
 pub struct Account {
     backend: tokio::sync::OnceCell<Option<Backend>>,
     clock: Arc<dyn Clock>,
-    /// Login-URLs laufender Vorgänge (für „Browser erneut öffnen").
-    login_urls: Mutex<HashMap<String, String>>,
     keyring_id: String,
 }
 
@@ -288,7 +285,6 @@ impl Account {
                 tokio::sync::OnceCell::new_with(Some(None))
             },
             clock,
-            login_urls: Mutex::default(),
             keyring_id,
         }
     }
@@ -359,25 +355,11 @@ impl Account {
         Ok(backend.auth.current_session().await?.map(Into::into))
     }
 
+    /// Startet den Login. Die Shell öffnet keinen Browser: Die UI zeigt die URL zum Kopieren
+    /// (ADR-038, `xdg-open` landete je nach Dateizuordnung in fremden Programmen).
     pub async fn begin_login(&self) -> Result<crate::dto::AuthStepDto, ErrorDto> {
         let backend = self.require().await?;
-        let step = backend.auth.begin_login().await?;
-        if let todo_core::ports::AuthStep::OpenBrowser { flow, url, .. } = &step {
-            self.urls().insert(flow.0.clone(), url.clone());
-            open_browser(url);
-        }
-        Ok(step.into())
-    }
-
-    /// Öffnet die Login-Seite eines laufenden Vorgangs erneut.
-    pub fn reopen_browser(&self, flow: &str) -> Result<(), ErrorDto> {
-        let url = self
-            .urls()
-            .get(flow)
-            .cloned()
-            .ok_or_else(|| ErrorDto::from(CoreError::NotFound(format!("login flow {flow}"))))?;
-        open_browser(&url);
-        Ok(())
+        Ok(backend.auth.begin_login().await?.into())
     }
 
     /// Fragt den Login-Status ab; bei Erfolg startet der Sync.
@@ -389,11 +371,7 @@ impl Account {
     ) -> Result<crate::dto::AuthStepDto, ErrorDto> {
         let backend = self.require().await?;
         let flow_id = todo_core::ports::AuthFlowId(flow);
-        let result = backend.auth.poll_login(&flow_id).await;
-        if !matches!(result, Ok(todo_core::ports::AuthStep::Pending { .. })) {
-            self.urls().remove(&flow_id.0);
-        }
-        let step = result?;
+        let step = backend.auth.poll_login(&flow_id).await?;
         if matches!(step, todo_core::ports::AuthStep::Done(_)) {
             sync.set_runner(Some(self.runner(backend, api)?));
         }
@@ -402,7 +380,6 @@ impl Account {
 
     pub async fn cancel_login(&self, flow: String) -> Result<(), ErrorDto> {
         let backend = self.require().await?;
-        self.urls().remove(&flow);
         backend
             .auth
             .cancel_login(&todo_core::ports::AuthFlowId(flow))
@@ -423,12 +400,6 @@ impl Account {
         session?;
         key?;
         Ok(())
-    }
-
-    fn urls(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
-        self.login_urls
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -553,34 +524,6 @@ fn restrict_to_owner(dir: &Path) {
     }
     #[cfg(not(unix))]
     let _ = dir;
-}
-
-/// Öffnet die Login-Seite im Standardbrowser (Fehler egal: die UI zeigt die URL zum Kopieren).
-///
-/// Die URL enthält im Fragment den Fork-Schlüssel und darf daher nicht in die Kommandozeile
-/// (`/proc/<pid>/cmdline` ist für andere Nutzer lesbar): Übergeben wird eine nur für den
-/// Besitzer lesbare HTML-Datei, die auf die Login-Seite weiterleitet.
-fn open_browser(url: &str) {
-    let page = match proton_adapter::write_login_redirect(url) {
-        Ok(page) => page,
-        Err(err) => {
-            tracing::warn!(error = %err, "login page not written; browser not opened");
-            return;
-        }
-    };
-    match std::process::Command::new("xdg-open").arg(&page).spawn() {
-        // Abwarten (kein Zombie-Prozess), dann die Datei entfernen, sobald der Browser sie
-        // sicher gelesen hat.
-        Ok(mut child) => drop(std::thread::spawn(move || {
-            let _ = child.wait();
-            std::thread::sleep(std::time::Duration::from_secs(60));
-            let _ = fs::remove_file(page);
-        })),
-        Err(err) => {
-            let _ = fs::remove_file(&page);
-            tracing::warn!(error = %err, "xdg-open failed");
-        }
-    }
 }
 
 #[cfg(test)]

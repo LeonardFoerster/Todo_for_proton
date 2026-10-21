@@ -542,7 +542,7 @@ Escape-Sequenzen in der Dev-CLI) und Leads (Login-URL in der Kommandozeile, unbe
    `*.proton.me`; Dateien ≤ 128 MiB, Seiten-, Tiefen- und Eintragsgrenzen beim Listen; Namen mit `/`, `\`, `.`, `..`
    oder Steuerzeichen werden übersprungen; Decode-Fehler zitieren keine Server-Werte.
 6. **Login:** Die Login-URL (Fork-Schlüssel im Fragment) geht als private HTML-Datei (`$XDG_RUNTIME_DIR`, 0600) an
-   `xdg-open`, nicht als Argument. Selector/User-Code werden geprüft und im Pfad prozentkodiert; eine ersetzte Sitzung
+   `xdg-open`, nicht als Argument (Desktop seit ADR-038: kein automatisches Öffnen mehr). Selector/User-Code werden geprüft und im Pfad prozentkodiert; eine ersetzte Sitzung
    wird serverseitig beendet; Abmelden löscht Sitzung und Schlüssel unabhängig voneinander.
 7. **Desktop:** Selbsttest-Commands nur im Debug-Build registriert, `freezePrototype`, kein natives Drag-and-drop,
    Datenverzeichnis 0700, Runner an ein Konto gebunden. **Dev-Adapter/CLI:** `FsRemoteStore` lehnt Symlinks unterhalb
@@ -934,6 +934,21 @@ lassen. Sortieren im Client hieße alles laden – gegen die Budgets (virtualisi
    unverändert.
 **Konsequenzen:** Umlaute sortieren beim Titel nach Codepunkt (Ä nach Z) – bewusst, damit beide Speicher gleich
 sortieren und der Cursor stabil bleibt.
+
+---
+
+## ADR-038 · Login-Link nur anzeigen, Browser nicht selbst öffnen
+
+**Status:** akzeptiert (2026-10-21)
+**Kontext:** Die Desktop-Shell öffnete die Login-Seite selbst: Die URL (Fork-Schlüssel im Fragment) ging als private
+HTML-Weiterleitung an `xdg-open` (ADR-025 Punkt 6). Für eine lokale `.html`-Datei entscheidet die Zuordnung von
+`text/html`, nicht der Standardbrowser; zeigt sie auf ein deinstalliertes Programm, wählt KDE ein beliebiges anderes,
+das sich für `text/html` registriert (beobachtet: pgAdmin). „Link kopieren" funktionierte dagegen immer.
+**Entscheidung:** Die Shell öffnet keinen Browser mehr. Die UI zeigt die Login-URL im Schritt „Im Browser anmelden"
+mit Button „Link kopieren"; der Command `auth_open_browser` und `AuthClient.openBrowser` entfallen. Die Dev-CLI
+behält die Weiterleitung über `write_login_redirect`.
+**Konsequenzen:** Ein Klick mehr (Kopieren, im Browser einfügen), dafür vorhersehbar auf jedem System. Die URL steht
+nie in einer Kommandozeile; sie liegt nur kurz in der Zwischenablage.
 
 ---
 

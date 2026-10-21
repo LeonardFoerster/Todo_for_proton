@@ -42,10 +42,8 @@ export interface AuthClient {
   /** Anbietername + Pflichthinweis; `available: false` → Login hier nicht möglich. */
   info(): Promise<AuthInfoDto>;
   current(): Promise<SessionDto | null>;
-  /** Startet den Login; die Shell öffnet den Browser selbst. */
+  /** Startet den Login; die UI zeigt die URL zum Kopieren (kein automatisches Öffnen, ADR-038). */
   beginLogin(): Promise<AuthStepDto>;
-  /** Öffnet die Login-Seite eines laufenden Vorgangs erneut. */
-  openBrowser(flow: string): Promise<void>;
   /** Alle `pollIntervalS` Sekunden aufrufen, bis `done` oder Fehler. */
   pollLogin(flow: string): Promise<AuthStepDto>;
   cancelLogin(flow: string): Promise<void>;

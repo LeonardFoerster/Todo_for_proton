@@ -175,7 +175,7 @@
       await navigator.clipboard.writeText(url);
       toasts.show({ message: "Link kopiert" });
     } catch {
-      toasts.show({ message: "Kopieren nicht möglich – Link im Browser öffnen", tone: "danger" });
+      toasts.show({ message: "Kopieren nicht möglich – Link markieren und mit Strg+C kopieren", tone: "danger" });
     }
   }
 
@@ -252,15 +252,19 @@
         <span class="pulse" aria-hidden="true"><ExternalLink size={20} strokeWidth={1.75} /></span>
         <strong>Im Browser anmelden</strong>
         <p class="muted">
-          Wir haben die Anmeldeseite von {info?.provider || "deinem Anbieter"} im Browser geöffnet. Melde dich dort an
-          und bestätige den Zugriff – Zwei-Faktor-Code und weitere Prüfungen erledigst du direkt dort.
+          Kopiere den Link, öffne ihn im Browser und melde dich bei {info?.provider || "deinem Anbieter"} an –
+          Zwei-Faktor-Code und weitere Prüfungen erledigst du direkt dort.
         </p>
+        <input
+          class="login-url"
+          readonly
+          value={step.url}
+          aria-label="Anmeldelink"
+          onfocus={(e) => e.currentTarget.select()}
+        />
         <p class="countdown">Warte auf Bestätigung … noch {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, "0")} min</p>
         <div class="actions">
-          <Button icon={ExternalLink} onclick={() => void client.auth.openBrowser((step as { flow: string }).flow)}>
-            Erneut öffnen
-          </Button>
-          <Button variant="ghost" icon={Copy} onclick={() => void copyLink((step as { url: string }).url)}>Link kopieren</Button>
+          <Button variant="primary" icon={Copy} onclick={() => void copyLink((step as { url: string }).url)}>Link kopieren</Button>
           <Button variant="ghost" onclick={() => void cancel()}>Abbrechen</Button>
         </div>
       </div>
@@ -603,6 +607,23 @@
   .waiting strong {
     margin: var(--space-2) 0 var(--space-1);
     font-size: var(--text-lg);
+  }
+  .login-url {
+    box-sizing: border-box;
+    width: 100%;
+    margin-bottom: var(--space-3);
+    padding: 6px var(--space-2);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    background: var(--color-bg);
+    color: var(--color-text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    text-overflow: ellipsis;
+  }
+  .login-url:focus-visible {
+    outline: 2px solid var(--color-focus-outline);
+    outline-offset: 1px;
   }
   .pulse {
     display: grid;

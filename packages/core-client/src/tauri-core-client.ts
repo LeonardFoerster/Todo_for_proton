@@ -108,7 +108,6 @@ export class TauriCoreClient implements CoreClient {
     info: () => invoke("auth_info"),
     current: () => invoke("auth_current"),
     beginLogin: () => invoke("auth_begin_login"),
-    openBrowser: (flow) => invoke("auth_open_browser", { flow }),
     pollLogin: (flow) => invoke("auth_poll_login", { flow }),
     cancelLogin: (flow) => invoke("auth_cancel_login", { flow }),
     logout: () => invoke("auth_logout"),

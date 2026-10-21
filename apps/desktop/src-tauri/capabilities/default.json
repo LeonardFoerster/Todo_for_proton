@@ -64,7 +64,6 @@
     "allow-auth-info",
     "allow-auth-current",
     "allow-auth-begin-login",
-    "allow-auth-open-browser",
     "allow-auth-poll-login",
     "allow-auth-cancel-login",
     "allow-auth-logout",

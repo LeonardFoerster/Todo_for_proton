@@ -524,11 +524,6 @@ pub async fn auth_begin_login(state: State<'_, AppState>) -> Result<AuthStepDto>
 }
 
 #[tauri::command]
-pub async fn auth_open_browser(state: State<'_, AppState>, flow: String) -> Result<()> {
-    state.account.reopen_browser(&flow)
-}
-
-#[tauri::command]
 pub async fn auth_poll_login(state: State<'_, AppState>, flow: String) -> Result<AuthStepDto> {
     state
         .account

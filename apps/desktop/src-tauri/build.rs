@@ -57,7 +57,6 @@ const COMMANDS: &[&str] = &[
     "auth_info",
     "auth_current",
     "auth_begin_login",
-    "auth_open_browser",
     "auth_poll_login",
     "auth_cancel_login",
     "auth_logout",
