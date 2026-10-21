@@ -220,7 +220,9 @@ Zahl; Ansicht mit „gelöscht vor 3 Tagen“, Wiederherstellen, Endgültig lös
 Detail im Papierkorb nur lesend mit „Wiederherstellen“.
 **Fertig wenn:** Vitest (Löschen → Papierkorb → Wiederherstellen, Leeren, Liste löschen), Selbsttest.
 
-### [ ] N6-04 · ADR-032 + Export/Import
+### [x] N6-04 · ADR-032 + Export/Import — 2026-10-21 · 67f3aac
+> Notiz: Rundlauf-Test über echte Dateien in `apps/desktop/src-tauri/tests/export.rs` (statt Selbsttest – die
+> Portal-Dialoge lassen sich in der WebView nicht automatisch bedienen). Notizen zurück über „Ordner importieren…“.
 **Schritte:**
 1. ADR-032: Exportformat `tasks-export` v1 (JSON: `format`, `version`, `exportedAt`, `lists`, `tasks` mit allen Feldern
    inkl. Papierkorb); Import legt fehlende Listen (über Namen) und Tasks **mit neuen IDs** an (eine alte ID könnte auf

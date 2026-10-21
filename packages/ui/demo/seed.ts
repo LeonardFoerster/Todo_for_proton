@@ -12,7 +12,14 @@ export async function seed(core: CoreClient, bulk = 0): Promise<void> {
 
   const add = async (
     title: string,
-    opts: { list?: string; due?: number; prio?: "low" | "medium" | "high"; notes?: string; done?: boolean } = {},
+    opts: {
+      list?: string;
+      due?: number;
+      prio?: "low" | "medium" | "high";
+      notes?: string;
+      done?: boolean;
+      trashed?: boolean;
+    } = {},
   ) => {
     const t = await core.createTask({ title, listId: opts.list });
     if (opts.due !== undefined || opts.prio || opts.notes) {
@@ -23,6 +30,7 @@ export async function seed(core: CoreClient, bulk = 0): Promise<void> {
       });
     }
     if (opts.done) await core.completeTask(t.id, true);
+    if (opts.trashed) await core.trashTasks([t.id]);
   };
 
   await add("Steuererklärung abgeben", { due: -2, prio: "high", notes: "Belege liegen im Ordner „2025“." });
@@ -36,5 +44,6 @@ export async function seed(core: CoreClient, bulk = 0): Promise<void> {
   await add("Onboarding-Doku aktualisieren", { list: work.id });
   await add("Heizungsableser-Termin bestätigen", { list: home.id, due: 5 });
   await add("Balkonpflanzen umtopfen", { list: home.id, done: true });
+  await add("Alte Rechnungen sortieren", { list: home.id, trashed: true });
   for (let i = 0; i < bulk; i++) await add(`Testaufgabe ${i + 1}`, { due: i % 9 === 0 ? i % 5 : undefined });
 }
