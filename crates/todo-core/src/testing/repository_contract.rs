@@ -1070,6 +1070,17 @@ pub fn sorts_and_filters_page_like_the_core<R: TaskRepository>(repo: R) {
     assert_eq!(ids(TaskSort::Title, None), by(&[1, 3, 0, 2, 4]));
     assert_eq!(ids(TaskSort::Title, Some(Priority::High)), by(&[1, 3]));
     assert_eq!(ids(TaskSort::View, Some(Priority::None)), by(&[2]));
+    // Zähler (FIX-04) mit denselben Filtern.
+    let count = |q: TaskQuery| block_on(f.repo.count_tasks(&q)).expect("count");
+    assert_eq!(count(all()), 5);
+    assert_eq!(
+        count(TaskQuery {
+            priority: Some(Priority::High),
+            ..all()
+        }),
+        2
+    );
+    assert_eq!(count(TaskQuery::view(SmartView::Trash)), 0);
 }
 
 /// Die Zusammenfassung entspricht `TaskSummary::from(&task)`.

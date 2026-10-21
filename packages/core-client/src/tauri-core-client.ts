@@ -42,6 +42,7 @@ export class TauriCoreClient implements CoreClient {
   unlink: CoreClient["unlink"] = (id) => invoke("unlink", { id });
   taskLinks: CoreClient["taskLinks"] = (task) => invoke("task_links", { task });
   noteLinks: CoreClient["noteLinks"] = (note) => invoke("note_links", { note });
+  countTasks: CoreClient["countTasks"] = (query) => invoke("count_tasks", { query });
   listTags: CoreClient["listTags"] = () => invoke("list_tags");
   ensureTag: CoreClient["ensureTag"] = (name) => invoke("ensure_tag", { name });
   renameTag: CoreClient["renameTag"] = (id, name) => invoke("rename_tag", { id, name });

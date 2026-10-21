@@ -545,6 +545,24 @@ pub trait TaskRepository: NoteRepository + MaybeSend + MaybeSync {
         }
     }
 
+    /// Anzahl der Tasks einer Abfrage (FIX-04, N10-02) – für Zähler ohne Seiten. Standard: seitenweise
+    /// zählen; SQLite überschreibt das mit `COUNT(*)`.
+    ///
+    /// # Errors
+    /// Fehler des Speichers.
+    async fn count_tasks(&self, query: &TaskQuery) -> CoreResult<u64> {
+        let mut page = PageRequest::first(PAGE_LIMIT_MAX);
+        let mut n = 0u64;
+        loop {
+            let result = self.list_tasks(query, page).await?;
+            n += result.items.len() as u64;
+            match result.next_cursor {
+                Some(cursor) => page = PageRequest::after(cursor, PAGE_LIMIT_MAX),
+                None => return Ok(n),
+            }
+        }
+    }
+
     /// Suche über Titel und Notizen ([`SearchQuery`]). Standard: alle Tasks seitenweise laden und
     /// vergleichen (O(n)) – Speicher mit Volltextindex überschreiben das (SQLite: FTS5).
     ///

@@ -130,17 +130,9 @@ impl Position {
     }
 }
 
-/// SQL samt Parametern für eine Seite mit höchstens `fetch` Zeilen.
-///
-/// Gleiche Abfrageform ⇒ gleicher SQL-Text, damit `prepare_cached` greift.
-pub(crate) fn list_tasks_sql(
-    query: &TaskQuery,
-    after: Option<&Position>,
-    fetch: u32,
-) -> (String, Vec<Value>) {
-    let mut conditions: Vec<&str> = Vec::new();
-    let mut params: Vec<Value> = Vec::new();
-
+/// WHERE-Bedingungen einer Abfrage (Ansicht, Papierkorb, Status, Tag, Priorität) – geteilt von
+/// [`list_tasks_sql`] und [`count_tasks_sql`].
+fn push_filters(query: &TaskQuery, conditions: &mut Vec<&'static str>, params: &mut Vec<Value>) {
     match query.view {
         SmartView::Inbox => {
             conditions.push("list_id IN (SELECT id FROM task_lists WHERE is_inbox = 1)");
@@ -185,6 +177,32 @@ pub(crate) fn list_tasks_sql(
         conditions.push("priority = ?");
         params.push(Value::Integer(encode_priority(priority)));
     }
+}
+
+/// `COUNT(*)` einer Abfrage (FIX-04): gleiche Bedingungen wie [`list_tasks_sql`], ohne Sortierung.
+pub(crate) fn count_tasks_sql(query: &TaskQuery) -> (String, Vec<Value>) {
+    let mut conditions: Vec<&str> = Vec::new();
+    let mut params: Vec<Value> = Vec::new();
+    push_filters(query, &mut conditions, &mut params);
+    let filter = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", conditions.join(" AND "))
+    };
+    (format!("SELECT count(*) FROM tasks{filter}"), params)
+}
+
+/// SQL samt Parametern für eine Seite mit höchstens `fetch` Zeilen.
+///
+/// Gleiche Abfrageform ⇒ gleicher SQL-Text, damit `prepare_cached` greift.
+pub(crate) fn list_tasks_sql(
+    query: &TaskQuery,
+    after: Option<&Position>,
+    fetch: u32,
+) -> (String, Vec<Value>) {
+    let mut conditions: Vec<&str> = Vec::new();
+    let mut params: Vec<Value> = Vec::new();
+    push_filters(query, &mut conditions, &mut params);
     match after {
         Some(Position::BySortKey(key, id)) => {
             conditions.push("(sort_key, id) > (?, ?)");

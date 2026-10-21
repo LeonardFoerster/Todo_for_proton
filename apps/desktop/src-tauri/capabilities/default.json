@@ -40,6 +40,7 @@
     "allow-restore-tasks",
     "allow-set-dues",
     "allow-list-tasks",
+    "allow-count-tasks",
     "allow-search-tasks",
     "allow-list-note-folders",
     "allow-list-note-items",

@@ -33,6 +33,7 @@ const COMMANDS: &[&str] = &[
     "restore_tasks",
     "set_dues",
     "list_tasks",
+    "count_tasks",
     "search_tasks",
     "list_note_folders",
     "list_note_items",

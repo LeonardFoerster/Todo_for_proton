@@ -366,6 +366,11 @@ fn only_writing_commands_trigger_a_sync() {
 
     expect("list_task_lists", json!({}), 0);
     expect(
+        "count_tasks",
+        json!({ "query": { "view": { "kind": "all" } } }),
+        0,
+    );
+    expect(
         "list_tasks",
         json!({ "query": { "view": { "kind": "list", "listId": inbox["id"] } }, "page": { "limit": 10 } }),
         0,

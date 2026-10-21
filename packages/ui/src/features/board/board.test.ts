@@ -261,8 +261,9 @@ describe("reordering columns", () => {
     board().getBoundingClientRect = () => ({ left: 0, right: 2000, top: 0, bottom: 700 }) as DOMRect;
   }
   const sidebar = () =>
+    // Name ohne Zähler (seit FIX-04 tragen Listen ihre Zahl).
     [...screen.getByRole("navigation", { name: "Navigation" }).querySelectorAll("a[data-list-id]")].map((a) =>
-      a.textContent?.trim(),
+      a.querySelector(".label")?.textContent?.trim(),
     );
 
   it("drags a column header; board and sidebar share the new order, the inbox stays first", async () => {

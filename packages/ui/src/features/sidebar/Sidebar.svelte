@@ -216,6 +216,7 @@
               href={routeHash({ view: "list", listId: list.id })}
               icon={Hash}
               label={list.name}
+              count={lists.counts.lists[list.id] != null ? formatCount(lists.counts.lists[list.id]) : undefined}
               monogram={[...list.name][0]}
               active={route.view === "list" && route.listId === list.id}
               {collapsed}
@@ -258,6 +259,7 @@
               href={routeHash({ view: "tag", tagId: tag.id })}
               icon={Tag}
               label={tag.name}
+              count={lists.counts.tags[tag.id] != null ? formatCount(lists.counts.tags[tag.id]) : undefined}
               monogram="#"
               active={route.view === "tag" && route.tagId === tag.id}
               {collapsed}

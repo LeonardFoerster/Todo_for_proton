@@ -638,6 +638,17 @@ export class FakeCoreClient implements CoreClient {
       return { items, nextCursor: end < rows.length ? String(end) : null };
     });
 
+  countTasks = async (query: TaskQueryDto) => {
+    let n = 0;
+    let cursor: string | null = null;
+    do {
+      const page: PageDto<TaskSummaryDto> = await this.listTasks(query, { cursor, limit: PAGE_LIMIT_MAX });
+      n += page.items.length;
+      cursor = page.nextCursor;
+    } while (cursor);
+    return n;
+  };
+
   searchTasks = (text: string, limit: number) =>
     this.run((): TaskSummaryDto[] => {
       if (limit < 1 || limit > PAGE_LIMIT_MAX) throw new CoreClientError("validation", `search limit must be 1..=${PAGE_LIMIT_MAX}`);

@@ -312,6 +312,12 @@ pub async fn list_tasks(
     Ok(state.api.list_tasks(query, page).await?)
 }
 
+/// Anzahl der Tasks einer Abfrage (Zähler, FIX-04).
+#[tauri::command]
+pub async fn count_tasks(state: State<'_, AppState>, query: TaskQueryDto) -> Result<u32> {
+    Ok(state.api.count_tasks(query).await?)
+}
+
 #[tauri::command]
 pub async fn search_tasks(
     state: State<'_, AppState>,

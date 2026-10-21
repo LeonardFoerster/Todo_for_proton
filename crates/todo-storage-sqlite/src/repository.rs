@@ -27,7 +27,7 @@ use crate::{
         write_note, write_tag, write_task, FOLDER_COLUMNS, LINK_COLUMNS, LIST_COLUMNS,
         NOTE_SUMMARY_COLUMNS, TAG_COLUMNS, TASK_COLUMNS,
     },
-    query::{list_tasks_sql, search_notes_sql, search_tasks_sql, Position},
+    query::{count_tasks_sql, list_tasks_sql, search_notes_sql, search_tasks_sql, Position},
     sync_store::{self, SqliteReplica},
 };
 
@@ -327,6 +327,20 @@ impl TaskRepository for SqliteTaskRepository {
                     lists.push(read_list(row)?);
                 }
                 Ok(lists)
+            })
+            .await
+    }
+
+    async fn count_tasks(&self, query: &TaskQuery) -> CoreResult<u64> {
+        let query = *query;
+        self.db
+            .call(move |conn| {
+                let (sql, params) = count_tasks_sql(&query);
+                let n: i64 = conn
+                    .prepare_cached(&sql)
+                    .and_then(|mut stmt| stmt.query_row(params_from_iter(params), |row| row.get(0)))
+                    .map_err(storage)?;
+                Ok(u64::try_from(n).unwrap_or(0))
             })
             .await
     }
@@ -679,6 +693,9 @@ mod tests {
             note: Option<NoteId>,
         ) -> CoreResult<Vec<Link>> {
             self.repo.list_links(task, note).await
+        }
+        async fn count_tasks(&self, query: &TaskQuery) -> CoreResult<u64> {
+            self.repo.count_tasks(query).await
         }
         async fn list_tasks(
             &self,

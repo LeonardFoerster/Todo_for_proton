@@ -118,6 +118,6 @@ describe("TaskList", () => {
     await setup(1000);
     // 720 px Höhe / 36 px + Puffer statt 1 000 DOM-Zeilen.
     expect(rows().length).toBeLessThan(60);
-    expect(screen.getByRole("link", { name: /Eingang/ }).textContent).toContain("999+");
+    await waitFor(() => expect(screen.getByRole("link", { name: /Eingang/ }).textContent).toContain("999+"));
   });
 });

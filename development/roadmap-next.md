@@ -475,7 +475,8 @@ neue Task aus der Notiz); Icon in Zeile/Karte.
 
 ## N10 · Bedienung
 
-### [ ] N10-01 · Sortieren und Filtern
+### [x] N10-01 · Sortieren und Filtern — 2026-10-21 · fca1d60
+> Notiz: ADR-037. Filter Priorität (genau) und Tag; Titel ohne Groß/Klein nur bei ASCII (wie SQLite `NOCASE`). Das Board bleibt ungefiltert.
 **Schritte:** Pro Ansicht sortieren (Eigene Reihenfolge, Fälligkeit, Priorität, Titel; gemerkt pro Gerät), Filter-Chips
 (Priorität, Tag) in der Kopfzeile; Core-Abfrage mit Sortierschlüssel statt O(n) im Client.
 ### [ ] N10-02 · Zähler über `count_tasks` (FIX-04)

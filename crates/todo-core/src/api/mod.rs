@@ -682,6 +682,16 @@ impl CoreApi {
             .into())
     }
 
+    /// Anzahl der Tasks einer Abfrage (Zähler der Seitenleiste, FIX-04).
+    ///
+    /// # Errors
+    /// `Validation` (Abfrage).
+    pub async fn count_tasks(&self, query: TaskQueryDto) -> CoreResult<u32> {
+        let query = TaskQuery::try_from(&query)?;
+        let n = self.deps.repo.count_tasks(&query).await?;
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
+    }
+
     /// Eine Seite einer Ansicht.
     ///
     /// # Errors
@@ -1204,6 +1214,10 @@ impl TaskRepository for NotifyingRepository {
 
     async fn last_sort_key(&self, list_id: TaskListId) -> CoreResult<Option<SortKey>> {
         self.inner.last_sort_key(list_id).await
+    }
+
+    async fn count_tasks(&self, query: &TaskQuery) -> CoreResult<u64> {
+        self.inner.count_tasks(query).await
     }
 
     // FIX-13: weiterleiten, sonst liefe die O(n)-Standardsuche statt des FTS5-Index (ADR-027).

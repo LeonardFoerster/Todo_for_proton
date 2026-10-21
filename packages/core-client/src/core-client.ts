@@ -160,6 +160,8 @@ export interface CoreClient {
   moveTask(id: string, target: MoveTargetDto): Promise<TaskDto>;
   deleteTask(id: string): Promise<void>;
   listTasks(query: TaskQueryDto, page: PageRequestDto): Promise<PageDto<TaskSummaryDto>>;
+  /** Anzahl der Tasks einer Abfrage (Zähler ohne Seiten, FIX-04). */
+  countTasks(query: TaskQueryDto): Promise<number>;
   /** Suche über Titel und Notizen (ADR-027): jedes Wort als Teilwort; offene zuerst, Titeltreffer vor Notiztreffern. */
   searchTasks(text: string, limit: number): Promise<TaskSummaryDto[]>;
 
