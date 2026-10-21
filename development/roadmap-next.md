@@ -388,7 +388,7 @@ Ansicht je Serie (mit Verknüpfungen aus N3 möglich), Erinnerungen.
 4. Tests: IPC-Test (Abhaken einer Serie → zwei geänderte IDs im `onChange`), Auslöser-Test, Vitest für den Fake.
 **Fertig wenn:** `just check` grün, `interfaces.md` §7 ergänzt. Commit `feat(desktop): recurring task commands`.
 
-### [ ] N4-05 · Fenster „Neue Task": Wiederholung erkennen
+### [x] N4-05 · Fenster „Neue Task": Wiederholung erkennen — 2026-10-21 · a6f919d
 **Lies vorher:** `features/new-task/parse.ts`, `NewTaskDialog.svelte`, P3-03 (Archiv).
 **Schritte:**
 1. Parser: `täglich`, `jeden Tag`, `wöchentlich`, `jede Woche`, `jeden Mo`, `jeden Mo und Do` / `jeden Mo, Do`,

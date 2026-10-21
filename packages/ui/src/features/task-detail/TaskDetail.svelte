@@ -1,14 +1,26 @@
 <script lang="ts">
   import DueField from "../due/DueField.svelte";
   import ListPicker from "../lists/ListPicker.svelte";
-  import { CoreClientError, type DueDto, type PriorityDto, type TaskDto, type TaskPatchDto } from "@tasks/core-client";
+  import RecurrenceField from "../recurrence/RecurrenceField.svelte";
+  import {
+    CoreClientError,
+    type DueDto,
+    type PriorityDto,
+    type RecurrenceDto,
+    type TaskDto,
+    type TaskPatchDto,
+  } from "@tasks/core-client";
   import { onMount } from "svelte";
   import Checkbox from "../../components/Checkbox.svelte";
   import IconButton from "../../components/IconButton.svelte";
   import { toasts } from "../../components/toasts.svelte";
-  import { CalendarDays, Flag, Hash, Trash, X } from "../../icons";
+  import Button from "../../components/Button.svelte";
+  import { CalendarDays, Flag, Hash, Redo, Repeat, Trash, X } from "../../icons";
   import { useCoreClient } from "../../lib/context";
-    import type { ListsState } from "../../lib/lists.svelte";
+  import type { ListsState } from "../../lib/lists.svelte";
+  import { isoDate } from "../../lib/local-day";
+  import { firstOnOrAfter } from "../../lib/recurrence";
+  import { completeManyWithUndo, skipWithToast } from "../../lib/task-actions";
   import { listName } from "../../lib/views";
 
   interface Props {
@@ -108,6 +120,19 @@
     void save({ due: next });
   }
 
+  /** Regel ohne Fälligkeit: erstes Vorkommen ab heute (lokal) gleich mitsetzen. */
+  function setRecurrence(next: RecurrenceDto | null) {
+    const due: DueDto | undefined =
+      next && !task?.due ? { kind: "date", date: isoDate(firstOnOrAfter(next, new Date())) } : undefined;
+    void save(due ? { due, recurrence: next } : { recurrence: next });
+  }
+
+  async function skip() {
+    if (!task) return;
+    const next = await skipWithToast(client, task);
+    if (next) adopt(next);
+  }
+
   async function moveTo(listId: string) {
     if (!task || listId === task.listId) return;
     try {
@@ -119,6 +144,12 @@
 
   async function toggle(done: boolean) {
     if (!task) return;
+    // Serie (ADR-028): bleibt offen, rückt vor – mit Toast „nächstes Mal …“ und Rückgängig.
+    if (done && task.recurrence) {
+      const [next] = (await completeManyWithUndo(client, [task.id], true)) ?? [];
+      if (next) adopt(next);
+      return;
+    }
     try {
       adopt(await client.completeTask(task.id, done));
     } catch (e) {
@@ -190,6 +221,14 @@
         <dt><CalendarDays size={16} strokeWidth={1.75} aria-hidden="true" /><label for="detail-due">Fällig</label></dt>
         <dd>
           <DueField id="detail-due" value={task.due} onchange={setDue} />
+        </dd>
+
+        <dt><Repeat size={16} strokeWidth={1.75} aria-hidden="true" /><label for="detail-repeat">Wiederholung</label></dt>
+        <dd class="repeat">
+          <RecurrenceField id="detail-repeat" value={task.recurrence} due={task.due} onchange={setRecurrence} />
+          {#if task.recurrence && task.status === "open"}
+            <Button variant="ghost" icon={Redo} onclick={() => void skip()}>Dieses Mal überspringen</Button>
+          {/if}
         </dd>
 
         <dt><Flag size={16} strokeWidth={1.75} aria-hidden="true" /><span id="detail-prio">Priorität</span></dt>
@@ -325,6 +364,12 @@
   }
   dd {
     margin: 0;
+  }
+  dd.repeat {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
   }
   .segments {
     display: grid;

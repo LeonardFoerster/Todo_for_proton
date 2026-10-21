@@ -5,7 +5,7 @@
   import Menu, { type MenuItem } from "../../components/Menu.svelte";
   import { toasts } from "../../components/toasts.svelte";
   import VirtualList from "../../components/VirtualList.svelte";
-  import { ArrowDown, ArrowUp, CalendarDays, CircleCheck, FolderInput, Hash, Inbox, PanelRight, Plus, Trash, Undo } from "../../icons";
+  import { ArrowDown, ArrowUp, CalendarDays, CircleCheck, FolderInput, Hash, Inbox, PanelRight, Plus, Redo, Trash, Undo } from "../../icons";
   import { useCoreClient } from "../../lib/context";
   import { density } from "../../lib/density.svelte";
   import type { ListsState } from "../../lib/lists.svelte";
@@ -18,6 +18,7 @@
     moveManyWithUndo,
     purgeMany,
     setDuesWithUndo,
+    skipWithToast,
     trashManyWithUndo,
     untrashWithToast,
   } from "../../lib/task-actions";
@@ -144,6 +145,8 @@
 
   async function toggle(task: TaskSummaryDto, done: boolean) {
     if (inTrash) return;
+    // Serie (ADR-028): Zeile bleibt, Fälligkeit rückt vor; Toast mit „nächstes Mal“ und Rückgängig.
+    if (done && task.recurring) return void (await completeManyWithUndo(client, [task.id], true));
     if (done && completedLeave) moveCursorAway(new Set([task.id]));
     const before = rows.setDone(task.id, done);
     if (done && completedLeave) revealCursor();
@@ -578,6 +581,9 @@
         action: () => void toggle(task, !done),
       },
       { label: "Fälligkeit…", icon: CalendarDays, shortcut: "D", action: () => ondue?.([task], at.x, at.y) },
+      ...(task.recurring && !done
+        ? [{ label: "Dieses Mal überspringen", icon: Redo, action: () => void skipWithToast(client, task) }]
+        : []),
       {
         label: "Nach oben",
         icon: ArrowUp,

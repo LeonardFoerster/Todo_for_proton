@@ -9,7 +9,7 @@
   import { toasts } from "../../components/toasts.svelte";
   import { useCoreClient } from "../../lib/context";
   import type { ListsState } from "../../lib/lists.svelte";
-  import { trashManyWithUndo, moveManyWithUndo } from "../../lib/task-actions";
+  import { completeManyWithUndo, trashManyWithUndo, moveManyWithUndo } from "../../lib/task-actions";
   import { listName } from "../../lib/views";
   import { BoardState, type BoardColumn as Column } from "./board-state.svelte";
   import BoardColumn, { CARD_SLOT } from "./BoardColumn.svelte";
@@ -160,6 +160,8 @@
   // --- Aktionen -------------------------------------------------------------------------------
 
   async function toggle(task: TaskSummaryDto, done: boolean) {
+    // Serie (ADR-028): Karte bleibt, Fälligkeit rückt vor; Toast mit „nächstes Mal“.
+    if (done && task.recurring) return void (await completeManyWithUndo(client, [task.id], true));
     const column = board.columnOf(task.id);
     if (done) moveCursorAway(task.id);
     const before = column?.rows.setDone(task.id, done);

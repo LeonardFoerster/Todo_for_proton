@@ -220,10 +220,13 @@ export class TaskListState {
     if (this.items.some((t) => t.id === id)) this.items = this.items.filter((t) => t.id !== id);
   }
 
-  /** Optimistisch abhaken/öffnen; abgehakte verlassen offene Ansichten nach `LEAVE_MS`. */
+  /**
+   * Optimistisch abhaken/öffnen; abgehakte verlassen offene Ansichten nach `LEAVE_MS`. Eine Serie
+   * (ADR-028) bleibt offen und stehen – ihre neue Fälligkeit kommt mit dem Änderungs-Event.
+   */
   setDone(id: string, done: boolean): TaskSummaryDto | undefined {
     const task = this.items.find((t) => t.id === id);
-    if (!task) return undefined;
+    if (!task || (done && task.recurring)) return task;
     if (done) this.leave([id]);
     const next: TaskSummaryDto = {
       ...task,
@@ -240,7 +243,7 @@ export class TaskListState {
     const before: TaskSummaryDto[] = [];
     const at = done ? new Date().toISOString() : null;
     this.items = this.items.map((t) => {
-      if (!set.has(t.id) || t.status === (done ? "done" : "open")) return t;
+      if (!set.has(t.id) || t.status === (done ? "done" : "open") || (done && t.recurring)) return t;
       before.push(t);
       return { ...t, status: done ? "done" : "open", completedAt: at };
     });

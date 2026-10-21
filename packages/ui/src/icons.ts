@@ -21,6 +21,7 @@ export { default as Monitor } from "@lucide/svelte/icons/monitor";
 export { default as Moon } from "@lucide/svelte/icons/moon";
 export { default as PanelLeft } from "@lucide/svelte/icons/panel-left";
 export { default as Plus } from "@lucide/svelte/icons/plus";
+export { default as Redo } from "@lucide/svelte/icons/redo";
 export { default as RefreshCw } from "@lucide/svelte/icons/refresh-cw";
 export { default as Repeat } from "@lucide/svelte/icons/repeat";
 export { default as Settings } from "@lucide/svelte/icons/settings";

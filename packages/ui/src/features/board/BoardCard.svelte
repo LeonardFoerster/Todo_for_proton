@@ -33,7 +33,7 @@
     class:cursor
     class:dragging
     role="option"
-    aria-label={[task.title, done ? "erledigt" : null, due?.long, done ? null : priorityInLabel(task.priority)].filter(Boolean).join(", ")}
+    aria-label={[task.title, done ? "erledigt" : null, due?.long, task.recurring ? "wiederholt sich" : null, done ? null : priorityInLabel(task.priority)].filter(Boolean).join(", ")}
     aria-selected={cursor}
     tabindex={cursor ? 0 : -1}
     data-task-id={task.id}
@@ -53,7 +53,7 @@
     />
     <span class="body">
       <span class="title">{task.title}</span>
-      {#if due || task.hasNotes}<TaskMeta {task} {due} size="card" />{/if}
+      {#if due || task.hasNotes || task.recurring}<TaskMeta {task} {due} size="card" />{/if}
     </span>
   </div>
 </div>
