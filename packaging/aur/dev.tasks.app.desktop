@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Tasks
+GenericName=Aufgaben
+Comment=Aufgaben und Notizen offline-first, verschlüsselt synchronisiert
+Exec=tasks-app
+Icon=dev.tasks.app
+Terminal=false
+Categories=Office;ProjectManagement;
+Keywords=todo;aufgaben;notizen;tasks;notes;
+StartupWMClass=dev.tasks.app
