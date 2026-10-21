@@ -12,6 +12,8 @@ async-trait.workspace = true
 chrono.workspace = true
 # Nur `channel::oneshot`: Antworten des Datenbank-Threads, ohne Bindung an eine Async-Runtime.
 futures.workspace = true
+# Eltern-Liste einer Notiz-Revision (gleiches Format wie die Ops, schon im Binary).
+postcard.workspace = true
 # `bundled`: gleiche SQLite-Version überall (auch später Android), kein System-SQLite nötig.
 rusqlite.workspace = true
 

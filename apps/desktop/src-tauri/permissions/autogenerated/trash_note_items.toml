@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-trash-note-items"
+description = "Enables the trash_note_items command without any pre-configured scope."
+commands.allow = ["trash_note_items"]
+
+[[permission]]
+identifier = "deny-trash-note-items"
+description = "Denies the trash_note_items command without any pre-configured scope."
+commands.deny = ["trash_note_items"]

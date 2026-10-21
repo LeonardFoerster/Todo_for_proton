@@ -267,6 +267,41 @@ Unterschied liegt im Rauschen der Debug-/Dev-Grundlast (Release: 0,02 %, P8-03).
   `wasm-opt -Oz`, `opt-level = "z"` nur für das WASM-Crate, Features minimieren.
 - WASM auf dem Main-Thread initialisieren → Jank beim Start.
 
+### Notes (N5-12, 2026-10-20)
+Release-Build, `MODE=tasks|notes tools/measure-desktop.sh` (je eigenes Profil mit vorbelegtem `tasks.mode`, nicht
+angemeldet), sonst wie P8-03. „Leer" = leeres Profil; „mit Daten" = Profil aus der Selbsttest-Suite `n5seed`
+(Ordner mit 500 Notizen + 20-KB-Notiz), im Notes-Modus mit offener 20-KB-Notiz (`NOTES_OPEN`).
+
+| Messung | Tasks | Notes | Budget | |
+|---|---|---|---|---|
+| Kaltstart bis erste interaktive Ansicht (Median 5), leer | 369 ms | 355 ms (Notizbaum) | < 400 / < 800 ms | ✔ |
+| dto., mit Daten | 358 ms | 366 ms (offene Notiz) | < 400 / < 800 ms | ✔ |
+| PSS gesamt nach 60 s Leerlauf, leer | 305 MB | 307 MB | < 250 / < 320 MB | ✔ hart, ✘ Ziel (FIX-07) |
+| dto., mit Daten | 289 MB | 291–292 MB (+2–3 MB) | Zuwachs ≤ 10 MB | ✔ |
+| Leerlauf-CPU über 30 s | 0,00–0,03 % | 0,00 % | ~0 % | ✔ |
+
+Ein Lauf mit offener Notiz zeigte einmal 1,40 % (42 Ticks); in vier Wiederholungen (Messskript und Einzelprobe je
+Prozess, gleiche Wartezeiten) 0–1 Tick – nicht reproduzierbar, vermutlich Last außerhalb der App. Keine Timer im
+Editor ohne Eingabe (Autosave/Zähler nur nach Eingaben).
+
+WebView-Abläufe: Selbsttests `notes` und `n5seed` (Debug-Build + Vite-Dev, pessimistisch); Notes-Chunk aus
+`vite build`.
+
+| `notes.md` §9 | Ergebnis | Budget | |
+|---|---|---|---|
+| Notes-Chunk (Baum + Editor + Renderer, gzip) | 19,3 KB JS + 2,4 KB CSS | < 25 KB | ✔ |
+| Initiales JS (Tasks-Start) | nur Umschalter + Modus (Chunk lazy) | +0 KB | ✔ |
+| Wechsel Tasks → Notes, erster / weitere | 28–166 ms (Debug, Vite transformiert beim ersten Laden) / 29–32 ms | < 150 / < 50 ms | ✔ (Release: im Kaltstart enthalten) |
+| Notiz öffnen (20 KB) bis Text sichtbar | 26 ms | < 50 ms | ✔ |
+| Tastendruck bis Repaint | Arbeit p50/p95 1 ms (Timer-Auflösung), 0 von 200 Frames verpasst (60 Hz) | < 16 ms | ✔ |
+| Autosave-Commit 20 KB im Core (`bench_storage`, p95) | 2,0 ms (Outbox ersetzt) / 3,1 ms (neue Revision); in der WebView 412–415 ms inkl. 400 ms Pause | < 10 ms | ✔ |
+| Ordner mit 500 Einträgen aufklappen | 26–30 ms bis gezeichnet, 26 Zeilen im DOM (Core-Abfrage 0,3 ms) | < 30 ms | ✔ (knapp, Debug) |
+| Strg+E Quelltext → Vorschau / Strg+1 zurück zu Tasks | 26 ms / 32–33 ms | – | ✔ |
+
+WebKitGTK unterstützt `execCommand("insertText")` im `<textarea>`: Editor-Befehle bleiben rückgängig machbar (natives
+Rückgängig gruppiert Eingaben). Zwei Geräte (`ONLY=notes tools/acceptance-two-devices.sh`): verschiedene Zeilen →
+sauber zusammengeführt, dieselbe Zeile → Konfliktkopie „Streit (Konflikt TT.MM.JJJJ)", beide Profile identisch.
+
 ## 7. Risiken
 
 | # | Risiko | Auswirkung | Gegenmaßnahme |

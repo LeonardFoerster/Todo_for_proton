@@ -1,17 +1,18 @@
 /** Mini-Router über den URL-Hash (`#/today`, `#/list/<id>`): Zurück/Vor funktioniert, kein SvelteKit. */
 
-export type SmartViewKind = "inbox" | "today" | "upcoming" | "all" | "completed";
-export type Route = { view: SmartViewKind } | { view: "list"; listId: string };
+export type SmartViewKind = "inbox" | "today" | "upcoming" | "all" | "completed" | "trash";
+export type Route = { view: SmartViewKind } | { view: "list"; listId: string } | { view: "tag"; tagId: string };
 
-const SMART: readonly SmartViewKind[] = ["inbox", "today", "upcoming", "all", "completed"];
+const SMART: readonly SmartViewKind[] = ["inbox", "today", "upcoming", "all", "completed", "trash"];
 export const DEFAULT_ROUTE: Route = { view: "inbox" };
 
 export function parseHash(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean);
-  if (parts[0] === "list" && parts[1]) {
+  if ((parts[0] === "list" || parts[0] === "tag") && parts[1]) {
     // Kaputte %-Sequenzen (von Hand eingetippt) führen zur Startansicht statt zu einem Fehler.
     try {
-      return { view: "list", listId: decodeURIComponent(parts[1]) };
+      const id = decodeURIComponent(parts[1]);
+      return parts[0] === "list" ? { view: "list", listId: id } : { view: "tag", tagId: id };
     } catch {
       return DEFAULT_ROUTE;
     }
@@ -21,7 +22,9 @@ export function parseHash(hash: string): Route {
 }
 
 export function routeHash(route: Route): string {
-  return route.view === "list" ? `#/list/${encodeURIComponent(route.listId)}` : `#/${route.view}`;
+  if (route.view === "list") return `#/list/${encodeURIComponent(route.listId)}`;
+  if (route.view === "tag") return `#/tag/${encodeURIComponent(route.tagId)}`;
+  return `#/${route.view}`;
 }
 
 export function sameRoute(a: Route, b: Route): boolean {

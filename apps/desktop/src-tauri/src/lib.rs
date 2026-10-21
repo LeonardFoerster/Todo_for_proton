@@ -5,8 +5,14 @@ mod commands;
 mod dev;
 pub mod dto;
 mod events;
+pub mod export;
+pub mod import;
+mod instance;
+pub mod reminders;
 pub mod state;
 mod sync;
+mod tray;
+pub mod zones;
 
 use std::{
     env,
@@ -14,7 +20,7 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-use tauri::{Manager, Runtime, Window, WindowEvent};
+use tauri::{Emitter, Manager, Runtime, Window, WindowEvent};
 use todo_sync::SchedulerEvent;
 
 use crate::state::{AppState, Options};
@@ -29,8 +35,17 @@ macro_rules! handlers {
             commands::list_task_lists,
             commands::create_task_list,
             commands::rename_task_list,
+            commands::list_tags,
+            commands::link_task_note,
+            commands::unlink,
+            commands::task_links,
+            commands::note_links,
+            commands::ensure_tag,
+            commands::rename_tag,
+            commands::delete_tag,
             commands::move_task_list,
             commands::delete_task_list,
+            commands::merge_task_lists,
             commands::create_task,
             commands::get_task,
             commands::update_task,
@@ -38,25 +53,59 @@ macro_rules! handlers {
             commands::move_task,
             commands::delete_task,
             commands::complete_tasks,
+            commands::skip_occurrence,
+            commands::undo_occurrence,
             commands::delete_tasks,
+            commands::trash_tasks,
+            commands::untrash_tasks,
+            commands::purge_tasks,
+            commands::empty_task_trash,
             commands::move_tasks,
             commands::restore_tasks,
             commands::set_dues,
             commands::list_tasks,
+            commands::count_tasks,
             commands::search_tasks,
+            commands::list_note_folders,
+            commands::list_note_items,
+            commands::get_note,
+            commands::create_note,
+            commands::update_note_body,
+            commands::discard_empty_note,
+            commands::rename_note,
+            commands::set_note_kind,
+            commands::move_note,
+            commands::create_note_folder,
+            commands::rename_note_folder,
+            commands::move_note_folder,
+            commands::trash_note_items,
+            commands::restore_note_items,
+            commands::purge_note_items,
+            commands::empty_note_trash,
+            commands::list_note_trash,
+            commands::search_notes,
             commands::auth_info,
             commands::auth_current,
             commands::auth_begin_login,
-            commands::auth_open_browser,
             commands::auth_poll_login,
             commands::auth_cancel_login,
             commands::auth_logout,
             commands::sync_status,
             commands::sync_now,
+            commands::sync_flush,
+            commands::close_ready,
+            commands::open_external,
+            commands::import_notes_folder,
+            commands::export_data,
+            commands::import_data,
             commands::set_online,
             commands::app_ready,
+            commands::background_settings,
+            commands::set_background_settings,
             commands::dev_selftest,
             commands::dev_selftest_report,
+            commands::dev_reminders_fired,
+            commands::dev_close_window,
         ]
     };
 }
@@ -69,8 +118,17 @@ macro_rules! handlers {
             commands::list_task_lists,
             commands::create_task_list,
             commands::rename_task_list,
+            commands::list_tags,
+            commands::link_task_note,
+            commands::unlink,
+            commands::task_links,
+            commands::note_links,
+            commands::ensure_tag,
+            commands::rename_tag,
+            commands::delete_tag,
             commands::move_task_list,
             commands::delete_task_list,
+            commands::merge_task_lists,
             commands::create_task,
             commands::get_task,
             commands::update_task,
@@ -78,26 +136,61 @@ macro_rules! handlers {
             commands::move_task,
             commands::delete_task,
             commands::complete_tasks,
+            commands::skip_occurrence,
+            commands::undo_occurrence,
             commands::delete_tasks,
+            commands::trash_tasks,
+            commands::untrash_tasks,
+            commands::purge_tasks,
+            commands::empty_task_trash,
             commands::move_tasks,
             commands::restore_tasks,
             commands::set_dues,
             commands::list_tasks,
+            commands::count_tasks,
             commands::search_tasks,
+            commands::list_note_folders,
+            commands::list_note_items,
+            commands::get_note,
+            commands::create_note,
+            commands::update_note_body,
+            commands::discard_empty_note,
+            commands::rename_note,
+            commands::set_note_kind,
+            commands::move_note,
+            commands::create_note_folder,
+            commands::rename_note_folder,
+            commands::move_note_folder,
+            commands::trash_note_items,
+            commands::restore_note_items,
+            commands::purge_note_items,
+            commands::empty_note_trash,
+            commands::list_note_trash,
+            commands::search_notes,
             commands::auth_info,
             commands::auth_current,
             commands::auth_begin_login,
-            commands::auth_open_browser,
             commands::auth_poll_login,
             commands::auth_cancel_login,
             commands::auth_logout,
             commands::sync_status,
             commands::sync_now,
+            commands::sync_flush,
+            commands::close_ready,
+            commands::open_external,
+            commands::import_notes_folder,
+            commands::export_data,
+            commands::import_data,
             commands::set_online,
             commands::app_ready,
+            commands::background_settings,
+            commands::set_background_settings,
         ]
     };
 }
+
+/// So lange wartet das Schließen höchstens auf die UI (letztes Speichern einer Notiz).
+const CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1_500);
 
 /// Startzeitpunkt des Prozesses (so früh wie möglich in [`run`] gesetzt).
 static STARTED: OnceLock<Instant> = OnceLock::new();
@@ -157,8 +250,29 @@ pub fn manage_state<R: Runtime>(
 /// `tauri::test::mock_builder()` übergeben können.
 pub fn builder<R: Runtime>(base: tauri::Builder<R>, options: Options) -> tauri::Builder<R> {
     base.setup(move |app| {
-        let state = state::init(app.handle(), &options)?;
+        let handle = app.handle().clone();
+        // Eine Instanz je Profil (ADR-033): Läuft schon eine (z. B. im Tray), holt sie ihr Fenster nach
+        // vorn und diese hier endet, bevor sie die Datenbank öffnet.
+        let dir = state::data_dir(&handle, &options)?;
+        match instance::claim(&dir) {
+            instance::Instance::Other => std::process::exit(0),
+            instance::Instance::First(Some(listener)) => {
+                let shown = handle.clone();
+                instance::listen(listener, move || tray::show_window(&shown));
+            }
+            instance::Instance::First(None) => {}
+        }
+        let state = state::init(&handle, &options)?;
+        let background = state.background();
         app.manage(state);
+        if background {
+            tray::create(&handle);
+        }
+        // Versteckt starten nur aus dem Autostart (`--hidden`) und nur mit Tray.
+        let hidden = background && env::args().any(|a| a == "--hidden");
+        if !hidden {
+            tray::show_window(&handle);
+        }
         Ok(())
     })
     .on_window_event(window_event)
@@ -172,13 +286,54 @@ fn window_event<R: Runtime>(window: &Window<R>, event: &WindowEvent) {
     };
     let hidden = || window.is_minimized().unwrap_or(false) || !window.is_visible().unwrap_or(true);
     match event {
-        WindowEvent::Focused(true) => state.sync.event(SchedulerEvent::AppFocused),
+        WindowEvent::Focused(true) => {
+            state.sync.event(SchedulerEvent::AppFocused);
+            state.purge_expired_notes_daily();
+            // Nach dem Aufwachen/Ruhezustand: verpasste Erinnerungen nachholen (ADR-033).
+            state.reminders.changed();
+        }
         WindowEvent::Focused(false) | WindowEvent::Resized(_) if hidden() => {
             state.sync.event(SchedulerEvent::AppHidden);
         }
-        // Vor dem Schließen noch ausstehende Änderungen hochladen (best effort).
-        WindowEvent::CloseRequested { .. } => state.sync.event(SchedulerEvent::AppHidden),
+        // Vor dem Schließen noch ausstehende Änderungen hochladen (best effort) und der UI Zeit
+        // geben, eine offene Notiz zu speichern (`notes.md` §6.2): Sie meldet `close_ready`,
+        // spätestens nach `CLOSE_TIMEOUT` schließt das Fenster trotzdem.
+        WindowEvent::CloseRequested { api, .. } => {
+            state.sync.event(SchedulerEvent::AppHidden);
+            if !state
+                .closing
+                .swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                api.prevent_close();
+                let _ = window.emit(events::CLOSE_REQUESTED_EVENT, ());
+                let window = window.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(CLOSE_TIMEOUT).await;
+                    finish_close(&window);
+                });
+            }
+        }
         _ => {}
+    }
+}
+
+/// Nach dem Speichern (oder Timeout): im Hintergrundbetrieb nur verstecken, sonst schließen. Nur
+/// einmal je Schließen (`closing`).
+pub(crate) fn finish_close<R: Runtime>(window: &Window<R>) {
+    let Some(state) = window.try_state::<AppState>() else {
+        let _ = window.destroy();
+        return;
+    };
+    if !state
+        .closing
+        .swap(false, std::sync::atomic::Ordering::SeqCst)
+    {
+        return;
+    }
+    if state.background() && !state.quitting.load(std::sync::atomic::Ordering::SeqCst) {
+        let _ = window.hide();
+    } else {
+        let _ = window.destroy();
     }
 }
 

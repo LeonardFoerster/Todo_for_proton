@@ -6,4 +6,24 @@ import type { TaskStatusDto } from "./TaskStatusDto";
 /**
  * Zeile einer Listenansicht (ohne Notiztext).
  */
-export type TaskSummaryDto = { id: string, listId: string, title: string, status: TaskStatusDto, priority: PriorityDto, due: DueDto | null, hasNotes: boolean, sortKey: string, completedAt: string | null, };
+export type TaskSummaryDto = { id: string, listId: string, title: string, status: TaskStatusDto, priority: PriorityDto, due: DueDto | null, hasNotes: boolean, sortKey: string, completedAt: string | null, 
+/**
+ * Im Papierkorb seit (ADR-031; nur in der Ansicht „Papierkorb“ gesetzt).
+ */
+trashedAt: string | null, 
+/**
+ * Wirksame Serie (N4) – Symbol in der Zeile.
+ */
+recurring: boolean, 
+/**
+ * Checkliste (N8): erledigte / alle Punkte („2/5“; 0 Punkte = keine Anzeige).
+ */
+checklistDone: number, checklistTotal: number, 
+/**
+ * Tag-IDs (ADR-035).
+ */
+tags: Array<string>, 
+/**
+ * Mit Notizen verknüpft (ADR-036).
+ */
+hasLinks: boolean, };

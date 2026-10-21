@@ -1,6 +1,9 @@
 //! Die zentrale Entity `Task`.
 
-use super::{text::normalize_name, Due, SortKey, TagId, TaskId, TaskListId, Timestamp};
+use super::{
+    check_checklist, check_task_tags, text::normalize_name, ChecklistItem, Due, Recurrence,
+    SortKey, TagId, TaskId, TaskListId, Timestamp,
+};
 use crate::{ports::Clock, CoreError, CoreResult};
 
 /// Maximale Titellänge in Unicode-Zeichen.
@@ -41,6 +44,13 @@ pub struct Task {
     created_at: Timestamp,
     updated_at: Timestamp,
     completed_at: Option<Timestamp>,
+    /// Im Papierkorb seit (ADR-031); `None` = nicht gelöscht.
+    trashed_at: Option<Timestamp>,
+    /// Wiederholung (N4, ADR-028): Die Task ist dann eine Serie, `due` ihr nächstes Vorkommen.
+    /// Ohne `due` wirkungslos (kann nach einem Merge vorkommen – kein Grund, die Task zu verwerfen).
+    recurrence: Option<Recurrence>,
+    /// Checkliste (N8, ADR-034), in Anzeigereihenfolge.
+    checklist: Vec<ChecklistItem>,
 }
 
 /// Alle Felder einer gespeicherten Task, zum Wiederherstellen per [`Task::from_parts`]
@@ -60,6 +70,9 @@ pub struct TaskParts {
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
     pub completed_at: Option<Timestamp>,
+    pub trashed_at: Option<Timestamp>,
+    pub recurrence: Option<Recurrence>,
+    pub checklist: Vec<ChecklistItem>,
 }
 
 impl Task {
@@ -78,6 +91,7 @@ impl Task {
                 parts.id
             )));
         }
+        check_checklist(&parts.checklist)?;
         Ok(Self {
             id: parts.id,
             list_id: parts.list_id,
@@ -92,6 +106,9 @@ impl Task {
             created_at: parts.created_at,
             updated_at: parts.updated_at,
             completed_at: parts.completed_at,
+            trashed_at: parts.trashed_at,
+            recurrence: parts.recurrence,
+            checklist: parts.checklist,
         })
     }
 
@@ -122,6 +139,9 @@ impl Task {
             created_at: now,
             updated_at: now,
             completed_at: None,
+            trashed_at: None,
+            recurrence: None,
+            checklist: Vec::new(),
         })
     }
 
@@ -193,6 +213,73 @@ impl Task {
     #[must_use]
     pub fn completed_at(&self) -> Option<Timestamp> {
         self.completed_at
+    }
+
+    /// Seit wann die Task im Papierkorb liegt (ADR-031).
+    #[must_use]
+    pub fn trashed_at(&self) -> Option<Timestamp> {
+        self.trashed_at
+    }
+
+    #[must_use]
+    pub fn is_trashed(&self) -> bool {
+        self.trashed_at.is_some()
+    }
+
+    #[must_use]
+    pub fn recurrence(&self) -> Option<&Recurrence> {
+        self.recurrence.as_ref()
+    }
+
+    /// Wirksame Serie: Regel **und** Fälligkeit.
+    #[must_use]
+    pub fn is_recurring(&self) -> bool {
+        self.recurrence.is_some() && self.due.is_some()
+    }
+
+    #[must_use]
+    pub fn checklist(&self) -> &[ChecklistItem] {
+        &self.checklist
+    }
+
+    /// Ersetzt die ganze Checkliste (ein LWW-Feld, ADR-034).
+    ///
+    /// # Errors
+    /// `CoreError::Validation` bei mehr als 100 Punkten oder doppelten IDs.
+    pub fn set_checklist(
+        &mut self,
+        items: Vec<ChecklistItem>,
+        clock: &(impl Clock + ?Sized),
+    ) -> CoreResult<()> {
+        check_checklist(&items)?;
+        if items != self.checklist {
+            self.checklist = items;
+            self.touch(clock);
+        }
+        Ok(())
+    }
+
+    /// Setzt die Tags (Reihenfolge wie übergeben, ADR-035).
+    ///
+    /// # Errors
+    /// `CoreError::Validation` bei mehr als 20 oder doppelten Tags.
+    pub fn set_tags(&mut self, tags: Vec<TagId>, clock: &(impl Clock + ?Sized)) -> CoreResult<()> {
+        check_task_tags(&tags)?;
+        if tags != self.tags {
+            self.tags = tags;
+            self.touch(clock);
+        }
+        Ok(())
+    }
+
+    /// Alle Haken der Checkliste weg (nächstes Vorkommen einer Serie, ADR-034).
+    pub fn reset_checklist(&mut self, clock: &(impl Clock + ?Sized)) {
+        if self.checklist.iter().any(ChecklistItem::is_done) {
+            for item in &mut self.checklist {
+                item.set_done(false);
+            }
+            self.touch(clock);
+        }
     }
 
     /// Ändert den Titel (gleiche Regeln wie in [`Task::new`]).
@@ -269,6 +356,52 @@ impl Task {
         self.status = TaskStatus::Open;
         self.completed_at = None;
         self.touch(clock);
+    }
+
+    /// Setzt oder entfernt die Wiederholung. Die Regel muss schon verankert sein
+    /// ([`Recurrence::anchored`]); das macht der Use-Case, der die lokale Zone kennt.
+    ///
+    /// # Errors
+    /// `CoreError::Validation`, wenn eine Regel ohne Fälligkeit gesetzt wird oder ihr Ende vor dem
+    /// Tag der Fälligkeit liegt (`due_day` = lokaler Tag der Fälligkeit, vom Aufrufer).
+    pub fn set_recurrence(
+        &mut self,
+        recurrence: Option<Recurrence>,
+        due_day: Option<super::NaiveDate>,
+        clock: &(impl Clock + ?Sized),
+    ) -> CoreResult<()> {
+        if let Some(r) = &recurrence {
+            if self.due.is_none() {
+                return Err(CoreError::Validation(
+                    "a recurring task needs a due date".into(),
+                ));
+            }
+            if let (Some(until), Some(day)) = (r.until(), due_day) {
+                if until < day {
+                    return Err(CoreError::Validation(
+                        "recurrence ends before the first occurrence".into(),
+                    ));
+                }
+            }
+        }
+        if recurrence != self.recurrence {
+            self.recurrence = recurrence;
+            self.touch(clock);
+        }
+        Ok(())
+    }
+
+    /// Legt die Task in den Papierkorb (`Some(Zeitpunkt)`) oder holt sie zurück (`None`). Ein schon
+    /// gesetzter Zeitpunkt bleibt beim erneuten Wegwerfen erhalten (Frist läuft ab dem ersten Mal).
+    pub fn set_trashed(&mut self, at: Option<Timestamp>, clock: &(impl Clock + ?Sized)) {
+        let next = match (self.trashed_at, at) {
+            (Some(old), Some(_)) => Some(old),
+            (_, next) => next,
+        };
+        if next != self.trashed_at {
+            self.trashed_at = next;
+            self.touch(clock);
+        }
     }
 
     fn touch(&mut self, clock: &(impl Clock + ?Sized)) {
@@ -504,6 +637,9 @@ mod tests {
             created_at: t.created_at(),
             updated_at: t.updated_at(),
             completed_at: t.completed_at(),
+            trashed_at: t.trashed_at(),
+            recurrence: t.recurrence().cloned(),
+            checklist: t.checklist().to_vec(),
         }
     }
 
@@ -526,9 +662,28 @@ mod tests {
         assert_eq!(Task::from_parts(parts.clone()).unwrap(), t);
         parts.tags = vec![TagId::new()];
         parts.parent_id = Some(TaskId::new());
+        parts.trashed_at = Some(Timestamp::from_millis(77));
         let restored = Task::from_parts(parts.clone()).unwrap();
         assert_eq!(restored.tags(), parts.tags.as_slice());
         assert_eq!(restored.parent_id(), parts.parent_id);
+        assert_eq!(restored.trashed_at(), parts.trashed_at);
+    }
+
+    #[test]
+    fn trash_keeps_the_first_time_and_restores() {
+        let clock = clock();
+        let mut t = task(&clock);
+        t.set_trashed(Some(Timestamp::from_millis(10)), &clock);
+        t.set_trashed(Some(Timestamp::from_millis(20)), &clock);
+        assert_eq!(t.trashed_at(), Some(Timestamp::from_millis(10)));
+        assert!(t.is_trashed());
+        let before = t.updated_at();
+        t.set_trashed(None, &clock);
+        assert!(!t.is_trashed());
+        assert!(t.updated_at() > before);
+        let snapshot = t.clone();
+        t.set_trashed(None, &clock);
+        assert_eq!(t, snapshot, "schon zurück = no-op");
     }
 
     #[test]

@@ -15,8 +15,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{FieldMap, FieldName, FieldValue, Hlc, Op, OpKind};
 use crate::domain::{
-    Due, Priority, SortKey, TagId, Task, TaskId, TaskList, TaskListId, TaskListParts, TaskParts,
-    TaskStatus, Timestamp,
+    Due, Link, LinkId, LinkParts, Note, NoteFolder, NoteFolderId, NoteFolderParts, NoteId,
+    NoteParts, Priority, SortKey, Tag, TagId, TagParts, Task, TaskId, TaskList, TaskListId,
+    TaskListParts, TaskParts, TaskStatus, Timestamp,
 };
 
 /// Ein Feldwert mit der HLC der Op, die ihn gesetzt hat.
@@ -117,6 +118,8 @@ impl EntityState {
             (Self::Live(registers), OpKind::Set { field, value }) => {
                 write(registers, *field, value, op.hlc)
             }
+            // Inhalte sind keine Register (Revisionen, `sync::revision`).
+            (Self::Live(_), OpKind::Revise { .. }) => false,
         }
     }
 }
@@ -187,6 +190,13 @@ pub fn materialize_task(id: TaskId, registers: &Registers) -> Option<Task> {
         created_at: created_at(registers)?,
         updated_at: updated_at(registers),
         completed_at,
+        // Seit ADR-031; ältere Tasks haben kein Register → nicht im Papierkorb (nie `?`, sonst
+        // verschwände jede bestehende Task beim nächsten Materialisieren).
+        trashed_at: trashed(registers).flatten(),
+        // Seit ADR-028; fehlt bei älteren Tasks → keine Wiederholung (nie `?`, s. o.).
+        recurrence: recurrence(registers).flatten(),
+        // Seit ADR-034; fehlt bei älteren Tasks → leer (nie `?`, s. o.).
+        checklist: checklist(registers).unwrap_or_default(),
     };
     Task::from_parts(parts).ok()
 }
@@ -206,6 +216,125 @@ pub fn materialize_list(id: TaskListId, registers: &Registers) -> Option<TaskLis
         },
     };
     TaskList::from_parts(parts).ok()
+}
+
+/// Wie [`materialize_task`] für Tags (ADR-035).
+#[must_use]
+pub fn materialize_tag(id: TagId, registers: &Registers) -> Option<Tag> {
+    Tag::from_parts(TagParts {
+        id,
+        name: text(registers, FieldName::Name)?,
+        created_at: created_at(registers)?,
+        updated_at: updated_at(registers),
+    })
+    .ok()
+}
+
+/// Wie [`materialize_task`] für Verknüpfungen (ADR-036).
+#[must_use]
+pub fn materialize_link(id: LinkId, registers: &Registers) -> Option<Link> {
+    let task = match value(registers, FieldName::LinkTask)? {
+        FieldValue::TaskRef(t) => *t,
+        _ => return None,
+    };
+    let note = match value(registers, FieldName::LinkNote)? {
+        FieldValue::NoteRef(n) => *n,
+        _ => return None,
+    };
+    Some(Link::from_parts(LinkParts {
+        id,
+        task,
+        note,
+        created_at: created_at(registers)?,
+    }))
+}
+
+/// Wie [`materialize_task`] für Notiz-Ordner. `parent` = wirksamer Elternordner nach den
+/// Baum-Regeln (`domain::note_tree`), nicht unbedingt der aus den Registern.
+#[must_use]
+pub fn materialize_note_folder(
+    id: NoteFolderId,
+    registers: &Registers,
+    parent: Option<NoteFolderId>,
+) -> Option<NoteFolder> {
+    folder(registers)?;
+    let parts = NoteFolderParts {
+        id,
+        parent,
+        name: text(registers, FieldName::Name)?,
+        sort_key: sort_key(registers)?,
+        created_at: created_at(registers)?,
+        trashed_at: trashed(registers)?,
+    };
+    NoteFolder::from_parts(parts).ok()
+}
+
+/// Felder einer Notiz aus den Registern; Ordner (wirksam), Inhalt, `modified_at` und – bei
+/// Auto-Name oder fehlendem Namen – den Namen setzt der Aufrufer (`sync::replica`). `None` bei
+/// unvollständigen oder ungültigen Registern.
+#[must_use]
+pub fn materialize_note(id: NoteId, registers: &Registers) -> Option<NoteParts> {
+    let created_at = created_at(registers)?;
+    let name = registers.get(&FieldName::Name);
+    let auto_name = match value(registers, FieldName::AutoName)? {
+        FieldValue::Bool(b) => *b,
+        _ => return None,
+    };
+    let explicit = name
+        .filter(|_| !auto_name)
+        .and_then(|reg| match &reg.value {
+            FieldValue::Text(s) => Some((s.clone(), reg.hlc.wall_ms)),
+            _ => None,
+        });
+    Some(NoteParts {
+        id,
+        folder: folder(registers)?,
+        name: explicit.as_ref().map_or_else(
+            || crate::domain::UNTITLED_NOTE_NAME.to_owned(),
+            |(s, _)| s.clone(),
+        ),
+        auto_name: auto_name || explicit.is_none(),
+        kind: match value(registers, FieldName::NoteKind)? {
+            FieldValue::NoteKind(kind) => *kind,
+            _ => return None,
+        },
+        body: String::new(),
+        body_rev: None,
+        sort_key: sort_key(registers)?,
+        created_at,
+        modified_at: created_at.max(wall(explicit.map_or(0, |(_, at)| at))),
+        trashed_at: trashed(registers)?,
+    })
+    .filter(|parts| Note::from_parts(parts.clone()).is_ok())
+}
+
+/// Gespeicherter Ordner (bzw. Elternordner) laut Registern.
+#[must_use]
+pub fn folder(registers: &Registers) -> Option<Option<NoteFolderId>> {
+    match value(registers, FieldName::ParentFolder)? {
+        FieldValue::Folder(folder) => Some(*folder),
+        _ => None,
+    }
+}
+
+fn recurrence(registers: &Registers) -> Option<Option<crate::domain::Recurrence>> {
+    match value(registers, FieldName::Recurrence)? {
+        FieldValue::Recurrence(r) => Some(r.clone()),
+        _ => None,
+    }
+}
+
+fn trashed(registers: &Registers) -> Option<Option<Timestamp>> {
+    match value(registers, FieldName::Trashed)? {
+        FieldValue::Trashed(at) => Some(*at),
+        _ => None,
+    }
+}
+
+/// HLC-Wandzeit als Zeitstempel.
+#[must_use]
+pub fn wall(wall_ms: u64) -> Timestamp {
+    Timestamp::from_millis(i64::try_from(wall_ms).unwrap_or(i64::MAX))
 }
 
 /// Die Liste, in die eine Task laut Registern gehört (auch wenn die Task unvollständig ist).
@@ -242,6 +371,13 @@ fn due(registers: &Registers) -> Option<Option<Due>> {
     }
 }
 
+fn checklist(registers: &Registers) -> Option<Vec<crate::domain::ChecklistItem>> {
+    match value(registers, FieldName::Checklist)? {
+        FieldValue::Checklist(items) => Some(items.clone()),
+        _ => None,
+    }
+}
+
 fn tags(registers: &Registers) -> Option<Vec<TagId>> {
     match value(registers, FieldName::Tags)? {
         FieldValue::Tags(t) => Some(t.clone()),
@@ -264,12 +400,13 @@ fn created_at(registers: &Registers) -> Option<Timestamp> {
 }
 
 fn updated_at(registers: &Registers) -> Timestamp {
-    let wall = registers
-        .values()
-        .map(|reg| reg.hlc.wall_ms)
-        .max()
-        .unwrap_or(0);
-    Timestamp::from_millis(i64::try_from(wall).unwrap_or(i64::MAX))
+    wall(
+        registers
+            .values()
+            .map(|reg| reg.hlc.wall_ms)
+            .max()
+            .unwrap_or(0),
+    )
 }
 
 #[cfg(test)]
@@ -554,6 +691,12 @@ mod tests {
             Title(usize, String),
             Priority(usize, u8),
             Done(usize, bool),
+            /// Papierkorb an/aus (ADR-031).
+            Trash(usize, bool),
+            /// Wiederholung täglich/keine (ADR-028).
+            Rule(usize, bool),
+            /// Checkliste mit n Punkten (ADR-034).
+            Checklist(usize, u8),
             Delete(usize),
         }
 
@@ -564,6 +707,9 @@ mod tests {
                 4 => (entity.clone(), "[a-c]{1,2}").prop_map(|(e, s)| Action::Title(e, s)),
                 2 => (entity.clone(), 0u8..4).prop_map(|(e, p)| Action::Priority(e, p)),
                 2 => (entity.clone(), any::<bool>()).prop_map(|(e, d)| Action::Done(e, d)),
+                2 => (entity.clone(), any::<bool>()).prop_map(|(e, t)| Action::Trash(e, t)),
+                2 => (entity.clone(), any::<bool>()).prop_map(|(e, r)| Action::Rule(e, r)),
+                2 => (entity.clone(), 0u8..4).prop_map(|(e, n)| Action::Checklist(e, n)),
                 1 => entity.prop_map(Action::Delete),
             ]
         }
@@ -611,6 +757,42 @@ mod tests {
                             OpKind::Set {
                                 field: FieldName::Status,
                                 value: FieldValue::Status(done.then_some(now)),
+                            },
+                        ),
+                        Action::Trash(e, trashed) => (
+                            ids[*e],
+                            OpKind::Set {
+                                field: FieldName::Trashed,
+                                value: FieldValue::Trashed(trashed.then_some(now)),
+                            },
+                        ),
+                        Action::Rule(e, on) => (
+                            ids[*e],
+                            OpKind::Set {
+                                field: FieldName::Recurrence,
+                                value: FieldValue::Recurrence(on.then(|| {
+                                    crate::domain::Recurrence::every(
+                                        crate::domain::Frequency::Daily,
+                                    )
+                                })),
+                            },
+                        ),
+                        Action::Checklist(e, n) => (
+                            ids[*e],
+                            OpKind::Set {
+                                field: FieldName::Checklist,
+                                value: FieldValue::Checklist(
+                                    (0..*n)
+                                        .map(|i| {
+                                            crate::domain::ChecklistItem::new(
+                                                crate::domain::ChecklistItemId::new(),
+                                                &format!("P{i}"),
+                                                i % 2 == 0,
+                                            )
+                                            .unwrap()
+                                        })
+                                        .collect(),
+                                ),
                             },
                         ),
                         Action::Delete(e) => (ids[*e], OpKind::Delete),

@@ -7,7 +7,7 @@
   import { toasts } from "./components/toasts.svelte";
   import Sidebar from "./features/sidebar/Sidebar.svelte";
   import NewTaskDialog from "./features/new-task/NewTaskDialog.svelte";
-  import TaskDetail from "./features/task-detail/TaskDetail.svelte";
+  import type TaskDetailType from "./features/task-detail/TaskDetail.svelte";
   import SelectionBar from "./features/task-list/SelectionBar.svelte";
   import TaskList from "./features/task-list/TaskList.svelte";
   import ShortcutHelp from "./features/shell/ShortcutHelp.svelte";
@@ -18,12 +18,15 @@
     CircleCheck,
     Ellipsis,
     FolderInput,
-    Keyboard,
     List,
     ListChecks,
     PanelLeft,
+    Plus,
     Pencil,
-    Settings,
+    Hash,
+    Inbox as InboxIcon,
+    Merge,
+    SlidersHorizontal,
     SquareKanban,
     Trash,
     Undo,
@@ -35,7 +38,9 @@
   import Menu, { type MenuItem } from "./components/Menu.svelte";
   import DeleteListDialog from "./features/lists/DeleteListDialog.svelte";
   import ListNameDialog from "./features/lists/ListNameDialog.svelte";
-  import type { TaskListDto } from "@tasks/core-client";
+  import type { TagDto, TaskListDto } from "@tasks/core-client";
+  import Button from "./components/Button.svelte";
+  import Dialog from "./components/Dialog.svelte";
   import type SettingsDialogType from "./features/account/SettingsDialog.svelte";
   import type CommandPaletteType from "./features/palette/CommandPalette.svelte";
   import type { PaletteCommand, RecentTask } from "./features/palette/CommandPalette.svelte";
@@ -43,11 +48,27 @@
   import { ListsState } from "./lib/lists.svelte";
   import { readChoice, readFlag, writeChoice, writeFlag } from "./lib/preferences";
   import { routeHash, Router, type SmartViewKind } from "./lib/router.svelte";
-  import { formatKeys, ShortcutRegistry } from "./lib/shortcuts";
+  import { formatKeys, ShortcutRegistry, type Shortcut } from "./lib/shortcuts";
+  import { AppMode, type Mode } from "./lib/app-mode.svelte";
+  import { exportAll, importFile } from "./lib/data-actions";
+  import { density } from "./lib/density.svelte";
+  import PurgeDialog from "./features/task-list/PurgeDialog.svelte";
+  import type * as NotesChunk from "./features/notes/index";
   import { SyncState } from "./lib/sync.svelte";
   import { todayPlus } from "./lib/format-date";
+  import { viewSubtitle } from "./lib/subtitle";
   import { routeListId, routeTitle } from "./lib/views";
-  import { completedBefore, deleteManyWithUndo } from "./lib/task-actions";
+  import {
+    isDefault,
+    optionsKey,
+    PRIORITY_LABELS,
+    readOptions,
+    sortLabel,
+    writeOptions,
+    type ViewOptions,
+  } from "./lib/view-options";
+  import ViewOptionsPopover from "./features/view-options/ViewOptionsPopover.svelte";
+  import { completedBefore, trashManyWithUndo } from "./lib/task-actions";
   import CleanupCompletedDialog from "./features/task-list/CleanupCompletedDialog.svelte";
   import { addDays } from "./lib/local-day";
   import { followSystemTheme } from "./theme/theme";
@@ -68,6 +89,8 @@
   // svelte-ignore state_referenced_locally
   const sync = new SyncState(client);
   const router = new Router();
+  /** Modus Tasks/Notes (N5), pro Gerät gemerkt. */
+  const appMode = new AppMode();
 
   let collapsed = $state(readFlag(COLLAPSED_KEY));
   /** Darstellung Liste oder Kanban-Board (P2-05), pro Gerät gemerkt. */
@@ -78,6 +101,13 @@
   let selectedId = $state<string | null>(null);
   /** Im Detail-Panel geöffnete Task; folgt der Auswahl, solange das Panel offen ist. */
   let openId = $state<string | null>(null);
+  /** Detail-Panel erst beim ersten Öffnen laden (hält das Start-Bundle klein). */
+  let TaskDetail = $state<typeof TaskDetailType | null>(null);
+  $effect(() => {
+    if (openId && !TaskDetail) {
+      void import("./features/task-detail/TaskDetail.svelte").then((m) => (TaskDetail = m.default));
+    }
+  });
   let showShortcuts = $state(false);
   /** Listen verwalten (P2-03): Menü, Inline-Umbenennen in der Seitenleiste, Dialoge. */
   let listMenu = $state<{ list: TaskListDto; x: number; y: number } | null>(null);
@@ -101,19 +131,64 @@
   let showNewList = $state(false);
   /** „Erledigte aufräumen“ (P4-06): Menü der Ansicht und Bestätigung. */
   let completedMenu = $state<{ x: number; y: number } | null>(null);
+  /** Papierkorb (ADR-031): Menü der Kopfzeile und Bestätigung „Papierkorb leeren“. */
+  let trashMenu = $state<{ x: number; y: number } | null>(null);
+  let emptyTrashConfirm = $state(false);
+
+  async function emptyTrash() {
+    try {
+      const n = await client.emptyTaskTrash();
+      toasts.show({ message: n === 1 ? "1 Task endgültig gelöscht" : `${n} Tasks endgültig gelöscht` });
+    } catch (e) {
+      toasts.show({ message: `Nicht gelöscht: ${(e as Error).message}`, tone: "danger" });
+    }
+  }
+  /** Menü der Kopfzeile im schmalen Fenster (P5-09). */
+  let viewMenu = $state<{ x: number; y: number; anchor: Element } | null>(null);
   let cleanup = $state<{ ids: string[]; cutoff: Date } | null>(null);
   /** Zuletzt geöffnete Tasks dieser Sitzung (neueste zuerst, nur im Speicher). */
   let recentTasks = $state.raw<RecentTask[]>([]);
+  /** Notes-Chunk (lazy, `notes.md` §5.2): einmal geladen, danach bleibt alles gemountet. */
+  let notesChunk = $state<typeof NotesChunk | null>(null);
+  let notes = $state<InstanceType<typeof NotesChunk.NotesState> | null>(null);
+  let notesMain = $state<{ flush: () => Promise<void> }>();
+  let notesSidebar = $state<{ focusTree: () => void }>();
   let newTaskDialog = $state<NewTaskDialog>();
   let taskList = $state<TaskList>();
   let board = $state<Board>();
   let reportedReady = false;
 
   const route = $derived(router.route);
-  const title = $derived(routeTitle(route, lists.lists));
+  /** Sortierung/Filter der Ansicht (N10-01), gemerkt pro Gerät. */
+  // Beschreibbar abgeleitet: neue Ansicht → gemerkte Werte; `setOptions` überschreibt bis zum Wechsel.
+  let viewOptions = $derived<ViewOptions>(readOptions(route));
+  let optionsOpen = $state(false);
+  let optionsButton = $state<HTMLButtonElement>();
+
+  function setOptions(next: ViewOptions) {
+    viewOptions = next;
+    writeOptions(route, next);
+  }
+
+  /** Aktive Abweichungen als Chips unter der Kopfzeile. */
+  const optionChips = $derived.by(() => {
+    const chips: { label: string; clear: () => void }[] = [];
+    if (viewOptions.sort !== "view") {
+      chips.push({ label: `Sortiert: ${sortLabel(viewOptions.sort, { view: "all" })}`, clear: () => setOptions({ ...viewOptions, sort: "view" }) });
+    }
+    if (viewOptions.priority) {
+      chips.push({ label: `Priorität: ${PRIORITY_LABELS[viewOptions.priority]}`, clear: () => setOptions({ ...viewOptions, priority: null }) });
+    }
+    const tag = viewOptions.tag && route.view !== "tag" ? lists.tags.find((t) => t.id === viewOptions.tag) : undefined;
+    if (tag) chips.push({ label: `#${tag.name}`, clear: () => setOptions({ ...viewOptions, tag: null }) });
+    return chips;
+  });
+  const title = $derived(routeTitle(route, lists.lists, lists.tags));
   /** Das Board zeigt alle Listen; umschaltbar in Eingang, Listen und „Alle Tasks“. */
   const boardCapable = $derived(route.view === "inbox" || route.view === "list" || route.view === "all");
   const showBoard = $derived(boardCapable && layout === "board");
+  /** Unterzeile im Kopf (P5-05): Datum in „Heute“, Zahlen nur, wo sie ohne neuen Core-Aufruf bekannt sind; im Board (alle Listen) keine. */
+  const subtitle = $derived(showBoard ? "" : viewSubtitle(route, lists.counts));
 
   function setLayout(next: "list" | "board") {
     if (next === layout) return;
@@ -128,8 +203,82 @@
     if (selection?.active) untrack(() => (openId = null));
   });
 
+  /** Lädt den Notes-Chunk und startet seinen Zustand (einmal). */
+  async function loadNotes() {
+    if (notes) return;
+    const chunk = await import("./features/notes/index");
+    if (notes) return;
+    notesChunk = chunk;
+    const state = new chunk.NotesState(client);
+    // Verknüpfte Tasks aus der Statuszeile der Notiz (ADR-036): in den Modus „Tasks“, Task öffnen.
+    state.openTask = (id) => void openTaskInTasks(id);
+    notes = state;
+    notesStop = state.start();
+    notesShortcutsStop = shortcuts.register(...notesShortcuts(state));
+  }
+  let notesStop: (() => void) | null = null;
+  let notesShortcutsStop: (() => void) | null = null;
+
+  /** Kürzel des Modus „Notes", die zur App gehören (Neue Notiz); der Baum registriert seine. */
+  function notesShortcuts(state: InstanceType<typeof NotesChunk.NotesState>): Shortcut[] {
+    const create = () => void state.createNote().catch((e: Error) => toasts.show({ message: `Notiz nicht angelegt: ${e.message}`, tone: "danger" }));
+    return inScope("notes", [
+      { keys: ["n"], description: "Neue Notiz", group: "Notizen", palette: "Neue Notiz", run: create },
+      { keys: ["ctrl+n"], description: "Neue Notiz (auch beim Tippen)", group: "Notizen", inInputs: true, run: create },
+      {
+        keys: ["ctrl+shift+f"],
+        description: "Zen-Modus an/aus",
+        group: "Notizen",
+        palette: "Zen-Modus an/aus",
+        inInputs: true,
+        run: () => state.setZen(!state.zen),
+      },
+    ]);
+  }
+
+  function inScope(scope: Mode, list: Shortcut[]): Shortcut[] {
+    return list.map((s) => ({ ...s, scope }));
+  }
+
+  /** Modus wechseln (Klick auf den Namen, Strg+1/2, Palette): Eingaben sichern, sofort hochladen. */
+  async function switchMode(next: Mode) {
+    if (next === appMode.mode) return;
+    drawerOpen = false;
+    if (appMode.mode === "notes") await notesMain?.flush();
+    if (next === "notes") await loadNotes();
+    appMode.set(next);
+    void client.sync.flush().catch(() => undefined);
+    await tick();
+    if (next === "notes") {
+      if (notes?.openId && !notes.showTrash) notes.focusEditor();
+      else notesSidebar?.focusTree();
+    } else void taskList?.focusSelected();
+  }
+
   onMount(() => {
     const stops = [router.listen(), followSystemTheme(), shortcuts.attach(window), trackInputMode()];
+    stops.push(() => {
+      notesStop?.();
+      notesShortcutsStop?.();
+    });
+    // Vor dem Schließen die offene Notiz speichern (die Shell wartet darauf, `notes.md` §6.2).
+    const offClose = client.onCloseRequested?.(async () => {
+      await notesMain?.flush();
+    });
+    if (offClose) stops.push(offClose);
+    // Shell (ADR-033): Klick auf eine Erinnerung öffnet die Task, „Neue Task“ im Tray das Fenster dafür.
+    const offShell = client.background?.onShellAction((action) => {
+      if (action.kind === "newTask") {
+        newTask();
+        return;
+      }
+      void (async () => {
+        if (appMode.mode !== "tasks") await switchMode("tasks");
+        openFromPalette(action.taskId);
+      })();
+    });
+    if (offShell) stops.push(offShell);
+    if (appMode.mode === "notes") void loadNotes();
     void (async () => {
       try {
         await client.ensureInbox();
@@ -142,19 +291,29 @@
     return () => stops.forEach((stop) => stop());
   });
 
-  // Gelöschte oder unbekannte Liste → Eingang.
+  // Gelöschte oder unbekannte Liste bzw. Tag → Eingang.
   $effect(() => {
     if (route.view === "list" && lists.loaded && !lists.lists.some((l) => l.id === route.listId)) {
       router.navigate({ view: "inbox" }, { replace: true });
     }
+    if (route.view === "tag" && lists.tagsLoaded && !lists.tags.some((t) => t.id === route.tagId)) {
+      router.navigate({ view: "inbox" }, { replace: true });
+    }
   });
 
-  /** Erste Liste steht: Startzeit melden und Sync anstoßen (einmal). */
+  /** Die Task-Liste rendert auch versteckt; als Start zählt die sichtbare Ansicht des Modus. */
+  let taskListReady = $state(false);
   function listReady() {
+    taskListReady = true;
+  }
+
+  // Erste Liste bzw. Notizbaum steht: Startzeit melden und Sync anstoßen (einmal).
+  $effect(() => {
     if (reportedReady) return;
+    if (appMode.mode === "tasks" ? !taskListReady : !notes?.loaded) return;
     reportedReady = true;
     void client.ready();
-  }
+  });
 
   function toggleCollapse() {
     if (matchMedia("(max-width: 699px)").matches) {
@@ -202,7 +361,7 @@
   function confirmCleanup() {
     const ids = cleanup?.ids ?? [];
     cleanup = null;
-    if (ids.length > 0) void deleteManyWithUndo(client, ids);
+    if (ids.length > 0) void trashManyWithUndo(client, ids);
   }
 
   // --- Befehlspalette (P4-05) -----------------------------------------------------------------
@@ -211,7 +370,7 @@
   function commandsNow(): PaletteCommand[] {
     return shortcuts
       .list()
-      .filter((s) => s.palette && (!s.when || s.when()))
+      .filter((s) => s.palette && shortcuts.inScope(s) && (!s.when || s.when()))
       .map((s) => ({
         id: s.palette!,
         label: s.palette!,
@@ -223,11 +382,39 @@
   async function openPalette() {
     drawerOpen = false;
     CommandPalette ??= (await import("./features/palette/CommandPalette.svelte")).default;
-    paletteCommands = commandsNow();
+    // Tags als Sprungziele (ADR-035): „#uni“ in der Palette findet „Gehe zu #uni“.
+    paletteCommands = [
+      ...commandsNow(),
+      ...lists.tags.map((t) => ({
+        id: `tag:${t.id}`,
+        label: `Gehe zu #${t.name}`,
+        run: () => router.navigate({ view: "tag", tagId: t.id }),
+      })),
+    ];
     showPalette = true;
   }
 
+  /** Notiz aus der Suche: in den Modus „Notes", öffnen, Cursor auf den Treffer (`notes.md` §7). */
+  async function openNote(id: string, hit: { offset: number; length: number } | null) {
+    await switchMode("notes");
+    if (!notes) return;
+    const note = await client.notes.get(id).catch(() => null);
+    if (!note) return;
+    await notes.reveal(note.folderId);
+    notes.select = hit ? { id, start: hit.offset, end: hit.offset + hit.length } : null;
+    notes.open(id);
+    notes.cursor = `n:${id}`;
+    notes.focusEditor();
+  }
+
   function openFromPalette(id: string) {
+    selectedId = id;
+    openId = id;
+  }
+
+  /** Aus dem Modus „Notes“: zurück zu den Tasks und die Task öffnen. */
+  async function openTaskInTasks(id: string) {
+    await switchMode("tasks");
     selectedId = id;
     openId = id;
   }
@@ -258,7 +445,7 @@
     const task = taskList?.items().find((t) => t.id === id);
     openId = null;
     if (task && taskList) void taskList.deleteTask(task);
-    else void deleteManyWithUndo(client, [id]);
+    else void trashManyWithUndo(client, [id]);
   }
 
   // --- Tastatur (ui-guidelines §5) -------------------------------------------------------------
@@ -405,9 +592,64 @@
         disabled: i < 0 || i >= user.length - 1,
         action: () => void moveList(list.id, i + 2),
       },
+      {
+        label: "Zusammenführen mit…",
+        icon: Merge,
+        disabled: lists.lists.length < 2,
+        action: () => (mergeMenu = { list, x: listMenu?.x ?? 0, y: listMenu?.y ?? 0 }),
+      },
       { label: "Löschen…", icon: Trash, danger: true, action: () => (deleteTarget = list) },
     ];
   }
+
+  // --- Listen zusammenführen (N10-03, ADR-020) ---
+  let mergeMenu = $state<{ list: TaskListDto; x: number; y: number } | null>(null);
+
+  function mergeTargets(source: TaskListDto): MenuItem[] {
+    return lists.lists
+      .filter((l) => l.id !== source.id)
+      .map((l) => ({
+        id: l.id,
+        label: l.isInbox ? "Eingang" : l.name,
+        icon: l.isInbox ? InboxIcon : Hash,
+        action: () => void mergeLists(source, l),
+      }));
+  }
+
+  async function mergeLists(source: TaskListDto, target: TaskListDto) {
+    try {
+      const moved = await lists.merge(source.id, target.id);
+      if (route.view === "list" && route.listId === source.id) {
+        router.navigate(target.isInbox ? { view: "inbox" } : { view: "list", listId: target.id }, { replace: true });
+      }
+      const name = target.isInbox ? "Eingang" : target.name;
+      const rest = moved === 0 ? "" : ` · ${moved === 1 ? "1 Task" : `${moved} Tasks`} verschoben`;
+      toasts.show({ message: `„${source.name}“ in „${name}“ zusammengeführt${rest}` });
+    } catch (e) {
+      toasts.show({ message: `Nicht zusammengeführt: ${(e as Error).message}`, tone: "danger" });
+    }
+  }
+
+  /** Gleichnamige Listen (z. B. nach dem ersten Login auf einem zweiten Gerät): einmal je Sitzung anbieten. */
+  const hinted: string[] = [];
+  $effect(() => {
+    if (!lists.loaded) return;
+    for (const group of lists.duplicateGroups()) {
+      const key = group.map((l) => l.id).join("|");
+      if (hinted.includes(key)) continue;
+      hinted.push(key);
+      const [first, ...rest] = group;
+      toasts.show({
+        message: `${group.length} Listen heißen „${first.name}“`,
+        actionLabel: "Zusammenführen",
+        timeoutMs: 10_000,
+        onAction: () =>
+          void (async () => {
+            for (const other of rest) await mergeLists(other, first);
+          })(),
+      });
+    }
+  });
 
   /** Fokussierter Benutzerlisten-Eintrag in der Seitenleiste (für Kürzel). */
   function focusedList(): TaskListDto | undefined {
@@ -421,13 +663,79 @@
   }
 
   const currentList = $derived(route.view === "list" ? lists.userLists.find((l) => l.id === route.listId) : undefined);
+  const currentTag = $derived(route.view === "tag" ? lists.tags.find((t) => t.id === route.tagId) : undefined);
+  let tagMenu = $state<{ x: number; y: number } | null>(null);
+  let tagRename = $state<TagDto | null>(null);
+  let tagDelete = $state<TagDto | null>(null);
+
+  function tagMenuItems(tag: TagDto): MenuItem[] {
+    return [
+      { label: "Umbenennen", icon: Pencil, action: () => (tagRename = tag) },
+      { label: "Löschen…", icon: Trash, danger: true, action: () => (tagDelete = tag) },
+    ];
+  }
+
+  async function renameTag(tag: TagDto, name: string) {
+    try {
+      await client.renameTag(tag.id, name);
+      await lists.reloadTags();
+    } catch (e) {
+      toasts.show({ message: `Nicht umbenannt: ${(e as Error).message}`, tone: "danger" });
+      throw e;
+    }
+  }
+
+  async function confirmTagDelete() {
+    const tag = tagDelete;
+    tagDelete = null;
+    if (!tag) return;
+    try {
+      const n = await client.deleteTag(tag.id);
+      await lists.reloadTags();
+      const rest = n === 0 ? "" : ` · von ${n === 1 ? "1 Task" : `${n} Tasks`} entfernt`;
+      toasts.show({ message: `Tag „#${tag.name}“ gelöscht${rest}` });
+    } catch (e) {
+      toasts.show({ message: `Nicht gelöscht: ${(e as Error).message}`, tone: "danger" });
+    }
+  }
+
+  /** Einträge des Kopfzeilen-Menüs im schmalen Fenster: dasselbe wie die Icons der breiten Kopfzeile. */
+  function viewMenuItems(at: { x: number; y: number; anchor: Element }): MenuItem[] {
+    const items: MenuItem[] = [];
+    if (boardCapable) {
+      items.push(
+        layout === "list"
+          ? { label: "Als Kanban anzeigen", icon: SquareKanban, shortcut: "V", action: () => setLayout("board") }
+          : { label: "Als Liste anzeigen", icon: List, shortcut: "V", action: () => setLayout("list") },
+      );
+    }
+    items.push({
+      label: "Auswählen",
+      icon: ListChecks,
+      disabled: showBoard || !hasList(),
+      title: showBoard ? "Nur in der Listenansicht" : undefined,
+      action: () => taskList?.startSelection(),
+    });
+    const list = currentList;
+    if (list) items.push({ label: "Listenaktionen…", icon: Ellipsis, action: () => openListMenuAt(list, at.anchor) });
+    if (currentTag) items.push({ label: "Tag-Aktionen…", icon: Ellipsis, action: () => (tagMenu = { x: at.x, y: at.y }) });
+    if (route.view === "completed") {
+      items.push({ label: "Aktionen für Erledigt…", icon: Ellipsis, action: () => (completedMenu = { x: at.x, y: at.y }) });
+    }
+    if (route.view === "trash") {
+      items.push({ label: "Papierkorb leeren…", icon: Trash, danger: true, action: () => (emptyTrashConfirm = true) });
+    }
+    return items;
+  }
 
   function escape(e: KeyboardEvent) {
     const target = e.target as HTMLElement | null;
     if (showPalette) showPalette = false;
     else if (showShortcuts) showShortcuts = false;
     else if (showSettings) showSettings = false;
+    else if (appMode.mode === "notes" && notes?.zen) notes.setZen(false);
     else if (target && target.matches("input, textarea, select")) target.blur();
+    else if (appMode.mode === "notes") drawerOpen = false;
     else if (openId) closeDetail();
     else if (drawerOpen) drawerOpen = false;
     else if (selecting()) taskList?.exitSelection();
@@ -435,9 +743,63 @@
   }
 
   shortcuts.setModal(
-    () => showShortcuts || showSettings || showNewTask || !!deleteTarget || !!renameDialog || !!duePrompt || showPalette || showNewList || !!cleanup,
+    () => showShortcuts || showSettings || showNewTask || !!deleteTarget || !!renameDialog || !!duePrompt || showPalette || showNewList || !!cleanup || emptyTrashConfirm || !!tagRename || !!tagDelete || !!taskList?.dialogOpen(),
   );
+  shortcuts.setScope(() => appMode.mode);
+  // Überall (beide Modi).
   shortcuts.register(
+    { keys: ["ctrl+k"], description: "Suchen und Befehle", group: "Allgemein", inInputs: true, run: () => void openPalette() },
+    // „/“ nur außerhalb von Feldern – beim Tippen bleibt es ein Zeichen.
+    { keys: ["/"], description: "Suchen (außerhalb von Feldern)", group: "Allgemein", run: () => void openPalette() },
+    { keys: [], description: "Einstellungen", group: "Allgemein", palette: "Einstellungen öffnen", run: () => void openSettings() },
+    // Nur Desktop (ADR-032): Export/Import über System-Dialoge.
+    { keys: [], description: "Daten exportieren", group: "Allgemein", palette: "Daten exportieren…", when: () => !!client.data, run: () => void exportAll(client) },
+    { keys: [], description: "Aus Export wiederherstellen", group: "Allgemein", palette: "Aus Export wiederherstellen…", when: () => !!client.data, run: () => void importFile(client) },
+    {
+      keys: [],
+      description: "Seitenleiste ein-/ausklappen",
+      group: "Allgemein",
+      palette: "Seitenleiste ein-/ausklappen",
+      run: toggleCollapse,
+    },
+    {
+      keys: ["?"],
+      description: "Tastaturkürzel anzeigen",
+      group: "Allgemein",
+      palette: "Tastaturkürzel anzeigen",
+      inModal: true,
+      run: () => (showShortcuts = !showShortcuts),
+    },
+    {
+      keys: ["escape"],
+      description: "Schließen / Auswahl aufheben",
+      group: "Allgemein",
+      inInputs: true,
+      inModal: true,
+      run: escape,
+    },
+    {
+      keys: ["ctrl+1"],
+      description: "Zu Tasks wechseln",
+      group: "Allgemein",
+      palette: "Zu Tasks wechseln",
+      inInputs: true,
+      when: () => appMode.mode !== "tasks",
+      run: () => void switchMode("tasks"),
+    },
+    {
+      keys: ["ctrl+2"],
+      description: "Zu Notes wechseln",
+      group: "Allgemein",
+      palette: "Zu Notes wechseln",
+      inInputs: true,
+      when: () => appMode.mode !== "notes",
+      run: () => void switchMode("notes"),
+    },
+  );
+  // Nur im Modus „Tasks" (N5: der Modus „Notes" registriert eigene Kürzel).
+  shortcuts.register(
+    ...inScope("tasks", [
     {
       keys: ["shift+f10", "contextmenu"],
       label: "Umschalt+F10",
@@ -469,22 +831,13 @@
       },
     },
     { keys: ["n"], description: "Neue Task", group: "Allgemein", palette: "Neue Task", run: newTask },
-    { keys: ["ctrl+k"], description: "Suchen und Befehle", group: "Allgemein", inInputs: true, run: () => void openPalette() },
-    // „/“ nur außerhalb von Feldern – beim Tippen bleibt es ein Zeichen.
-    { keys: ["/"], description: "Suchen (außerhalb von Feldern)", group: "Allgemein", run: () => void openPalette() },
     { keys: [], description: "Neue Liste…", group: "Listen", palette: "Neue Liste…", run: () => (showNewList = true) },
-    { keys: [], description: "Einstellungen", group: "Allgemein", palette: "Einstellungen öffnen", run: () => void openSettings() },
-    {
-      keys: [],
-      description: "Seitenleiste ein-/ausklappen",
-      group: "Allgemein",
-      palette: "Seitenleiste ein-/ausklappen",
-      run: toggleCollapse,
-    },
     ...(
       [
         ["alt+d", "Fälligkeit", () => newTaskDialog?.toggleDue()],
         ["alt+p", "Priorität", () => newTaskDialog?.openPriority()],
+        ["alt+w", "Wiederholung", () => newTaskDialog?.openRepeat()],
+        ["alt+t", "Tags", () => newTaskDialog?.toggleTags()],
         ["alt+l", "Liste", () => newTaskDialog?.openListPicker()],
         ["alt+n", "Notiz", () => newTaskDialog?.toggleNotes()],
       ] as const
@@ -498,22 +851,6 @@
       run,
     })),
     { keys: ["ctrl+n"], description: "Neue Task (auch beim Tippen)", group: "Allgemein", inInputs: true, run: newTask },
-    {
-      keys: ["?"],
-      description: "Tastaturkürzel anzeigen",
-      group: "Allgemein",
-      palette: "Tastaturkürzel anzeigen",
-      inModal: true,
-      run: () => (showShortcuts = !showShortcuts),
-    },
-    {
-      keys: ["escape"],
-      description: "Schließen / Auswahl aufheben",
-      group: "Allgemein",
-      inInputs: true,
-      inModal: true,
-      run: escape,
-    },
     { keys: ["arrowdown", "j"], label: "↓ / J", description: "Nächste Task", group: "Liste", when: hasList, run: () => selectBy(1) },
     { keys: ["arrowup", "k"], label: "↑ / K", description: "Vorige Task", group: "Liste", when: hasList, run: () => selectBy(-1) },
     {
@@ -688,10 +1025,18 @@
     { keys: ["g u"], description: "Geplant", group: "Ansichten", palette: "Gehe zu Geplant", run: () => goTo("upcoming") },
     { keys: [], description: "Alle Tasks", group: "Ansichten", palette: "Gehe zu Alle Tasks", run: () => goTo("all") },
     { keys: [], description: "Erledigt", group: "Ansichten", palette: "Gehe zu Erledigt", run: () => goTo("completed") },
+    ]),
   );
 </script>
 
-<div class="app" class:collapsed class:drawer-open={drawerOpen} class:detail-open={openId !== null}>
+<div
+  class="app"
+  class:collapsed
+  class:drawer-open={drawerOpen}
+  class:detail-open={openId !== null && appMode.mode === "tasks"}
+  class:notes-mode={appMode.mode === "notes"}
+  class:zen={appMode.mode === "notes" && !!notes?.zen}
+>
   <aside class="sidebar-slot">
     <Sidebar
       {route}
@@ -710,18 +1055,60 @@
       onnavigate={() => (drawerOpen = false)}
       onlogin={() => void openSettings()}
       onsync={() => void openSettings()}
-    />
+      onsettings={() => void openSettings()}
+      onsearch={() => void openPalette()}
+      mode={appMode.mode}
+      onswitchmode={() => void switchMode(appMode.mode === "tasks" ? "notes" : "tasks")}
+    >
+      {#snippet notesBody()}
+        {#if notesChunk && notes}
+          <notesChunk.NotesSidebar
+            bind:this={notesSidebar}
+            {notes}
+            {shortcuts}
+            collapsed={collapsed && !drawerOpen}
+            onnavigate={() => (drawerOpen = false)}
+          />
+        {/if}
+      {/snippet}
+    </Sidebar>
   </aside>
   {#if drawerOpen}
     <button type="button" class="scrim" aria-label="Navigation schließen" onclick={() => (drawerOpen = false)}></button>
   {/if}
 
-  <main class="pane" aria-labelledby="view-title">
-    <header class="pane-header">
+  {#if notesChunk && notes}
+    <main class="pane notes-pane" aria-label="Notes" hidden={appMode.mode !== "notes"}>
+      <notesChunk.NotesMain
+        bind:this={notesMain}
+        {notes}
+        {shortcuts}
+        sync={() => sync.status}
+        onopennav={() => (drawerOpen = true)}
+      />
+    </main>
+  {/if}
+  <main class="pane" aria-labelledby="view-title" hidden={appMode.mode !== "tasks"}>
+    <header class="pane-header" class:wide={showBoard}>
       <span class="menu">
         <IconButton label="Navigation öffnen" icon={PanelLeft} onclick={() => (drawerOpen = true)} />
       </span>
-      <h1 id="view-title">{title}</h1>
+      <div class="titles">
+        <h1 id="view-title">{title}</h1>
+        {#if subtitle}<p class="subtitle">{subtitle}</p>{/if}
+        {#if optionChips.length > 0 && !showBoard}
+          <div class="option-chips" role="group" aria-label="Aktive Sortierung und Filter">
+            {#each optionChips as chip (chip.label)}
+              <span class="option-chip">
+                {chip.label}
+                <button type="button" aria-label="{chip.label} aufheben" onclick={chip.clear}>
+                  <X size={12} strokeWidth={2} aria-hidden="true" />
+                </button>
+              </span>
+            {/each}
+          </div>
+        {/if}
+      </div>
       {#if selection?.active && taskList}
         {@const flags = taskList.selectionFlags()}
         <SelectionBar
@@ -731,6 +1118,21 @@
           ondone={() => taskList?.exitSelection()}
         >
           {#snippet actions()}
+            {#if route.view === "trash"}
+              <IconButton
+                label="Wiederherstellen"
+                icon={Undo}
+                disabled={selection.count === 0}
+                onclick={() => void taskList?.restoreSelected()}
+              />
+              <IconButton
+                label="Endgültig löschen"
+                shortcut="Entf"
+                icon={Trash}
+                disabled={selection.count === 0}
+                onclick={() => void taskList?.deleteSelected()}
+              />
+            {:else}
             <IconButton
               label="Erledigt"
               shortcut="E"
@@ -768,8 +1170,21 @@
               disabled={selection.count === 0}
               onclick={() => void taskList?.deleteSelected()}
             />
+            {/if}
           {/snippet}
         </SelectionBar>
+      {:else if density.narrow}
+        <!-- Schmal (P5-09): Darstellung, Auswählen und Listenaktionen in einem Menü statt Icon-Reihe. -->
+        <span class="header-actions">
+          <IconButton
+            label="Ansicht und Aktionen"
+            icon={Ellipsis}
+            onclick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              viewMenu = { x: r.left, y: r.bottom + 4, anchor: e.currentTarget };
+            }}
+          />
+        </span>
       {:else}
         <span class="header-actions">
           {#if boardCapable}
@@ -790,6 +1205,19 @@
               />
             </span>
           {/if}
+          {#if !showBoard}
+            <IconButton
+              label="Sortieren und filtern"
+              icon={SlidersHorizontal}
+              pressed={!isDefault(viewOptions)}
+              aria-haspopup="dialog"
+              aria-expanded={optionsOpen}
+              onclick={(e) => {
+                optionsButton = e.currentTarget;
+                optionsOpen = !optionsOpen;
+              }}
+            />
+          {/if}
           <IconButton
             label={showBoard ? "Auswählen (nur in der Listenansicht)" : "Auswählen"}
             shortcut={showBoard ? undefined : "Strg+A"}
@@ -804,6 +1232,26 @@
               onclick={(e) => openListMenuAt(currentList!, e.currentTarget)}
             />
           {/if}
+          {#if currentTag}
+            <IconButton
+              label="Tag-Aktionen"
+              icon={Ellipsis}
+              onclick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                tagMenu = { x: r.left, y: r.bottom + 4 };
+              }}
+            />
+          {/if}
+          {#if route.view === "trash"}
+            <IconButton
+              label="Aktionen für Papierkorb"
+              icon={Ellipsis}
+              onclick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                trashMenu = { x: r.left, y: r.bottom + 4 };
+              }}
+            />
+          {/if}
           {#if route.view === "completed"}
             <IconButton
               label="Aktionen für Erledigt"
@@ -814,14 +1262,17 @@
               }}
             />
           {/if}
-          <IconButton label="Tastaturkürzel" shortcut="?" icon={Keyboard} onclick={() => (showShortcuts = true)} />
-          <IconButton label="Einstellungen" icon={Settings} onclick={() => void openSettings()} />
         </span>
       {/if}
     </header>
+    {#if density.narrow && !selection?.active}
+      <button type="button" class="fab" aria-label="Neue Task" data-tooltip="Neue Task   N" data-tooltip-side="left" onclick={newTask}>
+        <Plus size={24} strokeWidth={2} aria-hidden="true" />
+      </button>
+    {/if}
     <div class="pane-body">
       {#if ready && (route.view !== "list" || lists.lists.some((l) => l.id === route.listId))}
-        {#key routeHash(route)}
+        {#key `${routeHash(route)}|${optionsKey(viewOptions)}`}
           <div class="list-slot">
             {#if showBoard}
               <Board
@@ -843,6 +1294,8 @@
                 onready={listReady}
                 onnewtask={newTask}
                 ondue={(tasks, x, y) => openDueMenu(tasks, { x, y })}
+                options={viewOptions}
+                onsettings={() => void openSettings()}
               />
             {/if}
           </div>
@@ -851,9 +1304,15 @@
     </div>
   </main>
 
-  {#if openId}
+  {#if openId && appMode.mode === "tasks" && TaskDetail}
     <aside class="detail-slot">
-      <TaskDetail taskId={openId} {lists} onclose={closeDetail} ondelete={deleteFromDetail} />
+      <TaskDetail
+        taskId={openId}
+        {lists}
+        onclose={closeDetail}
+        ondelete={deleteFromDetail}
+        onopennote={(id) => void openNote(id, null)}
+      />
     </aside>
   {/if}
 </div>
@@ -873,6 +1332,7 @@
           : undefined}
     onopenlist={(id) => router.navigate(id === lists.inbox?.id ? { view: "inbox" } : { view: "list", listId: id })}
     defaultDue={route.view === "today" ? todayPlus(0) : null}
+    defaultTags={currentTag ? [currentTag.name] : []}
     initialText={newTaskText}
     onclose={() => (showNewTask = false)}
   />
@@ -891,7 +1351,38 @@
       newTaskText = text;
       showNewTask = true;
     }}
+    mode={appMode.mode}
+    onopennote={(id, hit) => void openNote(id, hit)}
     onclose={() => (showPalette = false)}
+  />
+{/if}
+{#if viewMenu}
+  {@const at = viewMenu}
+  <Menu label="Ansicht und Aktionen" items={viewMenuItems(at)} x={at.x} y={at.y} onclose={() => (viewMenu = null)} />
+{/if}
+{#if trashMenu}
+  <Menu
+    label="Aktionen für Papierkorb"
+    items={[
+      {
+        label: "Papierkorb leeren…",
+        icon: Trash,
+        danger: true,
+        action: () => (emptyTrashConfirm = true),
+      },
+    ]}
+    x={trashMenu.x}
+    y={trashMenu.y}
+    onclose={() => (trashMenu = null)}
+  />
+{/if}
+{#if emptyTrashConfirm}
+  <PurgeDialog
+    subject={lists.counts.trash > 0
+      ? `alle ${lists.counts.trash === 1 ? "1 Task" : `${lists.counts.trash} Tasks`} im Papierkorb`
+      : "alle Tasks im Papierkorb"}
+    onconfirm={() => void emptyTrash()}
+    onclose={() => (emptyTrashConfirm = false)}
   />
 {/if}
 {#if completedMenu}
@@ -955,6 +1446,56 @@
 {#if deleteTarget}
   <DeleteListDialog list={deleteTarget} {lists} onconfirm={() => void confirmDelete()} onclose={() => (deleteTarget = null)} />
 {/if}
+{#if optionsOpen && optionsButton}
+  <ViewOptionsPopover
+    anchor={optionsButton}
+    {route}
+    options={viewOptions}
+    tags={lists.tags}
+    onchange={setOptions}
+    onclose={(refocus) => {
+      optionsOpen = false;
+      if (refocus) optionsButton?.focus();
+    }}
+  />
+{/if}
+{#if mergeMenu}
+  {@const source = mergeMenu.list}
+  <Menu
+    label="„{source.name}“ zusammenführen mit"
+    items={mergeTargets(source)}
+    x={mergeMenu.x}
+    y={mergeMenu.y}
+    onclose={() => (mergeMenu = null)}
+  />
+{/if}
+{#if tagMenu && currentTag}
+  <Menu
+    label="Aktionen für Tag {currentTag.name}"
+    items={tagMenuItems(currentTag)}
+    x={tagMenu.x}
+    y={tagMenu.y}
+    onclose={() => (tagMenu = null)}
+  />
+{/if}
+{#if tagRename}
+  <ListNameDialog
+    title="Tag umbenennen"
+    submitLabel="Umbenennen"
+    initial={tagRename.name}
+    onsubmit={(name) => renameTag(tagRename!, name)}
+    onclose={() => (tagRename = null)}
+  />
+{/if}
+{#if tagDelete}
+  <Dialog title="Tag löschen?" onclose={() => (tagDelete = null)} width={400}>
+    <p class="confirm-text">„#{tagDelete.name}“ wird von allen Tasks entfernt. Die Tasks selbst bleiben.</p>
+    <div class="confirm-actions">
+      <Button onclick={() => (tagDelete = null)}>Abbrechen</Button>
+      <Button variant="danger" onclick={() => void confirmTagDelete()}>Tag löschen</Button>
+    </div>
+  </Dialog>
+{/if}
 {#if renameDialog}
   <ListNameDialog
     title="Liste umbenennen"
@@ -1014,13 +1555,33 @@
     background: var(--color-bg);
     overflow: hidden;
   }
+  .pane[hidden] {
+    display: none;
+  }
+  .pane {
+    animation: mode-fade var(--duration-base) var(--ease);
+  }
+  @keyframes mode-fade {
+    from {
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pane {
+      animation: none;
+    }
+  }
   .pane-header {
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    height: 56px;
-    padding: 0 var(--space-4) 0 var(--space-6);
+    height: 80px;
+    /* Gleiche Kanten wie die Zeilen der Lesespalte (Einzug 8 px + Innenabstand der Zeile). */
+    padding: 0 calc(var(--content-inset) + var(--space-6)) 0 calc(var(--content-inset) + var(--space-8));
     flex: none;
+  }
+  .pane-header.wide {
+    padding: 0 var(--space-4) 0 var(--space-6);
   }
   .layout-switch {
     display: flex;
@@ -1034,14 +1595,53 @@
     width: 28px;
     height: 28px;
   }
+  /* Schmal (P5-09): „Neue Task“ als runder Button unten rechts, über der Liste. */
+  .fab {
+    position: fixed;
+    right: var(--space-4);
+    bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+    z-index: 25;
+    display: grid;
+    place-items: center;
+    width: 56px;
+    height: 56px;
+    border: 0;
+    border-radius: var(--radius-full);
+    background: var(--color-accent-fill);
+    color: var(--color-on-accent);
+    box-shadow: var(--shadow-popover);
+    cursor: pointer;
+  }
+  .fab:hover {
+    background: var(--color-accent-fill-hover);
+  }
+  .fab:focus-visible {
+    outline-offset: 3px;
+  }
   .header-actions {
     display: flex;
     gap: var(--space-1);
     margin-left: auto;
   }
+  .titles {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+  }
+  .subtitle {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   h1 {
     margin: 0;
-    font-size: var(--text-xl);
+    font-size: var(--text-2xl);
+    line-height: 1.25;
     font-weight: var(--weight-semibold);
     letter-spacing: -0.01em;
     overflow: hidden;
@@ -1062,6 +1662,19 @@
   .list-slot {
     flex: 1;
     min-height: 0;
+  }
+
+  /* Zen (Notes): keine Seitenleiste, der Editor füllt das Fenster. */
+  .app.zen {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .app.zen .sidebar-slot {
+    display: none;
+  }
+  .app.zen .notes-pane {
+    margin: 0;
+    border: 0;
+    border-radius: 0;
   }
 
   /* Detail: ≥ 1100 px eigene Spalte, darunter schwebend */
@@ -1146,5 +1759,42 @@
       border: 0;
       border-radius: 0;
     }
+  }
+  .confirm-text {
+    margin: 0 0 var(--space-4);
+    line-height: 1.5;
+  }
+  .confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+  }
+  .option-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin-top: var(--space-1);
+  }
+  .option-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    height: 22px;
+    padding: 0 2px 0 var(--space-2);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-selected);
+    color: var(--color-accent-text);
+    font-size: var(--text-xs);
+  }
+  .option-chip button {
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
   }
 </style>

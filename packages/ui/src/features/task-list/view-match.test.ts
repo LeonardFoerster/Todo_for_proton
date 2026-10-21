@@ -10,6 +10,10 @@ const task = (over: Partial<TaskLike> = {}): TaskLike => ({
   due: null,
   sortKey: "a0",
   completedAt: null,
+  tags: [],
+  title: "t",
+  priority: "none",
+  trashedAt: null,
   ...over,
 });
 

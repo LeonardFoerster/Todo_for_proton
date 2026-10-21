@@ -1,6 +1,6 @@
 import type { TaskListDto } from "@tasks/core-client";
 import { describe, expect, it } from "vitest";
-import { parseDue, parseNewTask } from "./parse";
+import { parseDue, parseNewTask, recognizedMarks } from "./parse";
 
 /** Sonntag, 18.10.2026, 10:00 Uhr. */
 const now = new Date(2026, 9, 18, 10);
@@ -15,6 +15,79 @@ const at = (y: number, m: number, d: number, h: number, min = 0) => ({
 const list = (id: string, name: string, isInbox = false): TaskListDto => ({ id, name, isInbox, sortKey: id });
 const lists = [list("in", "", true), list("a", "Uni – Analysis"), list("b", "Uni – Bio"), list("e", "Einkauf")];
 
+describe("parseNewTask: Wiederholung (N4-05)", () => {
+  const r = (freq: string, extra: object = {}) => ({ freq, interval: 1, weekdays: [], anchor: "schedule", ...extra });
+  it.each([
+    ["Blumen gießen täglich", r("daily"), date("2026-10-18")],
+    ["Blumen gießen jeden Tag", r("daily"), date("2026-10-18")],
+    ["Müll wöchentlich", r("weekly"), date("2026-10-18")],
+    ["Müll jede Woche", r("weekly"), date("2026-10-18")],
+    ["Sport jeden Mo", r("weekly", { weekdays: ["mo"] }), date("2026-10-19")],
+    ["Sport jeden Mo und Do", r("weekly", { weekdays: ["mo", "th"] }), date("2026-10-19")],
+    ["Sport jeden Mo, Do", r("weekly", { weekdays: ["mo", "th"] }), date("2026-10-19")],
+    ["Sport jeden Sa und So", r("weekly", { weekdays: ["sa", "su"] }), date("2026-10-18")],
+    ["Bad putzen alle 2 Wochen", r("weekly", { interval: 2 }), date("2026-10-18")],
+    ["Wasser alle 3 Tage", r("daily", { interval: 3 }), date("2026-10-18")],
+    ["Miete monatlich", r("monthly"), date("2026-10-18")],
+    ["Miete jeden Monat", r("monthly"), date("2026-10-18")],
+    ["Miete jeden 15.", r("monthly", { monthDay: 15 }), date("2026-11-15")],
+    ["Miete jeden 31.", r("monthly", { monthDay: 31 }), date("2026-10-31")],
+    ["Steuer jährlich", r("yearly"), date("2026-10-18")],
+    ["Standup werktags", r("weekly", { weekdays: ["mo", "tu", "we", "th", "fr"] }), date("2026-10-19")],
+  ])("%s", (input, recurrence, due) => {
+    const p = parse(input);
+    expect(p.recurrence).toEqual(recurrence);
+    expect(p.due).toEqual(due);
+    expect(p.title).toBe(input.split(" ").slice(0, input.startsWith("Blumen") || input.startsWith("Bad") ? 2 : 1).join(" "));
+  });
+
+  it("anchor, end, time and an explicit day", () => {
+    expect(parse("Haare schneiden alle 6 Wochen nach Erledigung")).toMatchObject({
+      title: "Haare schneiden",
+      recurrence: r("weekly", { interval: 6, anchor: "completion" }),
+    });
+    expect(parse("Kurs jeden Di bis 20.12.")).toMatchObject({
+      title: "Kurs",
+      recurrence: r("weekly", { weekdays: ["tu"], until: "2026-12-20" }),
+      due: date("2026-10-20"),
+    });
+    // Uhrzeit schon vorbei → erstes Vorkommen ab morgen; „um“ fällt weg.
+    expect(parse("Tabletten täglich um 8:00")).toMatchObject({ title: "Tabletten", due: at(2026, 10, 19, 8) });
+    expect(parse("Tabletten täglich 20:00").due).toEqual(at(2026, 10, 18, 20));
+    expect(parse("Lauf jeden Mo 7:00").due).toEqual(at(2026, 10, 19, 7));
+    // Ein Tag im Text ist der Start.
+    expect(parse("Review wöchentlich ab Fr").due).toEqual(date("2026-10-23"));
+  });
+
+  it("keeps words without a rule in the title and marks the rule", () => {
+    expect(parse("jeden fragen")).toMatchObject({ title: "jeden fragen", recurrence: null });
+    expect(parse("alle Fenster putzen")).toMatchObject({ title: "alle Fenster putzen", recurrence: null });
+    expect(parse("täglich")).toMatchObject({ title: "täglich", recurrence: null });
+    const input = "Sport jeden Mo und Do 7:00";
+    const marks = recognizedMarks(input, { now });
+    expect(marks.map((m) => [input.slice(m.start, m.end), m.kind])).toEqual([["jeden Mo und Do", "repeat"], ["7:00", "due"]]);
+  });
+});
+
+describe("parseNewTask: Tags (N8-03)", () => {
+  it("collects every #tag, drops them from the title and marks them", () => {
+    expect(parse("Blatt 3 #uni #Analysis morgen")).toMatchObject({
+      title: "Blatt 3",
+      tags: ["uni", "Analysis"],
+      due: date("2026-10-19"),
+    });
+    expect(parse("Lesen #uni, #UNI.").tags).toEqual(["uni"]);
+    expect(parse("Fix #12 bauen")).toMatchObject({ title: "Fix #12 bauen" });
+    expect(parse("Fix #12 bauen").tags).toBeUndefined();
+    expect(parse("C# lernen").tags).toBeUndefined();
+    const input = "Blatt #uni !1";
+    expect(recognizedMarks(input, { now }).map((m) => [input.slice(m.start, m.end), m.kind])).toEqual([
+      ["#uni", "tag"],
+      ["!1", "priority"],
+    ]);
+  });
+});
+
 describe("parseNewTask", () => {
   it("extracts simple day words anywhere", () => {
     expect(parse("Zahnarzt anrufen morgen")).toEqual({
@@ -22,6 +95,7 @@ describe("parseNewTask", () => {
       due: date("2026-10-19"),
       priority: null,
       listId: null,
+      recurrence: null,
     });
     expect(parse("Heute Milch kaufen").due).toEqual(date("2026-10-18"));
     expect(parse("Bericht übermorgen fertig")).toMatchObject({ title: "Bericht fertig", due: date("2026-10-20") });
@@ -30,7 +104,7 @@ describe("parseNewTask", () => {
   it("ignores partial words and keeps lone words as title", () => {
     expect(parse("Morgenroutine planen").due).toBeNull();
     expect(parse("Heutemorgen").due).toBeNull();
-    expect(parse("morgen")).toEqual({ title: "morgen", due: null, priority: null, listId: null });
+    expect(parse("morgen")).toEqual({ title: "morgen", due: null, priority: null, listId: null, recurrence: null });
     expect(parse("Fr !1")).toMatchObject({ title: "Fr !1", due: null, priority: null });
   });
 
@@ -95,6 +169,7 @@ describe("parseNewTask", () => {
       due: at(2026, 10, 23, 14),
       priority: "high",
       listId: null,
+      recurrence: null,
     });
     expect(parse("Übungsblatt 3 bis Fr 14:00 !1 @uni-ana", lists).listId).toBe("a");
   });
@@ -114,5 +189,26 @@ describe("parseDue (Datum wählen…)", () => {
   it("returns null without a day or time", () => {
     expect(due("")).toBeNull();
     expect(due("quatsch")).toBeNull();
+  });
+});
+
+describe("recognizedMarks (P6-01)", () => {
+  const marks = (input: string) => recognizedMarks(input, { now, lists, tz: "Europe/Berlin" });
+  const texts = (input: string) => marks(input).map((m) => [input.slice(m.start, m.end), m.kind, m.priority ?? null]);
+
+  it("marks the effective hits at their character positions, merging neighbours of one kind", () => {
+    expect(texts("Bericht bis Fr 14:00 !1 @einkauf")).toEqual([
+      ["bis Fr 14:00", "due", null],
+      ["!1", "priority", "high"],
+      ["@einkauf", "list", null],
+    ]);
+    // Positionen beziehen sich auf den unveränderten Text (führende Leerzeichen bleiben).
+    expect(marks("  Milch morgen")).toEqual([{ start: 8, end: 14, kind: "due" }]);
+  });
+
+  it("marks only the last hit of a kind and nothing when the title would be empty", () => {
+    expect(texts("morgen Bericht heute")).toEqual([["heute", "due", null]]);
+    expect(texts("Morgen")).toEqual([]);
+    expect(texts("Kaufen @unbekannt")).toEqual([]);
   });
 });

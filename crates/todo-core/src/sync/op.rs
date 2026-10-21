@@ -14,7 +14,10 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 use super::Hlc;
 use crate::{
-    domain::{DeviceId, Due, Priority, SortKey, TagId, TaskId, TaskListId, Timestamp},
+    domain::{
+        ChecklistItem, DeviceId, Due, NoteFolderId, NoteId, NoteKind, Priority, Recurrence,
+        RevisionId, SortKey, TagId, TaskId, TaskListId, Timestamp, NOTE_BODY_MAX_BYTES,
+    },
     ports::EntityRef,
     CoreError, CoreResult,
 };
@@ -25,6 +28,28 @@ pub struct OpId {
     pub device: DeviceId,
     pub seq: u64,
 }
+
+/// Eine Inhalts-Revision ist die `Revise`-Op, die sie geschrieben hat.
+impl From<OpId> for RevisionId {
+    fn from(id: OpId) -> Self {
+        Self {
+            device: id.device,
+            seq: id.seq,
+        }
+    }
+}
+
+impl From<RevisionId> for OpId {
+    fn from(id: RevisionId) -> Self {
+        Self {
+            device: id.device,
+            seq: id.seq,
+        }
+    }
+}
+
+/// Höchstzahl an Eltern einer Revision (Merge vieler Köpfe; schützt vor absurden Ops).
+pub const MAX_REVISION_PARENTS: usize = 64;
 
 /// Eine Änderung an genau einer Entity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +70,9 @@ pub enum OpKind {
     Set { field: FieldName, value: FieldValue },
     /// Löscht die Entity (Tombstone; gewinnt gegen alle Sets, auch spätere).
     Delete,
+    /// Neue Revision des Notiz-Inhalts (nur `EntityRef::Note`, ADR-029): unveränderlich, ihre ID
+    /// ist die `OpId` dieser Op. `parents` = Revisionen, auf denen sie aufsetzt.
+    Revise { parents: Vec<OpId>, text: String },
     // Später (OR-Set für Tags): AddToSet, RemoveFromSet – nur anhängen.
 }
 
@@ -68,14 +96,30 @@ pub enum FieldName {
     // Task und TaskList
     SortKey,
     CreatedAt,
-    // TaskList
+    // TaskList (Name auch für Notizen und Ordner)
     Name,
     IsInbox,
+    // Notiz und Ordner (ADR-029)
+    /// Elternordner eines Ordners bzw. Ordner einer Notiz (`None` = Wurzel).
+    ParentFolder,
+    NoteKind,
+    /// Name folgt der ersten Zeile (bis zum ersten Umbenennen).
+    AutoName,
+    /// Papierkorb: `Some(seit)`; LWW wie jedes Feld, kein Tombstone.
+    Trashed,
+    /// Wiederholung einer Task (N4, ADR-028); LWW auf die ganze Regel.
+    Recurrence,
+    /// Checkliste einer Task (N8, ADR-034); LWW auf die ganze Liste.
+    Checklist,
+    /// Task einer Verknüpfung (N9, ADR-036).
+    LinkTask,
+    /// Notiz einer Verknüpfung (N9, ADR-036).
+    LinkNote,
 }
 
 impl FieldName {
     /// Alle Felder (für Tests und Validierung).
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 20] = [
         Self::ListId,
         Self::ParentId,
         Self::Title,
@@ -88,10 +132,18 @@ impl FieldName {
         Self::CreatedAt,
         Self::Name,
         Self::IsInbox,
+        Self::ParentFolder,
+        Self::NoteKind,
+        Self::AutoName,
+        Self::Trashed,
+        Self::Recurrence,
+        Self::Checklist,
+        Self::LinkTask,
+        Self::LinkNote,
     ];
 
-    /// Felder einer Task.
-    pub const TASK: [Self; 10] = [
+    /// Felder einer Task (`Trashed` seit ADR-031, `Recurrence` seit ADR-028, `Checklist` seit ADR-034).
+    pub const TASK: [Self; 13] = [
         Self::ListId,
         Self::ParentId,
         Self::Title,
@@ -102,10 +154,39 @@ impl FieldName {
         Self::Tags,
         Self::SortKey,
         Self::CreatedAt,
+        Self::Trashed,
+        Self::Recurrence,
+        Self::Checklist,
     ];
 
     /// Felder einer Liste.
     pub const TASK_LIST: [Self; 4] = [Self::Name, Self::SortKey, Self::CreatedAt, Self::IsInbox];
+
+    /// Felder eines Tags (ADR-035).
+    pub const TAG: [Self; 2] = [Self::Name, Self::CreatedAt];
+
+    /// Felder einer Verknüpfung (ADR-036).
+    pub const LINK: [Self; 3] = [Self::LinkTask, Self::LinkNote, Self::CreatedAt];
+
+    /// Felder einer Notiz (der Inhalt ist kein Feld, sondern Revisionen).
+    pub const NOTE: [Self; 7] = [
+        Self::ParentFolder,
+        Self::Name,
+        Self::AutoName,
+        Self::NoteKind,
+        Self::SortKey,
+        Self::CreatedAt,
+        Self::Trashed,
+    ];
+
+    /// Felder eines Notiz-Ordners.
+    pub const NOTE_FOLDER: [Self; 5] = [
+        Self::ParentFolder,
+        Self::Name,
+        Self::SortKey,
+        Self::CreatedAt,
+        Self::Trashed,
+    ];
 
     /// Stabiler Code im Binärformat. **Nie ändern oder wiederverwenden.**
     #[must_use]
@@ -123,6 +204,14 @@ impl FieldName {
             Self::CreatedAt => 10,
             Self::Name => 11,
             Self::IsInbox => 12,
+            Self::ParentFolder => 13,
+            Self::NoteKind => 14,
+            Self::AutoName => 15,
+            Self::Trashed => 16,
+            Self::Recurrence => 17,
+            Self::Checklist => 18,
+            Self::LinkTask => 19,
+            Self::LinkNote => 20,
         }
     }
 
@@ -138,6 +227,10 @@ impl FieldName {
         match entity {
             EntityRef::Task(_) => Self::TASK.contains(&self),
             EntityRef::TaskList(_) => Self::TASK_LIST.contains(&self),
+            EntityRef::Note(_) => Self::NOTE.contains(&self),
+            EntityRef::NoteFolder(_) => Self::NOTE_FOLDER.contains(&self),
+            EntityRef::Tag(_) => Self::TAG.contains(&self),
+            EntityRef::Link(_) => Self::LINK.contains(&self),
         }
     }
 
@@ -155,7 +248,14 @@ impl FieldName {
                 | (Self::Tags, FieldValue::Tags(_))
                 | (Self::SortKey, FieldValue::SortKey(_))
                 | (Self::CreatedAt, FieldValue::Timestamp(_))
-                | (Self::IsInbox, FieldValue::Bool(_))
+                | (Self::IsInbox | Self::AutoName, FieldValue::Bool(_))
+                | (Self::ParentFolder, FieldValue::Folder(_))
+                | (Self::NoteKind, FieldValue::NoteKind(_))
+                | (Self::Trashed, FieldValue::Trashed(_))
+                | (Self::Recurrence, FieldValue::Recurrence(_))
+                | (Self::Checklist, FieldValue::Checklist(_))
+                | (Self::LinkTask, FieldValue::TaskRef(_))
+                | (Self::LinkNote, FieldValue::NoteRef(_))
         )
     }
 }
@@ -188,6 +288,19 @@ pub enum FieldValue {
     SortKey(#[serde(with = "sort_key_str")] SortKey),
     Timestamp(Timestamp),
     Bool(bool),
+    /// Ordner einer Notiz bzw. Elternordner; `None` = Wurzel.
+    Folder(Option<NoteFolderId>),
+    NoteKind(#[serde(with = "note_kind_code")] NoteKind),
+    /// `Some(seit)` = im Papierkorb.
+    Trashed(Option<Timestamp>),
+    /// Wiederholung (N4); kompakt: Codes, Wochentage als Bitmaske, Ende als Tageszahl.
+    Recurrence(#[serde(with = "recurrence_wire")] Option<Recurrence>),
+    /// Checkliste (N8): Punkte als (ID, Text, Haken), beim Lesen geprüft.
+    Checklist(#[serde(with = "checklist_wire")] Vec<ChecklistItem>),
+    /// Verweis auf eine Task (Verknüpfung, N9).
+    TaskRef(TaskId),
+    /// Verweis auf eine Notiz (Verknüpfung, N9).
+    NoteRef(NoteId),
 }
 
 impl Op {
@@ -237,6 +350,24 @@ impl Op {
             OpKind::Create { fields } => fields.iter().try_for_each(|(f, v)| check(*f, v)),
             OpKind::Set { field, value } => check(*field, value),
             OpKind::Delete => Ok(()),
+            OpKind::Revise { parents, text } => {
+                let invalid = |why: &str| {
+                    CoreError::Validation(format!(
+                        "op {}/{}: invalid revision: {why}",
+                        self.id.device, self.id.seq
+                    ))
+                };
+                if !matches!(self.entity, EntityRef::Note(_)) {
+                    return Err(invalid("only notes have revisions"));
+                }
+                if text.len() > NOTE_BODY_MAX_BYTES {
+                    return Err(invalid("text too large"));
+                }
+                if parents.len() > MAX_REVISION_PARENTS || parents.contains(&self.id) {
+                    return Err(invalid("parents"));
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -303,6 +434,29 @@ mod priority_code {
     }
 }
 
+/// Notiz-Typ als fester Code.
+mod note_kind_code {
+    use serde::{de, Deserialize, Deserializer, Serializer};
+
+    use crate::domain::NoteKind;
+
+    #[allow(clippy::trivially_copy_pass_by_ref)] // Signatur von serde vorgegeben
+    pub(super) fn serialize<S: Serializer>(kind: &NoteKind, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_u8(match kind {
+            NoteKind::Text => 0,
+            NoteKind::Markdown => 1,
+        })
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<NoteKind, D::Error> {
+        match u8::deserialize(d)? {
+            0 => Ok(NoteKind::Text),
+            1 => Ok(NoteKind::Markdown),
+            other => Err(de::Error::custom(format!("unknown note kind code {other}"))),
+        }
+    }
+}
+
 /// Fälligkeit: Datum als Tageszahl (seit 0001-01-01), Zeitpunkt mit Zonenname.
 mod due_wire {
     use chrono::Datelike;
@@ -338,6 +492,125 @@ mod due_wire {
                 Wire::DateTime { at, tz } => Ok(Due::DateTime { at, tz }),
             })
             .transpose()
+    }
+}
+
+/// Wiederholungsregel kompakt (ADR-028): Häufigkeit und Bezug als Codes, Wochentage als Bitmaske,
+/// Ende als Tageszahl (wie bei `Due`). **Codes nie ändern.**
+mod recurrence_wire {
+    use chrono::Datelike;
+    use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+
+    use crate::domain::{Frequency, NaiveDate, Recurrence, RecurrenceAnchor, WeekdaySet};
+
+    #[derive(Serialize, Deserialize)]
+    struct Wire {
+        freq: u8,
+        interval: u16,
+        weekdays: u8,
+        month_day: Option<u8>,
+        anchor: u8,
+        until: Option<i32>,
+    }
+
+    #[allow(clippy::ref_option)] // Signatur von serde vorgegeben
+    pub(super) fn serialize<S: Serializer>(
+        r: &Option<Recurrence>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        r.as_ref()
+            .map(|r| Wire {
+                freq: match r.freq() {
+                    Frequency::Daily => 0,
+                    Frequency::Weekly => 1,
+                    Frequency::Monthly => 2,
+                    Frequency::Yearly => 3,
+                },
+                interval: r.interval(),
+                weekdays: r.weekdays().bits(),
+                month_day: r.month_day(),
+                anchor: match r.anchor() {
+                    RecurrenceAnchor::Schedule => 0,
+                    RecurrenceAnchor::Completion => 1,
+                },
+                until: r.until().map(|d| d.num_days_from_ce()),
+            })
+            .serialize(s)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Option<Recurrence>, D::Error> {
+        let Some(w) = Option::<Wire>::deserialize(d)? else {
+            return Ok(None);
+        };
+        let freq = match w.freq {
+            0 => Frequency::Daily,
+            1 => Frequency::Weekly,
+            2 => Frequency::Monthly,
+            3 => Frequency::Yearly,
+            other => return Err(de::Error::custom(format!("unknown frequency code {other}"))),
+        };
+        let anchor = match w.anchor {
+            0 => RecurrenceAnchor::Schedule,
+            1 => RecurrenceAnchor::Completion,
+            other => return Err(de::Error::custom(format!("unknown anchor code {other}"))),
+        };
+        let until = w
+            .until
+            .map(|days| {
+                NaiveDate::from_num_days_from_ce_opt(days)
+                    .ok_or_else(|| de::Error::custom(format!("invalid day number {days}")))
+            })
+            .transpose()?;
+        Recurrence::new(
+            freq,
+            w.interval,
+            WeekdaySet::from_bits(w.weekdays),
+            w.month_day,
+            anchor,
+            until,
+        )
+        .map(Some)
+        .map_err(de::Error::custom)
+    }
+}
+
+/// Checkliste (ADR-034): je Punkt ID (16 Bytes), Text, Haken; beim Lesen wie lokal geprüft
+/// (Text einzeilig und begrenzt, höchstens 100 Punkte, IDs eindeutig).
+mod checklist_wire {
+    use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+
+    use crate::domain::{check_checklist, ChecklistItem, ChecklistItemId};
+
+    #[derive(Serialize, Deserialize)]
+    struct Wire {
+        id: ChecklistItemId,
+        text: String,
+        done: bool,
+    }
+
+    pub(super) fn serialize<S: Serializer>(
+        items: &[ChecklistItem],
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        s.collect_seq(items.iter().map(|i| Wire {
+            id: i.id(),
+            text: i.text().to_owned(),
+            done: i.is_done(),
+        }))
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Vec<ChecklistItem>, D::Error> {
+        let items = Vec::<Wire>::deserialize(d)?
+            .into_iter()
+            .map(|w| ChecklistItem::new(w.id, &w.text, w.done))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(de::Error::custom)?;
+        check_checklist(&items).map_err(de::Error::custom)?;
+        Ok(items)
     }
 }
 
@@ -405,6 +678,23 @@ mod tests {
                 FieldName::CreatedAt,
                 FieldValue::Timestamp(Timestamp::from_millis(-3)),
             ),
+            (
+                FieldName::Recurrence,
+                FieldValue::Recurrence(Some(
+                    "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TH;ANCHOR=COMPLETION;UNTIL=2026-12-20"
+                        .parse()
+                        .unwrap(),
+                )),
+            ),
+            (
+                FieldName::Checklist,
+                FieldValue::Checklist(vec![ChecklistItem::new(
+                    crate::domain::ChecklistItemId::new(),
+                    "Punkt",
+                    true,
+                )
+                .unwrap()]),
+            ),
         ]
     }
 
@@ -432,13 +722,104 @@ mod tests {
     }
 
     #[test]
-    fn task_and_list_fields_cover_all() {
+    fn entity_fields_cover_all() {
         for field in FieldName::ALL {
             assert!(
-                FieldName::TASK.contains(&field) || FieldName::TASK_LIST.contains(&field),
+                FieldName::TASK.contains(&field)
+                    || FieldName::TASK_LIST.contains(&field)
+                    || FieldName::NOTE.contains(&field)
+                    || FieldName::NOTE_FOLDER.contains(&field)
+                    || FieldName::TAG.contains(&field)
+                    || FieldName::LINK.contains(&field),
                 "{field:?}"
             );
         }
+    }
+
+    #[test]
+    fn note_ops_roundtrip_and_validate() {
+        use crate::domain::{NoteFolderId, NoteId};
+        let d = device();
+        let note = EntityRef::Note(NoteId::new());
+        let folder = EntityRef::NoteFolder(NoteFolderId::new());
+        let fields: FieldMap = [
+            (
+                FieldName::ParentFolder,
+                FieldValue::Folder(Some(NoteFolderId::new())),
+            ),
+            (FieldName::Name, FieldValue::Text("Blatt 3".into())),
+            (FieldName::AutoName, FieldValue::Bool(true)),
+            (FieldName::NoteKind, FieldValue::NoteKind(NoteKind::Text)),
+            (FieldName::SortKey, FieldValue::SortKey(SortKey::first())),
+            (
+                FieldName::CreatedAt,
+                FieldValue::Timestamp(Timestamp::from_millis(1)),
+            ),
+            (
+                FieldName::Trashed,
+                FieldValue::Trashed(Some(Timestamp::from_millis(2))),
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let parent = OpId { device: d, seq: 1 };
+        let ops = vec![
+            op(d, 1, note, OpKind::Create { fields }),
+            op(
+                d,
+                2,
+                note,
+                OpKind::Revise {
+                    parents: vec![parent],
+                    text: "# Blatt 3\n".into(),
+                },
+            ),
+            op(
+                d,
+                3,
+                folder,
+                OpKind::Set {
+                    field: FieldName::Trashed,
+                    value: FieldValue::Trashed(None),
+                },
+            ),
+        ];
+        assert_eq!(decode_ops(&encode_ops(&ops)).unwrap(), ops);
+
+        let revise = |entity, parents: Vec<OpId>, text: String| {
+            op(d, 9, entity, OpKind::Revise { parents, text })
+        };
+        assert!(revise(folder, Vec::new(), String::new())
+            .validate()
+            .is_err());
+        assert!(
+            revise(note, Vec::new(), "x".repeat(NOTE_BODY_MAX_BYTES + 1))
+                .validate()
+                .is_err()
+        );
+        assert!(
+            revise(note, vec![OpId { device: d, seq: 9 }], String::new())
+                .validate()
+                .is_err(),
+            "eigene ID als Elternteil"
+        );
+        assert!(
+            revise(note, vec![parent; MAX_REVISION_PARENTS + 1], String::new())
+                .validate()
+                .is_err()
+        );
+        let kind_on_folder = op(
+            d,
+            4,
+            folder,
+            OpKind::Set {
+                field: FieldName::NoteKind,
+                value: FieldValue::NoteKind(NoteKind::Markdown),
+            },
+        );
+        assert!(kind_on_folder.validate().is_err());
+        let rev: RevisionId = parent.into();
+        assert_eq!(OpId::from(rev), parent);
     }
 
     #[test]

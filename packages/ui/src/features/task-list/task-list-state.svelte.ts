@@ -28,6 +28,13 @@ export function toSummary(t: TaskDto): TaskSummaryDto {
     hasNotes: t.notes.length > 0,
     sortKey: t.sortKey,
     completedAt: t.completedAt,
+    trashedAt: t.trashedAt,
+    recurring: t.recurrence != null,
+    checklistDone: t.checklist.filter((i) => i.done).length,
+    checklistTotal: t.checklist.length,
+    tags: [...t.tags],
+    // Kennt der `TaskDto` nicht; `apply` behält den bisherigen Wert.
+    hasLinks: false,
   };
 }
 
@@ -65,7 +72,7 @@ export class TaskListState {
   }
 
   async load(): Promise<void> {
-    const page = await this.client.listTasks(routeQuery(this.ctx().route), { cursor: null, limit: PAGE_SIZE });
+    const page = await this.client.listTasks(routeQuery(this.ctx().route, undefined, this.ctx().options), { cursor: null, limit: PAGE_SIZE });
     this.items = this.ordered(page.items);
     this.cursor = page.nextCursor;
     this.loaded = true;
@@ -75,7 +82,7 @@ export class TaskListState {
     if (!this.cursor || this.loadingMore) return;
     this.loadingMore = true;
     try {
-      const page = await this.client.listTasks(routeQuery(this.ctx().route), { cursor: this.cursor, limit: PAGE_SIZE });
+      const page = await this.client.listTasks(routeQuery(this.ctx().route, undefined, this.ctx().options), { cursor: this.cursor, limit: PAGE_SIZE });
       const known = new Set(this.items.map((t) => t.id));
       this.items = this.ordered([...this.items, ...page.items.filter((t) => !known.has(t.id))]);
       this.cursor = page.nextCursor;
@@ -91,7 +98,8 @@ export class TaskListState {
    */
   private ordered(items: TaskSummaryDto[]): TaskSummaryDto[] {
     const route = this.ctx().route;
-    return sortedByDue(route) ? items.sort((a, b) => compareInView(a, b, route)) : items;
+    const sort = this.ctx().options?.sort;
+    return sortedByDue(route, sort) ? items.sort((a, b) => compareInView(a, b, route, sort)) : items;
   }
 
   /**
@@ -103,7 +111,7 @@ export class TaskListState {
     this.loadingMore = true;
     try {
       while (this.cursor) {
-        const query = routeQuery(this.ctx().route);
+        const query = routeQuery(this.ctx().route, undefined, this.ctx().options);
         const page = await this.client.listTasks(query, { cursor: this.cursor, limit: PAGE_LIMIT_MAX });
         const known = new Set(this.items.map((t) => t.id));
         this.items = this.ordered([...this.items, ...page.items.filter((t) => !known.has(t.id))]);
@@ -139,7 +147,8 @@ export class TaskListState {
   /** Abo auf Core-Änderungen; gibt die Abmeldung zurück. */
   attach(): () => void {
     return this.client.onChange((e) => {
-      if (e.tasks.length > REFRESH_BATCH) void this.reload();
+      // Verknüpfungen (ADR-036) ändern nur `hasLinks` – das weiß nur die Zusammenfassung des Cores.
+      if (e.tasks.length > REFRESH_BATCH || e.links.length > 0) void this.reload();
       else for (const id of e.tasks) void this.refresh(id);
     });
   }
@@ -169,7 +178,7 @@ export class TaskListState {
 
   private async fetchLoaded(): Promise<void> {
     const want = Math.max(this.items.length, PAGE_SIZE);
-    const query = routeQuery(this.ctx().route);
+    const query = routeQuery(this.ctx().route, undefined, this.ctx().options);
     const fetched: TaskSummaryDto[] = [];
     let cursor: string | null = null;
     do {
@@ -181,7 +190,7 @@ export class TaskListState {
     const fresh = new Set(fetched.map((t) => t.id));
     const linger = this.items.filter((t) => this.leaving.has(t.id) && !fresh.has(t.id) && inView(t, ctx));
     let items = fetched.filter((t) => !this.hidden.has(t.id));
-    if (linger.length > 0) items = [...items, ...linger].sort((a, b) => compareInView(a, b, ctx.route));
+    if (linger.length > 0) items = [...items, ...linger].sort((a, b) => compareInView(a, b, ctx.route, ctx.options?.sort));
     this.items = this.ordered(items);
     this.cursor = cursor;
     this.loaded = true;
@@ -196,16 +205,19 @@ export class TaskListState {
     }
   }
 
-  apply(task: TaskSummaryDto): void {
+  apply(next: TaskSummaryDto): void {
     const ctx = this.ctx();
-    if (this.hidden.has(task.id)) return;
+    if (this.hidden.has(next.id)) return;
+    // Aus einem `TaskDto` (ohne Verknüpfungen): `hasLinks` der bisherigen Zeile behalten.
+    const prev = this.items.find((t) => t.id === next.id);
+    const task = prev && !next.hasLinks ? { ...next, hasLinks: prev.hasLinks } : next;
     const visible = shownInView(task, ctx) || (this.leaving.has(task.id) && inView(task, ctx));
     const rest = this.items.filter((t) => t.id !== task.id);
     if (!visible) {
       if (rest.length !== this.items.length) this.items = rest;
       return;
     }
-    let at = rest.findIndex((t) => compareInView(task, t, ctx.route) < 0);
+    let at = rest.findIndex((t) => compareInView(task, t, ctx.route, ctx.options?.sort) < 0);
     if (at < 0) {
       // Hinter dem letzten geladenen Eintrag: nur einfügen, wenn alles geladen ist.
       if (this.hasMore && !this.items.some((t) => t.id === task.id)) return;
@@ -218,10 +230,13 @@ export class TaskListState {
     if (this.items.some((t) => t.id === id)) this.items = this.items.filter((t) => t.id !== id);
   }
 
-  /** Optimistisch abhaken/öffnen; abgehakte verlassen offene Ansichten nach `LEAVE_MS`. */
+  /**
+   * Optimistisch abhaken/öffnen; abgehakte verlassen offene Ansichten nach `LEAVE_MS`. Eine Serie
+   * (ADR-028) bleibt offen und stehen – ihre neue Fälligkeit kommt mit dem Änderungs-Event.
+   */
   setDone(id: string, done: boolean): TaskSummaryDto | undefined {
     const task = this.items.find((t) => t.id === id);
-    if (!task) return undefined;
+    if (!task || (done && task.recurring)) return task;
     if (done) this.leave([id]);
     const next: TaskSummaryDto = {
       ...task,
@@ -238,7 +253,7 @@ export class TaskListState {
     const before: TaskSummaryDto[] = [];
     const at = done ? new Date().toISOString() : null;
     this.items = this.items.map((t) => {
-      if (!set.has(t.id) || t.status === (done ? "done" : "open")) return t;
+      if (!set.has(t.id) || t.status === (done ? "done" : "open") || (done && t.recurring)) return t;
       before.push(t);
       return { ...t, status: done ? "done" : "open", completedAt: at };
     });
@@ -296,6 +311,14 @@ export class TaskListState {
   hide(ids: readonly string[]): void {
     for (const id of ids) this.hidden.add(id);
     this.removeMany(ids);
+  }
+
+  /**
+   * Ausblenden beenden, ohne neu zu laden: Die Änderung ist gespeichert und hält die Zeilen selbst
+   * draußen (Papierkorb, ADR-031) – „Rückgängig“ (gleiche IDs) bringt sie dann per Event zurück.
+   */
+  release(ids: readonly string[]): void {
+    for (const id of ids) this.hidden.delete(id);
   }
 
   /** Wieder einblenden (Löschen fehlgeschlagen). */

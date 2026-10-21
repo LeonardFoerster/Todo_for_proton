@@ -2,7 +2,7 @@
 
 use super::{load_task, Deps};
 use crate::{
-    domain::{Due, Priority, Task, TaskId},
+    domain::{ChecklistItem, Due, Priority, Recurrence, TagId, Task, TaskId},
     ports::ChangeSet,
     CoreResult,
 };
@@ -14,6 +14,12 @@ pub struct TaskPatch {
     pub notes: Option<String>,
     pub priority: Option<Priority>,
     pub due: Option<Option<Due>>,
+    /// `Some(None)` beendet die Wiederholung (N4).
+    pub recurrence: Option<Option<Recurrence>>,
+    /// Ersetzt die ganze Checkliste (N8, ADR-034).
+    pub checklist: Option<Vec<ChecklistItem>>,
+    /// Ersetzt die Tags (N8, ADR-035); jeder muss existieren.
+    pub tags: Option<Vec<TagId>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +52,17 @@ impl UpdateTask {
             notes,
             priority,
             due,
+            recurrence,
+            checklist,
+            tags,
         } = input.patch;
+        if let Some(tags) = tags {
+            super::tags::check_tags_exist(self.deps.repo.as_ref(), &tags).await?;
+            task.set_tags(tags, clock)?;
+        }
+        if let Some(items) = checklist {
+            task.set_checklist(items, clock)?;
+        }
         if let Some(title) = title {
             task.rename(&title, clock)?;
         }
@@ -57,7 +73,19 @@ impl UpdateTask {
             task.set_priority(priority, clock);
         }
         if let Some(due) = due {
+            let removed = due.is_none();
             task.set_due(due, clock)?;
+            // Ohne Fälligkeit keine Serie (sonst bliebe eine wirkungslose Regel stehen).
+            if removed {
+                task.set_recurrence(None, None, clock)?;
+            }
+        }
+        match recurrence {
+            Some(Some(rule)) => {
+                super::recurring::apply_rule(&mut task, &rule, self.deps.zones.as_deref(), clock)?;
+            }
+            Some(None) => task.set_recurrence(None, None, clock)?,
+            None => {}
         }
         if task != original {
             self.deps
@@ -105,6 +133,9 @@ mod tests {
             notes: Some("2 Liter".into()),
             priority: Some(Priority::High),
             due: Some(Some(due.clone())),
+            recurrence: None,
+            checklist: None,
+            tags: None,
         };
         let updated = block_on(uc.execute(UpdateTaskInput {
             id: task.id(),

@@ -16,9 +16,19 @@ Proton Drive ist abgenommen (automatisierter Zwei-Geräte-Lauf; Live-Teil über 
 Listen & Kanban-Board) und P3 (Fenster „Neue Task" mit Texterkennung) umgesetzt (Archiv:
 `development/archive/roadmap-interim.md`). P4 (Bedienung: Uhrzeit im Detail, Heute/Überfällig, Geplant
 nach Tagen, Fälligkeit per Kürzel, Suche & Befehlspalette, Erledigt nach Tagen) umgesetzt; P4-07 wartet auf den User.
-Als Nächstes N0 (Prototyp abrunden), danach N5 (Modus „Notes“: `.txt`/`.md`-Notizen in Ordnern, Entwurf in
-`development/notes.md`, wartet auf Freigabe), N4 (wiederkehrende Tasks), dann die Web-App (`development/roadmap-next.md`);
-langfristige Ideen (Verknüpfungen, Kalender, GitHub) stehen dort unter N3.
+N5 (Modus „Notes“: `.txt`/`.md`-Notizen in Ordnern mit Revisions-Sync und Konfliktkopien, Markdown-Vorschau,
+gemeinsame Suche, Ordner-Import; `development/notes.md`, ADR-029) umgesetzt und automatisiert abgenommen; die
+Abnahme durch den User (`prototype-acceptance.md` E) ist offen. P5 (Feinschliff der Oberfläche nach dem Design-Review
+2026-10-21: Inter, Lesespalte, Priorität im Ring, Suche, eigenes Datumsfeld, Touch) und P6 (Fenster „Neue Task“ als
+Schnelleingabe) umgesetzt; Sichtprüfung durch den
+User offen (`prototype-acceptance.md` F). Live-Abnahme über Proton (N0-01) am 2026-10-21 vom User abgenommen. N6
+(Papierkorb, Export/Import, ADR-031/032), N7 (Erinnerungen, Tray, Autostart, ADR-033) und N4 (wiederkehrende Tasks
+mit Verlauf, Überspringen, Rückgängig, ADR-028) umgesetzt und automatisiert abgenommen; Abnahme durch den User offen
+(`prototype-acceptance.md` G, H). N8 (Checklisten, Tags als Entity, ADR-034/035), N9 (Verknüpfung Task ↔ Notiz,
+ADR-036), N10 (Sortieren/Filtern im Core, ADR-037; `count_tasks`; Listen zusammenführen; Erste Schritte) und N11
+(AUR-`PKGBUILD` in `packaging/aur/`, Veröffentlichen macht der User) umgesetzt; Abnahme durch den User offen
+(`prototype-acceptance.md` I). Als Nächstes die Web-App (N1, `development/roadmap-next.md`); langfristige Ideen
+(Kalender, GitHub) stehen dort unter N3.
 
 ## 2. Wo was liegt
 
@@ -40,6 +50,7 @@ langfristige Ideen (Verknüpfungen, Kalender, GitHub) stehen dort unter N3.
 | `packages/ui/` | Gemeinsame Svelte-5-Komponenten + Design-Tokens |
 | `packages/core-client/` | TS-Interface `CoreClient` + Implementierungen (Tauri-IPC / WASM-Worker) |
 | `tools/` | Mess- und Abnahmeskripte (`measure-desktop.sh`, `acceptance-two-devices.sh`) |
+| `packaging/aur/` | `PKGBUILD` (`tasks-app-git`), Starter `dev.tasks.app.desktop` – Veröffentlichen im AUR macht der User |
 
 Detaildokumente in `development/`:
 `roadmap-next.md` (**geordnete Arbeitsliste nach dem Prototyp – hier steht, was als Nächstes zu tun ist**),
@@ -116,8 +127,9 @@ Serde-JSON über IPC, SQLite ohne WAL/Indizes, unbegrenzte Op-Logs).
   `Cipher`, `Clock`), Implementierungen das Mittel (`SqliteTaskRepository`, `ProtonDriveRemoteStore`).
 - **TS/Svelte:** Dateien `kebab-case.ts`, Komponenten `PascalCase.svelte`, Stores/Runes-Module `*.svelte.ts`.
 - **IDs:** UUIDv7 als String an allen Grenzen. Zeitstempel: HLC für Sync, UTC-ISO-8601 für Anzeige-Daten.
-- **Domain-Sprache (verbindlich):** `Task`, `TaskList`, `Tag`, `Op`, `Device`, `Snapshot`.
-  Nicht mischen mit „Todo", „Item", „Project" im Code.
+- **Domain-Sprache (verbindlich):** `Task`, `TaskList`, `Tag`, `Op`, `Device`, `Snapshot`, `Note`, `NoteFolder`.
+  Nicht mischen mit „Todo", „Item", „Project" im Code. „Notes" ist auch der UI-Name des Modus; sonst bleiben
+  UI-Texte Deutsch („Neue Notiz", „Ordner").
 - **Kein „Proton" im Produkt-/Paketnamen** (Markenrecht). „Proton" nur in Adapter-Namen.
 - Commits: Conventional Commits (`feat(core): …`, `fix(sync): …`).
 
@@ -139,8 +151,8 @@ Die Rust-Toolchain ist über `rust-toolchain.toml` fixiert.
 | `just desktop-build` | Release-Binary der Desktop-App (`target/release/todo-desktop`) |
 | `just ts` | TS/Svelte: ESLint, Typecheck, Vitest (alle pnpm-Pakete) |
 | `just types` | TS-Typen der DTOs neu erzeugen (`packages/core-client/src/generated/`, läuft auch in `just test`) |
-| `tools/measure-desktop.sh` | Start, PSS, Leerlauf-CPU, Binary-Größe des Release-Builds (Budgets §4) |
-| `tools/acceptance-two-devices.sh` | Zwei-Geräte-Abnahme mit zwei Profilen über ein lokales Sync-Verzeichnis (Debug-Build) |
+| `tools/measure-desktop.sh` | Start, PSS, Leerlauf-CPU, Binary-Größe des Release-Builds (Budgets §4); `MODE=notes` startet im Modus „Notes“ (eigenes Profil) |
+| `tools/acceptance-two-devices.sh` | Zwei-Geräte-Abnahme mit zwei Profilen über ein lokales Sync-Verzeichnis (Debug-Build); `ONLY=notes` nur „Notiz auf zwei Geräten“ |
 
 Umgebung der Desktop-App: `TODO_DATA_DIR` (eigenes Profil inkl. eigenem Schlüsselbund-Eintrag),
 `TODO_WEBKIT_COMPOSITING=1` (WebKit-Compositing wieder an), `TODO_LOG` (Log-Filter auf stderr, `Targets`-Syntax,

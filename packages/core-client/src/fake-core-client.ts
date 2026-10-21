@@ -1,17 +1,27 @@
 import type { CoreClient } from "./core-client";
 import { CoreClientError } from "./errors";
+import { FakeNotes } from "./fake-notes";
+import { anchored, dueDay, dueOn, firstOnOrAfter, nextOccurrence } from "./fake-recurrence";
 import type {
   AuthStepDto,
   ChangedEventDto,
+  ChecklistItemDto,
+  CompleteResultDto,
   CreateTaskDto,
   DueDto,
   LocalDayDto,
   MoveListTargetDto,
   MoveTargetDto,
+  OccurrenceDto,
   PageDto,
   PageRequestDto,
+  RecurrenceDto,
   SessionDto,
   SyncStatusDto,
+  LinkDto,
+  LinkedNoteDto,
+  LinkedTaskDto,
+  TagDto,
   TaskDto,
   TaskDueDto,
   TaskListDto,
@@ -49,6 +59,7 @@ interface Row {
 export class FakeCoreClient implements CoreClient {
   private lists = new Map<string, TaskListDto>();
   private rows = new Map<string, Row>();
+  private tags = new Map<string, TagDto>();
   private changeListeners = new Set<(e: ChangedEventDto) => void>();
   private statusListeners = new Set<(s: SyncStatusDto) => void>();
   private session: SessionDto | null = null;
@@ -58,10 +69,19 @@ export class FakeCoreClient implements CoreClient {
   private readonly loginPolls: number;
   private readonly now: () => Date;
 
+  /** Notizen (ADR-029); `simulateRemoteBody`/`simulateConflict` für UI-Tests. */
+  readonly notes: FakeNotes;
+
   constructor(options: FakeOptions = {}) {
     this.latencyMs = options.latencyMs ?? 0;
     this.loginPolls = options.loginPolls ?? 1;
     this.now = options.now ?? (() => new Date());
+    this.notes = new FakeNotes({
+      run: (fn) => this.run(fn),
+      emit: (notes, noteFolders) => this.emitEvent({ tasks: [], lists: [], notes, noteFolders, tags: [], links: [] }),
+      now: () => this.now(),
+      newId: () => this.newId(),
+    });
   }
 
   // --- Listen --------------------------------------------------------------------------------
@@ -144,8 +164,142 @@ export class FakeCoreClient implements CoreClient {
         moved.map((r) => r.task.id),
         [id],
       );
-      return moved.length;
+      // Wie im Core: gezählt werden nur Tasks außerhalb des Papierkorbs (mitgenommen werden alle).
+      return moved.filter((r) => r.task.trashedAt == null).length;
     });
+
+  mergeTaskLists = (source: string, target: string) =>
+    this.run(() => {
+      if (source === target) throw new CoreClientError("validation", "a list cannot be merged into itself");
+      const from = this.list(source);
+      this.list(target);
+      if (from.isInbox) throw new CoreClientError("validation", "the inbox cannot be merged away");
+      const moved = [...this.rows.values()].filter((r) => r.task.listId === source).sort((a, b) => a.order - b.order);
+      let last = this.lastOrder(target);
+      for (const row of moved) {
+        row.task.listId = target;
+        row.order = ++last;
+        this.touch(row);
+      }
+      this.lists.delete(source);
+      this.emit(
+        moved.map((r) => r.task.id),
+        [source],
+      );
+      return moved.filter((r) => r.task.trashedAt == null).length;
+    });
+
+  // --- Verknüpfungen (ADR-036) ---------------------------------------------------------------
+
+  private links = new Map<string, LinkDto>();
+  private unlinked = new Set<string>();
+
+  linkTaskNote = (taskId: string, noteId: string) =>
+    this.run(() => {
+      this.row(taskId);
+      if (!this.notes.peek(noteId)) throw new CoreClientError("notFound", `note ${noteId}`);
+      const existing = [...this.links.values()].find((l) => l.taskId === taskId && l.noteId === noteId);
+      if (existing) return { ...existing };
+      let id = `link:${taskId}:${noteId}`;
+      for (let n = 1; this.unlinked.has(id); n++) id = `link:${taskId}:${noteId}|${n}`;
+      const link = { id, taskId, noteId };
+      this.links.set(id, link);
+      this.emit([], [], [], [id]);
+      return { ...link };
+    });
+
+  unlink = (linkId: string) =>
+    this.run(() => {
+      if (this.links.delete(linkId)) {
+        this.unlinked.add(linkId);
+        this.emit([], [], [], [linkId]);
+      }
+    });
+
+  taskLinks = (taskId: string) =>
+    this.run((): LinkedNoteDto[] => {
+      const out: LinkedNoteDto[] = [];
+      for (const l of this.links.values()) {
+        if (l.taskId !== taskId) continue;
+        const note = this.notes.peek(l.noteId);
+        if (note && note.trashedAt == null) out.push({ linkId: l.id, noteId: note.id, name: note.name, kind: note.kind });
+      }
+      return out;
+    });
+
+  noteLinks = (noteId: string) =>
+    this.run((): LinkedTaskDto[] =>
+      [...this.links.values()].flatMap((l) => {
+        const row = l.noteId === noteId ? this.rows.get(l.taskId) : undefined;
+        return row && row.task.trashedAt == null ? [{ linkId: l.id, task: summary(this.dto(row), true) }] : [];
+      }),
+    );
+
+  private hasLinks(taskId: string): boolean {
+    for (const l of this.links.values()) if (l.taskId === taskId) return true;
+    return false;
+  }
+
+  // --- Tags (ADR-035) ------------------------------------------------------------------------
+
+  listTags = () =>
+    this.run(() => [...this.tags.values()].sort((a, b) => cmp(a.name.toLowerCase(), b.name.toLowerCase()) || cmp(a.id, b.id)).map((t) => ({ ...t })));
+
+  ensureTag = (name: string) =>
+    this.run(() => {
+      const clean = tagName(name);
+      const found = [...this.tags.values()].find((t) => t.name.toLowerCase() === clean.toLowerCase());
+      if (found) return { ...found };
+      // Wie der Core: ID aus dem Namen (Fake: lesbar statt UUIDv5).
+      let id = `tag:${clean.toLowerCase()}`;
+      for (let n = 1; this.tags.has(id) || this.deletedTags.has(id); n++) id = `tag:${clean.toLowerCase()}|${n}`;
+      const tag = { id, name: clean };
+      this.tags.set(id, tag);
+      this.emit([], [], [id]);
+      return { ...tag };
+    });
+
+  renameTag = (id: string, name: string) =>
+    this.run(() => {
+      const tag = this.tags.get(id);
+      if (!tag) throw new CoreClientError("notFound", `tag ${id}`);
+      const clean = tagName(name);
+      if ([...this.tags.values()].some((t) => t.id !== id && t.name.toLowerCase() === clean.toLowerCase())) {
+        throw new CoreClientError("validation", `tag ${JSON.stringify(clean)} already exists`);
+      }
+      if (tag.name !== clean) {
+        tag.name = clean;
+        this.emit([], [], [id]);
+      }
+      return { ...tag };
+    });
+
+  deleteTag = (id: string) =>
+    this.run(() => {
+      if (!this.tags.delete(id)) return 0;
+      this.deletedTags.add(id);
+      const rows = [...this.rows.values()].filter((r) => r.task.tags.includes(id));
+      for (const row of rows) {
+        row.task.tags = row.task.tags.filter((t) => t !== id);
+        this.touch(row);
+      }
+      this.emit(
+        rows.map((r) => r.task.id),
+        [],
+        [id],
+      );
+      return rows.length;
+    });
+
+  private deletedTags = new Set<string>();
+
+  /** Wie `check_task_tags` + „jeder Tag existiert“ im Core. */
+  private validTags(tags: string[]): string[] {
+    if (tags.length > 20) throw new CoreClientError("validation", "a task can have at most 20 tags");
+    if (new Set(tags).size !== tags.length) throw new CoreClientError("validation", "duplicate tag");
+    for (const t of tags) if (!this.tags.has(t)) throw new CoreClientError("validation", `unknown tag ${t}`);
+    return [...tags];
+  }
 
   // --- Tasks ---------------------------------------------------------------------------------
 
@@ -166,7 +320,12 @@ export class FakeCoreClient implements CoreClient {
         createdAt: at,
         updatedAt: at,
         completedAt: null,
+        trashedAt: null,
+        recurrence: null,
+        checklist: [],
+        tags: this.validTags(input.tags ?? []),
       };
+      if (input.recurrence) this.applyRule(task, input.recurrence);
       const row = { task, order: this.lastOrder(listId) + 1 };
       this.rows.set(task.id, row);
       this.emit([task.id], []);
@@ -184,6 +343,14 @@ export class FakeCoreClient implements CoreClient {
       if (patch.notes != null) next.notes = patch.notes;
       if (patch.priority != null) next.priority = patch.priority;
       if (patch.due !== undefined) next.due = patch.due === null ? null : validDue(patch.due);
+      // Ohne Fälligkeit keine Serie (wie der Core); eine neue Regel verankert sich an der Fälligkeit.
+      if (next.due === null) next.recurrence = null;
+      if (patch.recurrence !== undefined) {
+        if (patch.recurrence === null) next.recurrence = null;
+        else this.applyRule(next, patch.recurrence);
+      }
+      if (patch.checklist != null) next.checklist = this.validChecklist(patch.checklist);
+      if (patch.tags != null) next.tags = this.validTags(patch.tags);
       if (JSON.stringify(next) !== JSON.stringify(t)) {
         row.task = next;
         this.touch(row);
@@ -195,13 +362,7 @@ export class FakeCoreClient implements CoreClient {
   completeTask = (id: string, done: boolean) =>
     this.run(() => {
       const row = this.row(id);
-      const status = done ? "done" : "open";
-      if (row.task.status !== status) {
-        row.task.status = status;
-        row.task.completedAt = done ? this.iso() : null;
-        this.touch(row);
-        this.emit([id], []);
-      }
+      this.emitRows(this.complete([row], done, this.iso().slice(0, 10)).rows);
       return this.dto(row);
     });
 
@@ -227,18 +388,112 @@ export class FakeCoreClient implements CoreClient {
       if (this.rows.delete(id)) this.emit([id], []);
     });
 
+  /** Abhaken/Öffnen wie `CompleteTasks` im Core; Serien bekommen einen Verlaufseintrag `${serie}:${tag}`. */
+  private complete(rows: Row[], done: boolean, today: string): { rows: Row[]; occurrences: OccurrenceDto[] } {
+    const status = done ? "done" : "open";
+    const changed: Row[] = [];
+    const entries: Row[] = [];
+    const occurrences: OccurrenceDto[] = [];
+    for (const row of rows) {
+      const t = row.task;
+      if (t.status === status) continue;
+      if (done && t.recurrence && t.due) {
+        const previousDue = { ...t.due };
+        const next = nextOccurrence(t.recurrence, dueDay(t.due), today);
+        let occurrenceId: string | null = null;
+        if (next) {
+          occurrenceId = `${t.id}:${dueDay(t.due)}`;
+          if (!this.rows.has(occurrenceId)) {
+            const at = this.iso();
+            const task: TaskDto = {
+              ...t,
+              id: occurrenceId,
+              status: "done",
+              recurrence: null,
+              checklist: t.checklist.map((i) => ({ ...i })),
+              createdAt: at,
+              updatedAt: at,
+              completedAt: at,
+              trashedAt: null,
+            };
+            const entry = { task, order: this.lastOrder(t.listId) + 1 };
+            this.rows.set(occurrenceId, entry);
+            entries.push(entry);
+          }
+          t.due = dueOn(next, t.due);
+          // Nächstes Vorkommen ohne Haken; der Eintrag behält sie (wie der Core).
+          t.checklist = t.checklist.map((i) => ({ ...i, done: false }));
+        } else {
+          Object.assign(t, { status: "done", completedAt: this.iso() });
+        }
+        occurrences.push({ seriesId: t.id, occurrenceId, previousDue });
+      } else {
+        t.status = status;
+        t.completedAt = done ? this.iso() : null;
+      }
+      this.touch(row);
+      changed.push(row);
+    }
+    return { rows: [...changed, ...entries], occurrences };
+  }
+
+  /** Wie `ChecklistItem`/`check_checklist` im Core: einzeilig, 1–500 Zeichen, ≤ 100, neue IDs für leere. */
+  private validChecklist(items: ChecklistItemDto[]): ChecklistItemDto[] {
+    if (items.length > 100) throw new CoreClientError("validation", "checklist must have at most 100 items");
+    const out = items.map((i) => ({
+      id: i.id || this.newId(),
+      text: validName(i.text.replace(/[\r\n\t]/g, " "), 500, "checklist item"),
+      done: i.done,
+    }));
+    if (new Set(out.map((i) => i.id)).size !== out.length) throw new CoreClientError("validation", "duplicate checklist item");
+    return out;
+  }
+
+  /** Regel setzen: ohne Fälligkeit erst das erste Vorkommen ab heute (ganztägig). */
+  private applyRule(task: TaskDto, rule: RecurrenceDto) {
+    if (!task.due) {
+      const first = firstOnOrAfter(rule, this.iso().slice(0, 10));
+      if (!first) throw new CoreClientError("validation", "recurrence ends before today");
+      task.due = { kind: "date", date: first };
+    }
+    if (rule.interval < 1 || rule.interval > 999) throw new CoreClientError("validation", "interval must be 1..=999");
+    task.recurrence = anchored(rule, dueDay(task.due));
+  }
+
   // --- Sammelaktionen: ein Event je Aufruf, unbekannte IDs übersprungen (wie ADR-021) ---------
 
-  completeTasks = (ids: string[], done: boolean) =>
+  completeTasks = (ids: string[], done: boolean, today?: LocalDayDto) =>
+    this.run((): CompleteResultDto => {
+      const { rows, occurrences } = this.complete(this.existing(ids), done, today?.date ?? this.iso().slice(0, 10));
+      return { tasks: this.emitRows(rows), occurrences };
+    });
+
+  skipOccurrence = (id: string, today?: LocalDayDto) =>
     this.run(() => {
-      const status = done ? "done" : "open";
-      const changed = this.existing(ids).filter((row) => row.task.status !== status);
-      for (const row of changed) {
-        row.task.status = status;
-        row.task.completedAt = done ? this.iso() : null;
-        this.touch(row);
+      const row = this.row(id);
+      const t = row.task;
+      if (!t.recurrence || !t.due || t.status === "done") {
+        throw new CoreClientError("validation", `task ${id} is not an open recurring task`);
       }
-      return this.emitRows(changed);
+      const next = nextOccurrence(t.recurrence, dueDay(t.due), today?.date ?? this.iso().slice(0, 10));
+      if (next) {
+        t.due = dueOn(next, t.due);
+        t.checklist = t.checklist.map((i) => ({ ...i, done: false }));
+      } else Object.assign(t, { status: "done", completedAt: this.iso() });
+      this.touch(row);
+      this.emit([id], []);
+      return this.dto(row);
+    });
+
+  undoOccurrence = (occurrence: OccurrenceDto) =>
+    this.run(() => {
+      const row = this.row(occurrence.seriesId);
+      Object.assign(row.task, { status: "open", completedAt: null, due: { ...occurrence.previousDue } });
+      this.touch(row);
+      const ids = [row.task.id];
+      if (occurrence.occurrenceId && this.rows.delete(occurrence.occurrenceId)) ids.push(occurrence.occurrenceId);
+      this.emit(ids, []);
+      return this.dto(row);
     });
 
   setDues = (dues: TaskDueDto[]) =>
@@ -263,6 +518,43 @@ export class FakeCoreClient implements CoreClient {
       for (const row of rows) this.rows.delete(row.task.id);
       this.emitRows(rows);
       return before;
+    });
+
+  trashTasks = (ids: string[]) =>
+    this.run(() => {
+      const at = this.iso();
+      const changed = this.existing(ids).filter((row) => row.task.trashedAt == null);
+      for (const row of changed) {
+        row.task.trashedAt = at;
+        this.touch(row);
+      }
+      return this.emitRows(changed);
+    });
+
+  untrashTasks = (ids: string[]) =>
+    this.run(() => {
+      const changed = this.existing(ids).filter((row) => row.task.trashedAt != null);
+      for (const row of changed) {
+        row.task.trashedAt = null;
+        this.touch(row);
+      }
+      return this.emitRows(changed);
+    });
+
+  purgeTasks = (ids: string[]) =>
+    this.run(() => {
+      const rows = this.existing(ids).filter((row) => row.task.trashedAt != null);
+      for (const row of rows) this.rows.delete(row.task.id);
+      this.emitRows(rows);
+      return rows.length;
+    });
+
+  emptyTaskTrash = () =>
+    this.run(() => {
+      const rows = [...this.rows.values()].filter((row) => row.task.trashedAt != null);
+      for (const row of rows) this.rows.delete(row.task.id);
+      if (rows.length > 0) this.emitRows(rows);
+      return rows.length;
     });
 
   moveTasks = (ids: string[], target: MoveTargetDto) =>
@@ -335,22 +627,48 @@ export class FakeCoreClient implements CoreClient {
                 ? t.due != null && dueBy(t.due, view.day)
                 : view.kind === "upcoming"
                   ? t.due != null && !dueBy(t.due, view.day)
-                  : view.kind === "all"
+                  : view.kind === "all" || view.kind === "trash"
                     ? true
                     : t.status === "done";
-        return inView && (query.status == null || t.status === query.status);
+        // Papierkorb nur in seiner Ansicht (ADR-031).
+        const trashOk = (t.trashedAt != null) === (view.kind === "trash");
+        const tagOk = query.tag == null || t.tags.includes(query.tag);
+        const prioOk = query.priority == null || t.priority === query.priority;
+        return inView && trashOk && tagOk && prioOk && (query.status == null || t.status === query.status);
       });
+      // Sortierung (ADR-037) wie `TaskQuery::order` im Core.
+      const sort = query.sort ?? "view";
+      const order = byOrder(this.lists);
       rows =
-        view.kind === "completed"
+        view.kind === "trash"
+          ? rows.sort(byTrashed)
+          : view.kind === "completed"
           ? rows.sort(byCompleted)
-          : view.kind === "today" || view.kind === "upcoming"
-            ? rows.sort(byDue(view.day, byOrder(this.lists)))
-            : rows.sort(byOrder(this.lists));
+          : (view.kind === "today" || view.kind === "upcoming") && (sort === "view" || sort === "due")
+            ? rows.sort(byDue(view.day, order))
+            : sort === "due"
+              ? rows.sort((a, b) => roughInstant(a.task.due) - roughInstant(b.task.due) || order(a, b))
+              : sort === "priority"
+                ? rows.sort((a, b) => PRIORITY_RANK[b.task.priority] - PRIORITY_RANK[a.task.priority] || order(a, b))
+                : sort === "title"
+                  ? rows.sort((a, b) => cmp(asciiLower(a.task.title), asciiLower(b.task.title)) || cmp(a.task.id, b.task.id))
+                  : rows.sort(order);
       const start = page.cursor ? Number(page.cursor) : 0;
-      const items = rows.slice(start, start + page.limit).map((r) => summary(this.dto(r)));
+      const items = rows.slice(start, start + page.limit).map((r) => summary(this.dto(r), this.hasLinks(r.task.id)));
       const end = start + items.length;
       return { items, nextCursor: end < rows.length ? String(end) : null };
     });
+
+  countTasks = async (query: TaskQueryDto) => {
+    let n = 0;
+    let cursor: string | null = null;
+    do {
+      const page: PageDto<TaskSummaryDto> = await this.listTasks(query, { cursor, limit: PAGE_LIMIT_MAX });
+      n += page.items.length;
+      cursor = page.nextCursor;
+    } while (cursor);
+    return n;
+  };
 
   searchTasks = (text: string, limit: number) =>
     this.run((): TaskSummaryDto[] => {
@@ -361,8 +679,10 @@ export class FakeCoreClient implements CoreClient {
       const order = byOrder(this.lists);
       return [...this.rows.values()]
         .flatMap((row) => {
+          if (row.task.trashedAt != null) return [];
           const title = row.task.title.toLowerCase();
-          const notes = row.task.notes.toLowerCase();
+          // Punkte der Checkliste zählen wie die Notiz (ADR-034).
+          const notes = [row.task.notes, ...row.task.checklist.map((i) => i.text)].join("\n").toLowerCase();
           if (!terms.every((t) => title.includes(t) || notes.includes(t))) return [];
           return [{ row, done: row.task.status === "done", notesOnly: !terms.some((t) => title.includes(t)) }];
         })
@@ -373,6 +693,11 @@ export class FakeCoreClient implements CoreClient {
 
   // --- Anmeldung & Sync ----------------------------------------------------------------------
 
+  /** Export/Import gibt es nur in der Desktop-Shell; Tests setzen es bei Bedarf (ADR-032). */
+  data?: CoreClient["data"];
+  /** Erinnerungen/Hintergrund nur in der Desktop-Shell; Tests setzen es bei Bedarf (ADR-033). */
+  background?: CoreClient["background"];
+
   auth: CoreClient["auth"] = {
     info: () =>
       this.run(() => ({ provider: "Demo", notice: "Demo-Anmeldung ohne Server.", available: true })),
@@ -382,10 +707,6 @@ export class FakeCoreClient implements CoreClient {
         const flow = this.newId();
         this.flows.set(flow, this.loginPolls);
         return { kind: "openBrowser", flow, url: "https://login.example.invalid/", pollIntervalS: 1, expiresInS: 600 };
-      }),
-    openBrowser: (flow) =>
-      this.run(() => {
-        this.flow(flow);
       }),
     pollLogin: (flow) =>
       this.run((): AuthStepDto => {
@@ -416,6 +737,7 @@ export class FakeCoreClient implements CoreClient {
       this.run(() => {
         if (this.session) this.setStatus({ ...this.syncStatus, state: "idle", lastSuccess: this.iso() });
       }),
+    flush: () => this.run(() => undefined),
   };
 
   ready = () => this.run(() => undefined);
@@ -445,8 +767,11 @@ export class FakeCoreClient implements CoreClient {
     return fn();
   }
 
-  private emit(tasks: string[], lists: string[]) {
-    const event = { tasks, lists };
+  private emit(tasks: string[], lists: string[], tags: string[] = [], links: string[] = []) {
+    this.emitEvent({ tasks, lists, notes: [], noteFolders: [], tags, links });
+  }
+
+  private emitEvent(event: ChangedEventDto) {
     // Wie Tauri-Events: nach der Antwort des Aufrufs.
     queueMicrotask(() => {
       for (const cb of this.changeListeners) cb(event);
@@ -594,6 +919,17 @@ function byDue(day: LocalDayDto, then: (a: Row, b: Row) => number) {
   return (a: Row, b: Row) => instant(a.task.due) - instant(b.task.due) || then(a, b);
 }
 
+const PRIORITY_RANK: Record<string, number> = { none: 0, low: 1, medium: 2, high: 3 };
+const asciiLower = (s: string) => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
+
+/** Wie `Due::rough_instant` im Core. */
+function roughInstant(due: DueDto | null): number {
+  if (!due) return Number.MAX_SAFE_INTEGER;
+  if (due.kind === "dateTime") return Date.parse(due.at);
+  const [y, m, d] = due.date.split("-").map(Number);
+  return Date.UTC(y, m - 1, d);
+}
+
 function byCompleted(a: Row, b: Row): number {
   return cmp(b.task.completedAt ?? "", a.task.completedAt ?? "") || cmp(a.task.id, b.task.id);
 }
@@ -619,7 +955,12 @@ function dueBy(due: DueDto, day: LocalDayDto): boolean {
   return due.kind === "date" ? due.date <= day.date : due.at < day.end;
 }
 
-function summary(t: TaskDto): TaskSummaryDto {
+/** Papierkorb: zuletzt gelöschte zuerst, dann ID (wie der Core). */
+function byTrashed(a: Row, b: Row): number {
+  return (b.task.trashedAt ?? "").localeCompare(a.task.trashedAt ?? "") || a.task.id.localeCompare(b.task.id);
+}
+
+function summary(t: TaskDto, hasLinks = false): TaskSummaryDto {
   return {
     id: t.id,
     listId: t.listId,
@@ -630,5 +971,16 @@ function summary(t: TaskDto): TaskSummaryDto {
     hasNotes: t.notes.length > 0,
     sortKey: t.sortKey,
     completedAt: t.completedAt,
+    trashedAt: t.trashedAt,
+    recurring: t.recurrence != null,
+    checklistDone: t.checklist.filter((i) => i.done).length,
+    checklistTotal: t.checklist.length,
+    tags: [...t.tags],
+    hasLinks,
   };
+}
+
+/** Wie `normalize_tag_name`: `#` vorn weg, Leerzeichen zu `-`, 1–50 Zeichen. */
+function tagName(input: string): string {
+  return validName(input.trim().replace(/^#+/, ""), 50, "tag name").split(/\s+/).join("-");
 }

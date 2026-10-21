@@ -1,7 +1,7 @@
 import { FakeCoreClient, type TaskSummaryDto } from "@tasks/core-client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toasts } from "../components/toasts.svelte";
-import { BULK_LIMIT, completeManyWithUndo, deleteManyWithUndo, moveManyWithUndo } from "./task-actions";
+import { BULK_LIMIT, completeManyWithUndo, moveManyWithUndo, trashManyWithUndo } from "./task-actions";
 
 beforeEach(() => {
   toasts.items = [];
@@ -35,9 +35,9 @@ describe("bulk actions above the core limit", () => {
   it("deletes and restores more than 2 000 tasks in chunks, keeping the order", async () => {
     const { client, inbox, all, undo } = await setup();
     const before = (await all(inbox.id)).map((t) => t.title);
-    const del = vi.spyOn(client, "deleteTasks");
-    const restore = vi.spyOn(client, "restoreTasks");
-    const deleted = await deleteManyWithUndo(
+    const del = vi.spyOn(client, "trashTasks");
+    const restore = vi.spyOn(client, "untrashTasks");
+    const deleted = await trashManyWithUndo(
       client,
       (await all(inbox.id)).map((t) => t.id),
     );

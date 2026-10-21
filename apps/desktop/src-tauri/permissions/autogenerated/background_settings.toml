@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-background-settings"
+description = "Enables the background_settings command without any pre-configured scope."
+commands.allow = ["background_settings"]
+
+[[permission]]
+identifier = "deny-background-settings"
+description = "Denies the background_settings command without any pre-configured scope."
+commands.deny = ["background_settings"]

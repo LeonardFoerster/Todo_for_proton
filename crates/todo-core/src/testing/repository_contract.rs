@@ -13,7 +13,7 @@
 
 use futures::executor::block_on;
 
-pub use super::sync_contract::*;
+pub use super::{note_contract::*, note_sync_contract::*, sync_contract::*};
 
 use crate::{
     domain::{Due, LocalDay, NaiveDate, SortKey, Task, TaskId, TaskList, TaskListId, Timestamp},
@@ -54,6 +54,12 @@ macro_rules! repository_contract_tests {
             search_rejects_invalid_input,
             filter_completed_newest_first,
             filter_status_and_tag,
+            trash_view_hides_trashed_everywhere_else,
+            recurrence_roundtrips,
+            checklist_roundtrips_counts_and_is_searched,
+            tags_roundtrip_sort_by_name_and_filter_tasks,
+            links_roundtrip_filter_and_mark_tasks,
+            sorts_and_filters_page_like_the_core,
             summary_matches_task,
             sync_device_id_is_stable,
             commit_writes_ops_to_outbox,
@@ -73,7 +79,30 @@ macro_rules! repository_contract_tests {
             inboxes_of_two_devices_merge,
             sync_cursors_and_values_roundtrip,
             entity_states_export_everything,
+            notes_and_folders_roundtrip,
+            folder_items_are_mixed_paged_and_filter_trash,
+            search_notes_by_name_and_body,
+            search_follows_edits_and_deletes,
         );
+        $crate::repository_contract_tests!(@pairs $make;
+            note_body_edits_coalesce_until_frozen,
+            concurrent_note_edits_merge_cleanly,
+            conflicting_note_edits_create_one_copy,
+            purged_folder_rescues_offline_note,
+            folder_cycle_resolves_identically,
+            trash_and_edit_both_survive,
+            purge_wins_over_offline_edit,
+            acked_revisions_are_pruned,
+            note_state_survives_snapshot_roundtrip,
+        );
+    };
+    (@pairs $make:expr; $($case:ident),* $(,)?) => {
+        $(
+            #[test]
+            fn $case() {
+                $crate::testing::repository_contract::$case(|| $make);
+            }
+        )*
     };
     (@cases $make:expr; $($case:ident),* $(,)?) => {
         $(
@@ -112,6 +141,12 @@ pub fn run_all<R: TaskRepository>(make: impl Fn() -> R) {
     search_rejects_invalid_input(make());
     filter_completed_newest_first(make());
     filter_status_and_tag(make());
+    trash_view_hides_trashed_everywhere_else(make());
+    recurrence_roundtrips(make());
+    checklist_roundtrips_counts_and_is_searched(make());
+    tags_roundtrip_sort_by_name_and_filter_tasks(make());
+    links_roundtrip_filter_and_mark_tasks(make());
+    sorts_and_filters_page_like_the_core(make());
     summary_matches_task(make());
     sync_device_id_is_stable(make());
     commit_writes_ops_to_outbox(make());
@@ -131,6 +166,19 @@ pub fn run_all<R: TaskRepository>(make: impl Fn() -> R) {
     inboxes_of_two_devices_merge(make());
     sync_cursors_and_values_roundtrip(make());
     entity_states_export_everything(make());
+    notes_and_folders_roundtrip(make());
+    folder_items_are_mixed_paged_and_filter_trash(make());
+    search_notes_by_name_and_body(make());
+    search_follows_edits_and_deletes(make());
+    note_body_edits_coalesce_until_frozen(&make);
+    concurrent_note_edits_merge_cleanly(&make);
+    conflicting_note_edits_create_one_copy(&make);
+    purged_folder_rescues_offline_note(&make);
+    folder_cycle_resolves_identically(&make);
+    trash_and_edit_both_survive(&make);
+    purge_wins_over_offline_edit(&make);
+    acked_revisions_are_pruned(&make);
+    note_state_survives_snapshot_roundtrip(&make);
 }
 
 // --- Hilfen ------------------------------------------------------------------------------------
@@ -774,6 +822,265 @@ pub fn filter_status_and_tag<R: TaskRepository>(repo: R) {
         ..all()
     };
     assert!(f.ids(tagged, 10).is_empty());
+}
+
+/// Papierkorb (ADR-031): nur in [`SmartView::Trash`] (zuletzt gelöschte zuerst, seitenweise),
+/// sonst nirgends – auch nicht in der Suche.
+pub fn trash_view_hides_trashed_everywhere_else<R: TaskRepository>(repo: R) {
+    let f = setup(repo);
+    let mut t = f.add_tasks(f.inbox.id(), 4);
+    for (task, at) in t.iter_mut().zip([0, 30, 20, 10]) {
+        if at > 0 {
+            task.set_trashed(Some(Timestamp::from_millis(at)), &f.clock);
+        }
+        task.set_notes("Papierkorbtest", &f.clock);
+    }
+    f.save(&t);
+    assert_eq!(f.ids(all(), 10), [t[0].id()]);
+    assert_eq!(f.ids(TaskQuery::view(SmartView::Inbox), 10), [t[0].id()]);
+    for limit in [1, 2, 10] {
+        assert_eq!(
+            f.ids(TaskQuery::view(SmartView::Trash), limit),
+            [t[1].id(), t[2].id(), t[3].id()],
+            "Papierkorb, limit {limit}"
+        );
+    }
+    assert_eq!(f.search("Papierkorbtest", 10), ["Task 0"]);
+    let page = f
+        .page(TaskQuery::view(SmartView::Trash), None, 1)
+        .expect("page");
+    assert_eq!(page.items[0].trashed_at, Some(Timestamp::from_millis(30)));
+}
+
+/// Wiederholung (N4): Regel kommt unverändert zurück, die Zeile meldet „wiederkehrend“ nur mit Fälligkeit.
+pub fn recurrence_roundtrips<R: TaskRepository>(repo: R) {
+    let f = setup(repo);
+    let mut t = f.add_tasks(f.inbox.id(), 2);
+    let rule: crate::domain::Recurrence =
+        "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TH;ANCHOR=COMPLETION;UNTIL=2026-12-20"
+            .parse()
+            .expect("rule");
+    t[0].set_due(Some(Due::Date(date(20))), &f.clock)
+        .expect("due");
+    t[0].set_recurrence(Some(rule.clone()), None, &f.clock)
+        .expect("rule");
+    f.save(&t);
+    let back = block_on(f.repo.get_task(t[0].id()))
+        .expect("get")
+        .expect("da");
+    assert_eq!(back.recurrence(), Some(&rule));
+    assert_eq!(back, t[0]);
+    let page = f.page(all(), None, 10).expect("page");
+    let flags: Vec<bool> = page.items.iter().map(|s| s.recurring).collect();
+    assert_eq!(flags, [true, false]);
+}
+
+/// Checkliste (N8): Punkte kommen in Reihenfolge zurück, die Zeile zählt „erledigt/alle“, die Suche
+/// findet Punkttexte (lange und kurze Wörter).
+pub fn checklist_roundtrips_counts_and_is_searched<R: TaskRepository>(repo: R) {
+    use crate::{
+        domain::{ChecklistItem, ChecklistItemId},
+        ports::SearchQuery,
+    };
+    let f = setup(repo);
+    let mut t = f.add_tasks(f.inbox.id(), 2);
+    let items = vec![
+        ChecklistItem::new(ChecklistItemId::new(), "Brot", true).expect("item"),
+        ChecklistItem::new(ChecklistItemId::new(), "Äpfel kaufen", false).expect("item"),
+        ChecklistItem::new(ChecklistItemId::new(), "Ei", false).expect("item"),
+    ];
+    t[0].set_checklist(items.clone(), &f.clock)
+        .expect("checklist");
+    f.save(&t);
+    let back = block_on(f.repo.get_task(t[0].id()))
+        .expect("get")
+        .expect("da");
+    assert_eq!(back.checklist(), items.as_slice());
+    assert_eq!(back, t[0]);
+    let page = f.page(all(), None, 10).expect("page");
+    let counts: Vec<(u16, u16)> = page
+        .items
+        .iter()
+        .map(|s| (s.checklist_done, s.checklist_total))
+        .collect();
+    assert_eq!(counts, [(1, 3), (0, 0)]);
+    for text in ["äpfel", "ei"] {
+        let hits = block_on(f.repo.search_tasks(&SearchQuery {
+            text: text.into(),
+            limit: 10,
+        }))
+        .expect("search");
+        assert_eq!(
+            hits.iter().map(|h| h.id).collect::<Vec<_>>(),
+            [t[0].id()],
+            "{text}"
+        );
+    }
+    // Leeren entfernt die Punkte aus Zeile und Suche.
+    t[0].set_checklist(Vec::new(), &f.clock).expect("clear");
+    f.save(&t[..1]);
+    assert!(block_on(f.repo.search_tasks(&SearchQuery {
+        text: "äpfel".into(),
+        limit: 10
+    }))
+    .expect("search")
+    .is_empty());
+}
+
+/// Tags (ADR-035): gespeichert, nach Name sortiert (Groß/Klein egal), löschbar; die Zeile trägt
+/// die Tags der Task.
+pub fn tags_roundtrip_sort_by_name_and_filter_tasks<R: TaskRepository>(repo: R) {
+    use crate::domain::{Tag, TagId};
+    let f = setup(repo);
+    let b = Tag::new(TagId::new(), "bio", &f.clock).expect("tag");
+    let a = Tag::new(TagId::new(), "Analysis", &f.clock).expect("tag");
+    let z = Tag::new(TagId::new(), "zoo", &f.clock).expect("tag");
+    block_on(
+        f.repo.commit(
+            ChangeSet::new()
+                .upsert_tag(b.clone())
+                .upsert_tag(a.clone())
+                .upsert_tag(z.clone()),
+        ),
+    )
+    .expect("commit");
+    assert_eq!(
+        block_on(f.repo.list_tags()).expect("tags"),
+        [a.clone(), b.clone(), z.clone()]
+    );
+    assert_eq!(
+        block_on(f.repo.get_tag(b.id())).expect("get"),
+        Some(b.clone())
+    );
+    let mut t = f.add_tasks(f.inbox.id(), 2);
+    t[0].set_tags(vec![b.id(), a.id()], &f.clock).expect("tags");
+    f.save(&t);
+    let page = f.page(all(), None, 10).expect("page");
+    assert_eq!(page.items[0].tags, [b.id(), a.id()]);
+    let tagged = TaskQuery {
+        tag: Some(a.id()),
+        ..TaskQuery::view(SmartView::All)
+    };
+    let page = f.page(tagged, None, 10).expect("page");
+    assert_eq!(
+        page.items.iter().map(|s| s.id).collect::<Vec<_>>(),
+        [t[0].id()]
+    );
+    block_on(
+        f.repo
+            .commit(ChangeSet::new().delete(EntityRef::Tag(z.id()))),
+    )
+    .expect("delete");
+    assert_eq!(block_on(f.repo.list_tags()).expect("tags").len(), 2);
+}
+
+/// Verknüpfungen (ADR-036): gespeichert, nach Task bzw. Notiz gefiltert, löschbar; die Zeile der
+/// Task meldet „verknüpft“.
+pub fn links_roundtrip_filter_and_mark_tasks<R: TaskRepository>(repo: R) {
+    use crate::domain::{Link, LinkId, NoteId};
+    let f = setup(repo);
+    let t = f.add_tasks(f.inbox.id(), 2);
+    let (n1, n2) = (NoteId::new(), NoteId::new());
+    let a = Link::new(LinkId::between(t[0].id(), n1, 0), t[0].id(), n1, &f.clock);
+    let b = Link::new(LinkId::between(t[0].id(), n2, 0), t[0].id(), n2, &f.clock);
+    let c = Link::new(LinkId::between(t[1].id(), n1, 0), t[1].id(), n1, &f.clock);
+    block_on(
+        f.repo.commit(
+            ChangeSet::new()
+                .upsert_link(a)
+                .upsert_link(b)
+                .upsert_link(c),
+        ),
+    )
+    .expect("commit");
+    let of_task = block_on(f.repo.list_links(Some(t[0].id()), None)).expect("links");
+    assert_eq!(of_task.len(), 2);
+    assert!(of_task.contains(&a) && of_task.contains(&b));
+    let of_note = block_on(f.repo.list_links(None, Some(n1))).expect("links");
+    assert_eq!(
+        of_note
+            .iter()
+            .map(Link::id)
+            .collect::<std::collections::BTreeSet<_>>(),
+        [a.id(), c.id()].into()
+    );
+    assert_eq!(
+        block_on(f.repo.list_links(None, None)).expect("all").len(),
+        3
+    );
+    block_on(
+        f.repo
+            .commit(ChangeSet::new().delete(EntityRef::Link(c.id()))),
+    )
+    .expect("delete");
+    let page = f.page(all(), None, 10).expect("page");
+    let flags: Vec<bool> = page.items.iter().map(|s| s.has_links).collect();
+    assert_eq!(flags, [true, false]);
+}
+
+/// Sortierungen und Prioritätsfilter (N10-01, ADR-037), seitenweise zu je 2 – alle Cursor-Arten.
+pub fn sorts_and_filters_page_like_the_core<R: TaskRepository>(repo: R) {
+    use crate::{
+        domain::{Priority, Timestamp},
+        ports::TaskSort,
+    };
+    let f = setup(repo);
+    let mut t = f.add_tasks(f.inbox.id(), 5);
+    let titles = ["banane", "Apfel", "cola", "apfelmus", "Dattel"];
+    let prios = [
+        Priority::Low,
+        Priority::High,
+        Priority::None,
+        Priority::High,
+        Priority::Medium,
+    ];
+    let dues = [
+        Some(Due::Date(date(22))),
+        None,
+        Some(Due::DateTime {
+            at: Timestamp::from_millis(1_792_584_000_000), // 21.10.2026 12:00 UTC
+            tz: "Europe/Berlin".into(),
+        }),
+        Some(Due::Date(date(21))),
+        None,
+    ];
+    for (i, task) in t.iter_mut().enumerate() {
+        task.rename(titles[i], &f.clock).expect("title");
+        task.set_priority(prios[i], &f.clock);
+        task.set_due(dues[i].clone(), &f.clock).expect("due");
+    }
+    f.save(&t);
+    let ids = |sort: TaskSort, priority: Option<Priority>| {
+        f.ids(
+            TaskQuery {
+                sort,
+                priority,
+                ..all()
+            },
+            2,
+        )
+    };
+    let by = |order: &[usize]| order.iter().map(|&i| t[i].id()).collect::<Vec<_>>();
+    assert_eq!(ids(TaskSort::View, None), by(&[0, 1, 2, 3, 4]));
+    // Fälligkeit: 21. ganztägig (Mitternacht UTC) < 21. 12:00 < 22.; ohne zuletzt (eigene Reihenfolge).
+    assert_eq!(ids(TaskSort::Due, None), by(&[3, 2, 0, 1, 4]));
+    // Priorität: hoch (1, 3), mittel (4), niedrig (0), keine (2).
+    assert_eq!(ids(TaskSort::Priority, None), by(&[1, 3, 4, 0, 2]));
+    // Titel ohne Groß/Klein: Apfel, apfelmus, banane, cola, Dattel.
+    assert_eq!(ids(TaskSort::Title, None), by(&[1, 3, 0, 2, 4]));
+    assert_eq!(ids(TaskSort::Title, Some(Priority::High)), by(&[1, 3]));
+    assert_eq!(ids(TaskSort::View, Some(Priority::None)), by(&[2]));
+    // Zähler (FIX-04) mit denselben Filtern.
+    let count = |q: TaskQuery| block_on(f.repo.count_tasks(&q)).expect("count");
+    assert_eq!(count(all()), 5);
+    assert_eq!(
+        count(TaskQuery {
+            priority: Some(Priority::High),
+            ..all()
+        }),
+        2
+    );
+    assert_eq!(count(TaskQuery::view(SmartView::Trash)), 0);
 }
 
 /// Die Zusammenfassung entspricht `TaskSummary::from(&task)`.

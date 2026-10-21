@@ -415,6 +415,10 @@ Snapshot). Doppelte Listennamen sind nach dem ersten Login möglich und für den
 
 ---
 
+**Nachtrag (2026-10-21, N10-03):** Zusammenführen umgesetzt – `merge_task_lists(source, target)` hängt alle Tasks
+(auch erledigte und im Papierkorb) ans Ende des Ziels und löscht die Quelle in einem Commit; die UI bietet
+gleichnamige Listen (Groß/Klein egal) einmal je Sitzung per Toast an.
+
 ## ADR-021 · Sammel-Operationen in der Core-API
 
 **Status:** akzeptiert (2026-10-18, P0-01)
@@ -538,7 +542,7 @@ Escape-Sequenzen in der Dev-CLI) und Leads (Login-URL in der Kommandozeile, unbe
    `*.proton.me`; Dateien ≤ 128 MiB, Seiten-, Tiefen- und Eintragsgrenzen beim Listen; Namen mit `/`, `\`, `.`, `..`
    oder Steuerzeichen werden übersprungen; Decode-Fehler zitieren keine Server-Werte.
 6. **Login:** Die Login-URL (Fork-Schlüssel im Fragment) geht als private HTML-Datei (`$XDG_RUNTIME_DIR`, 0600) an
-   `xdg-open`, nicht als Argument. Selector/User-Code werden geprüft und im Pfad prozentkodiert; eine ersetzte Sitzung
+   `xdg-open`, nicht als Argument (Desktop seit ADR-038: kein automatisches Öffnen mehr). Selector/User-Code werden geprüft und im Pfad prozentkodiert; eine ersetzte Sitzung
    wird serverseitig beendet; Abmelden löscht Sitzung und Schlüssel unabhängig voneinander.
 7. **Desktop:** Selbsttest-Commands nur im Debug-Build registriert, `freezePrototype`, kein natives Drag-and-drop,
    Datenverzeichnis 0700, Runner an ein Konto gebunden. **Dev-Adapter/CLI:** `FsRemoteStore` lehnt Symlinks unterhalb
@@ -623,9 +627,42 @@ eine eigene Antwort (Standard-Implementierung oder SQLite-WASM mit FTS5).
 
 ---
 
+## ADR-028 · Wiederkehrende Tasks: Serie mit fortgeschriebener Fälligkeit + deterministische Verlaufseinträge
+
+**Status:** akzeptiert (2026-10-21, N4-01/02; freigegeben vom User mit den vorgeschlagenen Antworten)
+**Kontext:** Routinen („jeden Fr“, „monatlich am 1.“) fehlten. Sie müssen offline auf mehreren Geräten ohne Duplikate
+funktionieren. Verworfen: vorab erzeugte Instanzen bzw. beim Abhaken eine neue Task mit Zufalls-ID – beide doppeln,
+wenn zwei Geräte offline dasselbe Vorkommen abhaken.
+**Entscheidung:**
+1. **Eine Task = eine Serie.** Feld `recurrence: Option<Recurrence>`; `due` ist immer das nächste offene Vorkommen.
+   Ansichten zeigen nur dieses, zukünftige werden nicht hochgerechnet.
+2. **Regel = RRULE-Teilmenge** (`domain/recurrence.rs`): `freq` täglich/wöchentlich/monatlich/jährlich, `interval`
+   1–999, `weekdays` (nur wöchentlich, Bitmaske), `month_day` (monatlich **und** jährlich – abweichend vom Entwurf, damit
+   ein jährlicher 29.02. nach dem 28.02. wieder zum 29.02. wird; 31 → letzter Tag), `anchor` fester Rhythmus/nach
+   Erledigung, `until`. Beim Setzen „verankert“ der Use-Case implizite Teile an der Fälligkeit (Wochentag bzw.
+   Monatstag), damit nichts driftet. Textform `FREQ=…;INTERVAL=…;BYDAY=…;BYMONTHDAY=…;ANCHOR=COMPLETION;UNTIL=…` in
+   SQLite (Migration 0006), binär im Op (`FieldName::Recurrence`, Code 17; LWW auf die ganze Regel).
+3. **Verpasste Vorkommen** werden übersprungen: nächstes Vorkommen nach der alten Fälligkeit, das ≥ heute ist (heute
+   liefert der Aufrufer, `LocalDay`). „Nach Erledigung“: ab dem Tag des Abhakens.
+4. **Abhaken** = **ein** Commit: Verlaufseintrag (erledigte Kopie des Vorkommens, ohne Regel) mit **deterministischer
+   ID** `UUIDv5(Serien-ID, Datum des Vorkommens)` (Ausnahme von „UUIDv7 an allen Grenzen“) und Fortschreiben von `due`
+   (LWW). Zwei Geräte, die offline dasselbe Vorkommen abhaken, erzeugen dieselbe ID → ein Eintrag. Liegt das nächste
+   Vorkommen nach `until`, wird die Serie selbst erledigt (kein zusätzlicher Eintrag).
+5. **Uhrzeit:** Das nächste Vorkommen behält die lokale Uhrzeit in `tz`, auch über die Zeitumstellung – über den Port
+   `TimeZones` (Desktop: `jiff` mit System-tzdb, schon für N7 im Binary). Ohne Port gehen nur ganztägige Serien
+   (`Validation` bei Uhrzeit).
+6. Eine Regel **ohne Fälligkeit** ist wirkungslos, aber kein Fehler beim Laden – ein Merge (A entfernt die Fälligkeit,
+   B setzt die Regel) darf eine Task nicht verschwinden lassen. Gesetzt wird sie nur mit Fälligkeit.
+**Konsequenzen:** Ältere Apps überspringen Segmente mit Feld 17 („App aktualisieren“); alle Geräte gemeinsam
+aktualisieren. Bekannte Grenze: Hakt A offline zweimal ab und B einmal, kann LWW die `due` auf B's früheren Wert setzen
+(selten, sichtbar, erneutes Abhaken korrigiert). Golden `ops_v1_recurrence.bin`, Property-Tests für die Regel
+(Ergebnis > vorher, ≥ min, passt zur Regel, monoton) und den Merge (Regel an/aus).
+
+---
+
 ## ADR-029 · Notes: Notizen im Op-Log, Inhalt als Revisions-DAG mit deterministischem 3-Wege-Merge
 
-**Status:** vorgeschlagen (2026-10-20, Entwurf mit dem User geklärt; wird mit N5-01/N5-02 akzeptiert). Details:
+**Status:** akzeptiert (2026-10-20, User-Freigabe zur Umsetzung; Domain mit N5-01, Merge mit N5-02). Details:
 `notes.md`.
 **Kontext:** Die App bekommt einen zweiten Modus „Notes" mit `.txt`- und `.md`-Notizen in verschachtelten Ordnern,
 offline-first und über Proton Drive synchronisiert. Feld-LWW für den Inhalt (wie `Task.notes`) verliert bei
@@ -656,6 +693,262 @@ Alle Geräte müssen gleichzeitig aktualisieren. diff3-Crate (Kandidat `diffy`) 
 geprüft. Revisionen werden lokal aufgeräumt, sobald alle aktiven Geräte einen Nachfahren gesehen haben. Fehlt eine
 Basis trotzdem, entsteht eine Konfliktkopie, kein Verlust. Gleichzeitiges Bearbeiten und endgültiges Löschen verliert
 die Bearbeitung (bewusst, User-Entscheidung 2026-10-20).
+**Nachtrag N5-02 (2026-10-20):** Kein `diffy`, eigener Diff in `sync/text_merge.rs` (~250 Zeilen): Myers mit
+Präfix-/Suffix-Abgleich, ab 1 000 Bearbeitungsschritten ein einziger Hunk (begrenzt Laufzeit und Speicher bei völlig
+neuen Texten; dann eben Konfliktkopie). Grund: Die Regel „benachbarte Zeilen sind kein Konflikt, dieselbe Zeile
+schon" (klassisches diff3/Git wertet Nachbarzeilen als Konflikt) lässt sich so direkt umsetzen, und es kommt keine
+Abhängigkeit dazu. Konflikt = zwei Hunks betreffen dieselbe Basiszeile, zwei verschiedene Einfügungen an derselben
+Stelle oder eine Einfügung mitten in einem ersetzten Bereich; gleiche Änderungen beider Seiten zählen einmal.
+Merge-Basis: gemeinsamer Vorfahr; gibt es mehrere gleichrangige (Kreuz-Merges), wird ihre eigene Auflösung die Basis
+(wie Git „recursive"). Zwei unabhängige erste Revisionen setzen auf dem leeren Text auf. Köpfe mit gleichem Text
+brauchen keine Merge-Revision; die nächste Bearbeitung nennt sie alle als Eltern (`parents_for_edit`).
+**Nachtrag N5-03 (2026-10-20):**
+- **Format:** `EntityRef::Note`/`NoteFolder`, Felder `ParentFolder` (13), `NoteKind` (14), `AutoName` (15), `Trashed`
+  (16), Werte `Folder`, `NoteKind`, `Trashed`, `OpKind::Revise` – alles angehängt; Golden File `ops_v1_notes.bin`,
+  `ops_v1.bin` unverändert. Snapshot-Format **Version 2** hängt die gespeicherten Revisionen als `Revise`-Ops an
+  (`SnapshotBody.revisions`); Version 1 bleibt lesbar, ältere Apps überspringen Version 2 („neueres Format").
+- **Auto-Name ist kein Sync-Feld:** Mit `auto_name` leitet jedes Gerät den Namen aus dem *aufgelösten* Inhalt ab
+  (`Name` wird erst nach dem ersten Umbenennen synchronisiert). Sonst könnte nach einem Merge der LWW-Name zum
+  unterlegenen Text passen, und jeder Tastendruck in der ersten Zeile erzeugte ein `Set`.
+- **`ResolveNoteHeads` läuft im selben Commit** (User-Entscheidung 2026-10-20): `record_local` und `apply_remote`
+  legen nach jeder Änderung Köpfe mit verschiedenem Text zu einer Merge-Revision zusammen (lokale Op in der Outbox)
+  und legen Konfliktkopien an; die UI sieht nie einen ungemergten Stand. Kein eigener Engine-Schritt.
+- **Konfliktkopie** heißt „<Name> (Konflikt TT.MM.JJJJ)" (Datum der unterlegenen Revision, UTC) ohne Gerätenamen
+  (User-Entscheidung 2026-10-20): Der Core kennt die Namen anderer Geräte nicht, und das Ergebnis ist überall gleich.
+  Existiert die Kopie schon (anderes Gerät war schneller) oder ist sie gelöscht, entsteht keine zweite.
+- **Zusammenfassen in der Outbox:** Ersetzt werden die neueste ungepushte `Revise`-Op (wenn sie Kopf und Basis der
+  Bearbeitung ist) und ungepushte `Set`s derselben Notiz und desselben Felds – mit **gleicher Nummer** und neuer HLC
+  (Segmente verlangen lückenlose Nummern). **Rennen mit dem Upload:** Die Engine ruft vor jedem Upload
+  `freeze_outbox(seq_to)` (persistent); ab dann sind diese Ops unveränderlich, auch nach Abbruch oder Absturz. Sonst
+  könnte eine Bearbeitung zwischen Lesen und `mark_ops_pushed` verloren gehen oder dieselbe Op-ID mit zwei Inhalten
+  im Backend landen. SQLite findet die Kandidaten über `outbox_ops.entity_id/slot` (Migration 0004).
+- **Segmente** sind zusätzlich auf 2 MiB Klartext begrenzt (`MAX_SEGMENT_PLAIN_BYTES`).
+- **Aufräumen** (§4.5) läuft mit der Kompaktierung nach einem eigenen Snapshot: je Ursprungsgerät die kleinste
+  gesehene Op-Nummer über alle aktiven Geräte (`devices/*.json`, 90 Tage); eine unlesbare Gerätedatei verhindert es.
+- **Scheduler:** `SchedulerEvent::ContentChange` (Debounce 3 s, höchstens 30 s, solange die Serie nur Inhalte
+  enthält) und `Flush` (sofort, wenn etwas wartet – Notiz-/Moduswechsel). Nachtrag zu ADR-022.
+- **Ports:** `NoteRepository` (Lesen) ist Supertrait von `TaskRepository`; so bleibt es bei einem Repository für
+  `CoreApi`, Engine und Shells. Neue Sync-Methoden `freeze_outbox`, `revision_ops`, `prune_revisions`.
+**Nachtrag N5-04 (2026-10-20):**
+- `NoteRepository`: `list_note_folders` (alle, wenige), `list_folder_items` (Ordner und Notizen gemischt nach
+  `sort_key`, Cursor `sort_key:id`, Papierkorb nur auf Wunsch), `list_trashed_notes`, `last_note_sort_key`,
+  `search_notes` (Standard O(n), SQLite über `notes_fts`). Treffer, Rang (Name vor Inhalt, dann zuletzt geändert)
+  und Ausschnitt (±40 Zeichen, Position in UTF-16 für den Editor) berechnet der Core (`NoteHit::of`), damit alle
+  Speicher dasselbe liefern; der Index sucht nur Kandidaten.
+- **Suche nur aus Wörtern unter 3 Zeichen** sucht nur im Namen (`NOTE_SEARCH_MIN_BODY_TERM`): `LIKE` über ~40 MB
+  Inhalt dauerte 82 ms, und ein, zwei Buchstaben treffen ohnehin fast jede Notiz. Gemischte Suchen („ve konvergenz")
+  prüfen kurze Wörter weiter im Inhalt (dann nur unter den Index-Kandidaten).
+- SQLite: `notes.body` ist die **letzte Spalte** (Überlaufseiten werden für Baum, Papierkorb und Suche nicht
+  geladen: Ordner mit 500 Einträgen 2,7 → 0,3 ms); Eltern der Revisionen zusätzlich als Kanten
+  (`note_revision_parents`), damit ein Autosave nur die Köpfe statt aller Revisionstexte lädt (22 → 2 ms bei
+  200 Revisionen); die Suche rankt erst IDs und liest dann höchstens `limit` Notizen.
+- Messung (`bench_storage`, 2 000 Notizen à 20 KB, Wortschatz mit Füllwörtern): Ordner 500 Einträge 0,3 ms, Notiz
+  öffnen 0,02 ms, Autosave 1,4 ms (ersetzt) / 2,3 ms (neue Revision), Suche p95 0,1–14,5 ms. Schlimmster Fall
+  (24 Wörter, jedes in jeder Notiz dutzendfach): 19 ms, davon 13 ms FTS selbst – nur zur Information.
+- `TaskRepository` wird **nicht** in `Repository` umbenannt (optional laut Plan; rein kosmetisch, viele Stellen).
+
+---
+
+## ADR-030 · Schrift Inter mitgeliefert (P5-01)
+
+**Status:** akzeptiert (2026-10-21, P5-01)
+**Kontext:** `--font-sans` begann mit `system-ui`; auf Linux ist das je nach Distribution Noto Sans, Cantarell oder
+DejaVu. Die App hatte damit keine eigene Typografie, Ziffernbreiten und Laufweiten schwankten zwischen Systemen.
+`ui-guidelines.md` §7 erlaubt **eine** variable WOFF2 im Bundle (offline).
+**Entscheidung:**
+1. Inter Variable 5.3 (Fontsource-Paket `@fontsource-variable/inter`, einmalig kopiert, **keine** npm-Abhängigkeit),
+   nur Latin-Subset und Achse `wght`: `packages/ui/src/assets/fonts/inter-latin-wght-normal.woff2`, 48 KB, Lizenz
+   SIL OFL 1.1 (`OFL.txt` daneben). Zeichen außerhalb des `unicode-range` fallen auf die Systemschrift zurück.
+2. `@font-face` in `tokens.css` mit `font-display: swap`; `--font-sans` beginnt mit „Inter Variable", danach der
+   bisherige System-Stack. `--font-mono` bleibt System.
+3. Ziffern bleiben proportional; `tabular-nums` nur gezielt (Zähler, Daten, Uhrzeiten, Statuszeilen).
+**Konsequenzen:** Release-Binary +48 KB (22 060 040 → 22 109 224 B). Messung `MODE=tasks tools/measure-desktop.sh`
+(7 Läufe): Start bis erster Paint 338 → 347 ms Median (Ziel < 400 ms), PSS 254 → 251–257 MB (Streuung wie vorher),
+Leerlauf-CPU 0 %. Für die Web-App kommt die Datei als eigenes Asset hinzu (zählt nicht zum JS-Budget).
+Nachmessung am Ende von P5 (2026-10-21, alle Stände direkt nacheinander gebaut, `MODE=tasks`, 5 Läufe, 20 s Leerlauf –
+das System lag inzwischen ~30 MB höher als bei der ersten Messung): vor P5 349 ms / 286 MB, nach P5-01 (Schrift)
+358 ms / 297 MB, Ende P5 376 ms / 303–310 MB. Die Schrift kostet damit ~10 ms und ~10 MB PSS (Glyphen-Caches im
+WebProcess); Start bleibt unter dem Ziel, PSS unter der harten Grenze (das 250-MB-Ziel ist seit N0-02 zurückgestellt).
+
+---
+
+## ADR-031 · Papierkorb für Tasks: LWW-Feld `Trashed`, Wiederherstellen mit gleicher ID
+
+**Status:** akzeptiert (2026-10-21, N6-01)
+**Kontext:** Gelöschte Tasks ließen sich nur über den Hinweis „Rückgängig“ (6 s) zurückholen, und zwar als Kopie mit
+neuer ID (`restore_tasks`, ADR-021), weil ein `Delete` endgültig ist (Tombstone, „Delete gewinnt“). Danach waren sie
+weg – auf allen Geräten. Notizen haben seit ADR-029 einen Papierkorb über das LWW-Feld `Trashed`.
+**Entscheidung:**
+1. Tasks bekommen dasselbe Feld: `FieldName::Trashed` (Code 16, kein neuer Code) gehört jetzt auch zu
+   `FieldName::TASK`; `Task.trashed_at: Option<Timestamp>`. In den Papierkorb = `Set Trashed = Some(jetzt)`,
+   zurück = `Set Trashed = None` mit **gleicher ID** (kein Tombstone ⇒ Bearbeiten und Wegwerfen auf zwei Geräten
+   konfliktfrei, beides bleibt). Erneutes Wegwerfen behält den ersten Zeitpunkt (Frist).
+2. Endgültig = `Delete` (wie bisher): einzeln aus dem Papierkorb, „Papierkorb leeren“ und automatisch nach 30 Tagen
+   (`PurgeExpiredTasks`, beim Start/Fokus höchstens täglich – wie Notizen).
+3. Neue Ansicht `SmartView::Trash` (angehängt), zuletzt gelöschte zuerst, Cursor-Art `t`. Alle anderen Ansichten und
+   die Suche blenden Papierkorb-Tasks aus (`TaskQuery::matches`, SQLite `trashed_at IS NULL`, Teilindex
+   `tasks_by_trash`, Migration 0005). Zähler und Board folgen damit automatisch.
+4. `materialize_task` liest `Trashed` mit Standard `None`, wenn das Register fehlt (bestehende Tasks haben keins –
+   mit `?` verschwänden sie lokal). `DeleteTaskList` nimmt auch Papierkorb-Tasks der Liste mit in den Eingang.
+5. `delete_tasks`/`restore_tasks` bleiben (CLI, Rückwärtskompatibilität des `CoreClient`); die UI löscht über den
+   Papierkorb.
+**Konsequenzen:** Ältere App-Versionen lehnen Ops mit `Trashed` an einer Task ab und überspringen das Segment
+(„App aktualisieren“, ADR-016); neue Tasks tragen das Feld schon im `Create`. Alle Geräte gemeinsam aktualisieren.
+Golden `ops_v1_task_trash.bin`; Property-Test um Papierkorb an/aus erweitert; Szenario
+`trash_and_concurrent_edit_both_survive`. Nebenbei behoben (FIX-13): `CoreApi` leitete `search_tasks` nicht an das
+Repository weiter und suchte per O(n)-Standard statt FTS5.
+
+---
+
+## ADR-032 · Export/Import: `tasks.json` + Notizen als Dateien, Import mit neuen IDs
+
+**Status:** akzeptiert (2026-10-21, N6-04)
+**Kontext:** Es gab keinen Weg, die Daten außerhalb der App zu sichern oder zu lesen. Für eine verschlüsselte,
+offline-first App ist das auch eine Vertrauensfrage (User 2026-10-21: „JSON + Notizen als Dateien“, mit Import).
+**Entscheidung:**
+1. Export (nur Desktop) in einen gewählten Ordner: `Tasks-Export-JJJJ-MM-TT/` (Datum lokal aus der UI; gibt es den
+   Ordner schon, „… (2)“) mit `tasks.json` = `ExportDto { format: "tasks-export", version: 1, exportedAt, lists,
+   tasks }` (`TaskDto` mit allen Feldern, auch erledigte und Papierkorb; der Eingang heißt „Eingang“) und
+   `notizen/<Ordner>/<Name>.md|.txt` für alle Notizen außerhalb des Papierkorbs (Namen bereinigt, Gleichnamige
+   „(2)“). Schreiben macht die Shell; der Core liefert `export_data` und `export_notes`.
+2. Import liest eine `tasks.json` (≤ 64 MB, Version ≤ 1): Listen über den Namen (Groß/Klein egal), der Eingang auf
+   den Eingang, fehlende werden angelegt. Tasks bekommen **neue IDs** – eine alte ID kann auf einem anderen Gerät
+   schon gelöscht sein, „Delete gewinnt“ nähme sie dort sofort wieder weg – und behalten sonst alle Felder (wie
+   `RestoreTasks`, ADR-021); Papierkorb-Tasks landen wieder im Papierkorb. Übersprungen wird, was es schon gibt
+   (gleiche Liste, gleicher Titel, gleiches `createdAt`), so ist ein zweiter Import harmlos. Commits zu je 500.
+3. Notizen werden über das vorhandene „Ordner importieren…“ (N5-11) zurückgespielt – der `notizen/`-Ordner passt.
+4. Auswahl über das XDG-Desktop-Portal (ashpd, wie N5-11), keine neue Abhängigkeit; `serde_json` war schon im Binary.
+**Konsequenzen:** Export ist lesend (kein Sync-Auslöser), Import meldet eine Änderung. IDs ändern sich beim
+Wiederherstellen; Verknüpfungen (N9) gehen dabei verloren, bis das Format sie abbildet (dann `version: 2`).
+
+---
+
+## ADR-033 · Erinnerungen: lokal je Gerät, ein Timer, Tray und Autostart
+
+**Status:** akzeptiert (2026-10-21, N7-01/02)
+**Kontext:** Fälligkeiten mit Uhrzeit meldeten sich nie. Der User will Meldungen zur Fälligkeit, ganztägige morgens
+(einstellbar), auch bei geschlossenem Fenster; Autostart optional (2026-10-21).
+**Entscheidung:**
+1. **Nur lokal, nicht synchronisiert.** Jedes Gerät meldet selbst; Einstellungen (an/aus, Uhrzeit für ganztägige
+   `HH:MM`, Standard 09:00, „im Hintergrund weiterlaufen“, Autostart) liegen in `settings.json` im Datenordner
+   der Shell, „schon gemeldet“ als `(Task-ID, Zeitpunkt)` in `reminders.json` (verschobene Fälligkeit = neuer
+   Zeitpunkt = neue Meldung; Einträge älter als 2 Tage fallen weg).
+2. **Planung als reine Funktion** (`reminders/plan.rs`): mit Uhrzeit genau dann, ganztägig um die Uhrzeit in der
+   Systemzone (`jiff`, System-tzdb; Lücke → später, doppelt → früher). Fällig = Zeitpunkt in (jetzt − 24 h, jetzt]
+   und noch nicht gemeldet – verpasste (App aus, Ruhezustand) kommen beim Start/Aufwachen **zusammengefasst**,
+   ältere nicht mehr. Nur offene Tasks außerhalb des Papierkorbs.
+3. **Kein Polling:** ein einziger Timer auf die nächste Erinnerung, neu geplant bei jeder Task-Änderung (Core-Event,
+   entprellt), Einstellungen und Fokus. Damit ein Ruhezustand den Timer nicht verschiebt (monotone Uhr), wacht er
+   höchstens alle 15 min auf – **nur solange eine Erinnerung ansteht**; ohne anstehende gibt es keinen Timer.
+4. **Benachrichtigung über das XDG-Desktop-Portal** (ashpd, Feature `notification`; ashpd/zbus sind schon im
+   Binary), Klick öffnet die Task (Fenster zeigen, `app://open-task`).
+5. **Hintergrund:** Ist „im Hintergrund weiterlaufen“ an, versteckt das Schließen das Fenster (Notizen werden wie
+   bisher erst gespeichert) und ein Tray-Symbol (Tauri `tray-icon`, StatusNotifierItem über libayatana-appindicator)
+   bietet Öffnen, Neue Task, Beenden. Autostart = `~/.config/autostart/dev.tasks.app.desktop` mit `--hidden`.
+   Eine zweite Instanz (Starter, während die App im Tray läuft) meldet sich über einen Unix-Socket im Datenordner
+   bei der ersten (Fenster zeigen) und beendet sich – zwei Prozesse auf derselben Datenbank darf es nicht geben.
+**Konsequenzen:** Neue Abhängigkeit `jiff` (System-tzdb, ohne eingebaute Datenbank; später auch für N4) und die
+Tauri-Features `tray-icon`; Größe und PSS im Commit. Ohne Portal oder Tray (andere Desktops) läuft die App normal
+weiter (Warnung im Log), Meldungen fehlen dann.
+
+## ADR-034 · Checkliste an der Task: ein LWW-Feld mit Punkten
+
+**Status:** akzeptiert (2026-10-21, N8-01)
+**Kontext:** Der User will Unterpunkte als **Checkliste in der Task** (2026-10-21), keine Subtasks mit eigener
+Fälligkeit. Das bestehende `parent_id` bleibt ungenutzt.
+**Entscheidung:**
+1. `Task.checklist: Vec<ChecklistItem { id: ChecklistItemId (UUIDv7), text, done }>`, Reihenfolge = Anzeige. Text
+   einzeilig wie ein Titel (Steuerzeichen raus, 1–500 Zeichen), höchstens **100** Punkte, IDs eindeutig – lokal,
+   beim Wiederherstellen und beim Lesen aus dem Sync geprüft.
+2. **Ein Feld** `Checklist` (Code 18), LWW auf die ganze Liste (wie die Tags in v1): parallele Änderungen an der
+   Checkliste derselben Task → die spätere gewinnt ganz. Bewusst einfach; Punkte als eigene Entitäten (OR-Set) erst,
+   wenn das im Alltag stört. Fehlt das Register (ältere Tasks) → leer.
+3. API: `TaskDto.checklist`, `TaskPatchDto.checklist` ersetzt die ganze Liste (leere `id` = neuer Punkt, der Core
+   vergibt sie); `TaskSummaryDto.checklistDone/checklistTotal` für „2/5" in der Zeile ohne die Punkte zu laden.
+4. SQLite (Migration 0007): Spalte `checklist` (Zeilen `id<TAB>0|1<TAB>Text`), `checklist_text` (nur Texte) im
+   Volltextindex (`tasks_fts` mit dritter Spalte neu aufgebaut), Zähler als eigene Spalten.
+5. Serien (ADR-028): Das nächste Vorkommen beginnt ohne Haken, der Verlaufseintrag behält sie.
+**Konsequenzen:** Ältere Apps kennen Code 18 nicht und überspringen solche Segmente (wie bei ADR-028/031) –
+„alle Geräte aktualisieren". Die Suche zählt Punkttreffer wie Notiztreffer.
+
+## ADR-035 · Tags als eigene Entity mit aus dem Namen abgeleiteter ID
+
+**Status:** akzeptiert (2026-10-21, N8-02)
+**Kontext:** `Task.tags` (Feld `Tags`, LWW auf die Menge) gab es seit P1 ohne Tags selbst. N8 will `#tag` im Fenster
+„Neue Task", eine Ansicht je Tag, Umbenennen und Löschen.
+**Entscheidung:**
+1. `Tag { id, name }` als synchronisierte Entity: `EntityRef::Tag` (angehängt), Felder `Name` und `CreatedAt`,
+   Löschen als Tombstone. Name = ein Wort ohne `#` (Leerzeichen werden `-`), höchstens 50 Zeichen, eindeutig ohne
+   Rücksicht auf Groß/Klein (lokal geprüft).
+2. **ID aus dem Namen** (UUIDv5 über den kleingeschriebenen Namen, eigener Namensraum): Zwei Geräte, die offline
+   „#uni" anlegen, erzeugen denselben Tag – keine Duplikate wie bei gleichnamigen Listen (ADR-020). Ist die
+   abgeleitete ID schon vergeben (Tombstone eines gelöschten Tags oder ein umbenannter Tag), nimmt `ensure_tag` die
+   nächste Variante (`name|1`, …). Umbenennen behält die ID.
+3. Tasks tragen höchstens 20 Tag-IDs (bestehendes Feld `Tags`). Beim Setzen müssen die Tags existieren; Löschen eines
+   Tags nimmt ihn in **einem** Commit von allen Tasks (auch erledigten und im Papierkorb). Ein Gerät, das offline
+   einen inzwischen gelöschten Tag zuweist, hinterlässt eine verwaiste ID – die UI zeigt nur bekannte Tags.
+4. API: `list_tags`, `ensure_tag(name)`, `rename_tag`, `delete_tag`; `TaskDto.tags`/`TaskSummaryDto.tags` (IDs),
+   `CreateTaskDto.tags`, `TaskPatchDto.tags`, Filter `TaskQueryDto.tag`; Ereignis `Changed.tags`. Export enthält die
+   Tags (Name); der Import ordnet sie über den Namen zu.
+5. SQLite: Migration 0008 (Tabelle `tags`, `entity_kind` 4 in Registern und Tombstones).
+**Konsequenzen:** Ältere Apps kennen `EntityRef::Tag` nicht und überspringen solche Segmente – „alle Geräte
+aktualisieren". Tags zusammenführen (gleichnamig nach Umbenennen) bleibt eine spätere Aktion.
+
+## ADR-036 · Verknüpfung Task ↔ Notiz als eigene Entity
+
+**Status:** akzeptiert (2026-10-21, N9-01)
+**Kontext:** Tasks und Notizen sollen sich gegenseitig zeigen (Blatt 3 ↔ Mitschrift). N3 sieht später weitere
+Verknüpfungen (externe Adressen, Kalender) vor – Felder an `Task` würden das nicht tragen.
+**Entscheidung:**
+1. `Link { id, task, note, created_at }` als synchronisierte Entity: `EntityRef::Link` (angehängt), Felder
+   `LinkTask` (19, `FieldValue::TaskRef`) und `LinkNote` (20, `FieldValue::NoteRef`) und `CreatedAt`; nur anlegen
+   und löschen (Tombstone), nie ändern.
+2. **ID aus beiden Enden** (UUIDv5): Dieselbe Verknüpfung auf zwei Geräten ist eine. Nach dem Lösen (Tombstone) nimmt
+   ein erneutes Verknüpfen die nächste Variante (wie bei ADR-028/035).
+3. Keine Fremdschlüssel: Ein Ende kann per Sync fehlen oder endgültig gelöscht werden. Listen blenden Verknüpfungen
+   mit fehlendem Ende oder mit Ende im Papierkorb aus; `purge_dangling_links` (täglich mit dem Papierkorb) löscht
+   solche, deren Ende es nicht mehr gibt.
+4. API: `link_task_note`, `unlink`, `task_links(task) → LinkedNoteDto[]`, `note_links(note) → LinkedTaskDto[]`;
+   `TaskSummaryDto.hasLinks` für das Symbol in der Zeile (SQLite: `EXISTS` über `links`); Ereignis `Changed.links`
+   – die Listen laden dann neu, weil nur der Core `hasLinks` kennt.
+5. SQLite: Migration 0009 (Tabelle `links` mit Index je Ende, `entity_kind` 5).
+**Konsequenzen:** Ältere Apps überspringen Segmente mit `EntityRef::Link` – „alle Geräte aktualisieren". Export
+enthält (noch) keine Verknüpfungen.
+
+## ADR-037 · Sortieren und Filtern im Core (Keyset je Sortierung)
+
+**Status:** akzeptiert (2026-10-21, N10-01)
+**Kontext:** Ansichten sollen sich nach Fälligkeit, Priorität oder Titel sortieren und nach Priorität/Tag filtern
+lassen. Sortieren im Client hieße alles laden – gegen die Budgets (virtualisierte Listen, Seiten zu 200).
+**Entscheidung:**
+1. `TaskQuery` bekommt `sort: TaskSort` (`View` = wie bisher, `Due`, `Priority`, `Title`) und `priority:
+   Option<Priority>` (genau diese). `TaskQuery::order()` ergibt die wirksame Reihenfolge; „Erledigt" und Papierkorb
+   bleiben immer nach Zeitpunkt sortiert, Heute/Geplant sortieren bei `View`/`Due` weiter relativ zum Tag (ADR-026).
+2. Reihenfolgen: Fälligkeit = `Due::rough_instant` (Zeitpunkt bzw. Mitternacht UTC; ohne Fälligkeit zuletzt), dann
+   `sort_key`, `id`; Priorität absteigend, dann `sort_key`, `id`; Titel ohne Groß/Klein **nur bei ASCII** (wie SQLite
+   `NOCASE`, im Core `to_ascii_lowercase`), dann `id`. Jede Reihenfolge hat eine eigene Cursor-Art (Keyset, kein
+   `OFFSET`); der Titel steht im Cursor zuletzt (darf `:` enthalten). Contract-Test für beide Speicher.
+3. UI: Einstellung pro Ansicht im `localStorage` (pro Gerät, nicht synchronisiert), Button „Sortieren und filtern"
+   in der Kopfzeile (Popover), aktive Abweichungen als Chips mit ×. Umsortieren per Ziehen nur in der eigenen
+   Reihenfolge ohne Filter; Abschnitte (Heute/Geplant) nur bei Sortierung nach Fälligkeit. Das Board bleibt
+   unverändert.
+**Konsequenzen:** Umlaute sortieren beim Titel nach Codepunkt (Ä nach Z) – bewusst, damit beide Speicher gleich
+sortieren und der Cursor stabil bleibt.
+
+---
+
+## ADR-038 · Login-Link nur anzeigen, Browser nicht selbst öffnen
+
+**Status:** akzeptiert (2026-10-21)
+**Kontext:** Die Desktop-Shell öffnete die Login-Seite selbst: Die URL (Fork-Schlüssel im Fragment) ging als private
+HTML-Weiterleitung an `xdg-open` (ADR-025 Punkt 6). Für eine lokale `.html`-Datei entscheidet die Zuordnung von
+`text/html`, nicht der Standardbrowser; zeigt sie auf ein deinstalliertes Programm, wählt KDE ein beliebiges anderes,
+das sich für `text/html` registriert (beobachtet: pgAdmin). „Link kopieren" funktionierte dagegen immer.
+**Entscheidung:** Die Shell öffnet keinen Browser mehr. Die UI zeigt die Login-URL im Schritt „Im Browser anmelden"
+mit Button „Link kopieren"; der Command `auth_open_browser` und `AuthClient.openBrowser` entfallen. Die Dev-CLI
+behält die Weiterleitung über `write_login_redirect`.
+**Konsequenzen:** Ein Klick mehr (Kopieren, im Browser einfügen), dafür vorhersehbar auf jedem System. Die URL steht
+nie in einer Kommandozeile; sie liegt nur kurz in der Zwischenablage.
 
 ---
 

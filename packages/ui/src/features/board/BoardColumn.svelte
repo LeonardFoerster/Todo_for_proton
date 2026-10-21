@@ -22,6 +22,8 @@
     ontoggle: (task: TaskSummaryDto, done: boolean) => void;
     onopen: (task: TaskSummaryDto) => void;
     oncardpointerdown?: (e: PointerEvent, task: TaskSummaryDto) => void;
+    /** Tag-IDs → Namen (ADR-035). */
+    tagNames?: (ids: readonly string[]) => string[];
     /** Listenaktionen (nicht für den Eingang). */
     onmenu?: (x: number, y: number) => void;
     /** Einfügelinie beim Ziehen vor Karte Nr. `dropIndex` (P2-07). */
@@ -38,6 +40,7 @@
     ontoggle,
     onopen,
     oncardpointerdown,
+    tagNames,
     onmenu,
     dropIndex = null,
     onheaderpointerdown,
@@ -108,6 +111,7 @@
           {ontoggle}
           {onopen}
           onpointerdown={oncardpointerdown}
+          tagNames={tagNames?.(task.tags) ?? []}
         />
       {/snippet}
       {#snippet overlay()}

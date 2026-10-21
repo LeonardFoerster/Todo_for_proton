@@ -29,6 +29,8 @@ fn titles(api: &CoreApi, view: ViewDto) -> Vec<(String, TaskStatusDto)> {
             view,
             status: None,
             tag: None,
+            priority: None,
+            sort: None,
         },
         PageRequestDto {
             cursor: None,

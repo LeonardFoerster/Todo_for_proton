@@ -22,8 +22,8 @@ async function setup(titles: string[] = ["A", "B", "C", "D", "E"]) {
   await screen.findByRole("option", { name: titles[0] });
   const spies = {
     getTask: vi.spyOn(client, "getTask"),
-    deleteTasks: vi.spyOn(client, "deleteTasks"),
-    restoreTasks: vi.spyOn(client, "restoreTasks"),
+    trashTasks: vi.spyOn(client, "trashTasks"),
+    untrashTasks: vi.spyOn(client, "untrashTasks"),
     completeTasks: vi.spyOn(client, "completeTasks"),
     moveTasks: vi.spyOn(client, "moveTasks"),
   };
@@ -59,14 +59,14 @@ describe("bulk actions", () => {
     await select(user, "B", "D");
     await user.click(action("Löschen"));
     expect(shown()).toEqual(["A", "C", "E"]);
-    expect(spies.deleteTasks).toHaveBeenCalledTimes(1);
+    expect(spies.trashTasks).toHaveBeenCalledTimes(1);
     expect(counter()).toContain("0 ausgewählt");
-    expect(screen.getByText("2 Tasks gelöscht")).toBeTruthy();
+    expect(screen.getByText("2 Tasks in den Papierkorb gelegt")).toBeTruthy();
 
     await user.click(await undo());
     await waitFor(async () => expect(await stored(client)).toEqual(["A", "B", "C", "D", "E"]));
     await waitFor(() => expect(shown()).toEqual(["A", "B", "C", "D", "E"]));
-    expect(spies.restoreTasks).toHaveBeenCalledTimes(1);
+    expect(spies.untrashTasks).toHaveBeenCalledTimes(1);
   });
 
   it("500 selected: one IPC call, the list is empty at once, undo brings all back in order", async () => {
@@ -79,12 +79,12 @@ describe("bulk actions", () => {
 
     await user.keyboard("{Delete}");
     expect(screen.queryByRole("option")).toBeNull();
-    expect(spies.deleteTasks).toHaveBeenCalledTimes(1);
-    expect(spies.deleteTasks.mock.calls[0][0]).toHaveLength(500);
+    expect(spies.trashTasks).toHaveBeenCalledTimes(1);
+    expect(spies.trashTasks.mock.calls[0][0]).toHaveLength(500);
 
     await user.click(await undo());
     await waitFor(() => expect(screen.getAllByRole("option").length).toBeGreaterThan(0));
-    expect(spies.restoreTasks).toHaveBeenCalledTimes(1);
+    expect(spies.untrashTasks).toHaveBeenCalledTimes(1);
     expect(await stored(client)).toEqual(titles);
     expect(shown().slice(0, 3)).toEqual(["T000", "T001", "T002"]);
     expect(spies.getTask, "großes Event lädt Seiten statt je Task").not.toHaveBeenCalled();
@@ -145,7 +145,7 @@ describe("bulk actions", () => {
 
   it("puts rows back when deleting fails – also for a single task (FIX-08)", async () => {
     const { client, spies, user } = await setup();
-    spies.deleteTasks.mockRejectedValue(new CoreClientError("storage", "Platte voll"));
+    spies.trashTasks.mockRejectedValue(new CoreClientError("storage", "Platte voll"));
     await select(user, "B", "C");
     await user.click(action("Löschen"));
     await waitFor(() => expect(shown()).toEqual(["A", "B", "C", "D", "E"]));
@@ -174,11 +174,11 @@ describe("bulk actions", () => {
     const c = (await client.listTasks({ view: { kind: "inbox" } }, { limit: 10 })).items[2];
     await client.updateTask(c.id, { notes: "Notiz", priority: "high" });
     const createdAt = (await client.getTask(c.id)).createdAt;
-    await user.click(screen.getByRole("option", { name: "C" }));
+    await user.click(await screen.findByRole("option", { name: "C, hohe Priorität" }));
     await user.keyboard("{Escape}");
-    screen.getByRole("option", { name: "C" }).focus();
+    screen.getByRole("option", { name: "C, hohe Priorität" }).focus();
     await user.keyboard("{Delete}");
-    expect(spies.deleteTasks).toHaveBeenCalledWith([c.id]);
+    expect(spies.trashTasks).toHaveBeenCalledWith([c.id]);
     await user.click(await undo());
     await waitFor(async () => expect(await stored(client)).toEqual(["A", "B", "C", "D", "E"]));
     const copy = (await client.listTasks({ view: { kind: "inbox" } }, { limit: 10 })).items[2];

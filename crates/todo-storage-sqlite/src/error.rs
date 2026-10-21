@@ -11,7 +11,8 @@ use todo_core::CoreError;
 pub(crate) fn storage(err: rusqlite::Error) -> CoreError {
     match err.sqlite_error_code() {
         Some(ErrorCode::ConstraintViolation) if is_foreign_key(&err) => CoreError::Validation(
-            "a task refers to a list that does not exist (or a list with tasks was deleted)"
+            "a task or note refers to a list or folder that does not exist (or one with \
+             content was deleted)"
                 .to_owned(),
         ),
         _ => CoreError::Storage(err.to_string()),

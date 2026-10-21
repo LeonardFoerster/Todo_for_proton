@@ -15,15 +15,15 @@
 
 <script lang="ts">
   /**
-   * Befehlspalette (P4-05): `Strg+K` bzw. `/`. Tippen sucht Tasks in allen Listen (Core,
-   * entprellt, höchstens 50), dazu passende Listen und Befehle. ↑/↓ wählen, Enter führt aus, Esc
+   * Befehlspalette (P4-05): `Strg+K` bzw. `/`. Tippen sucht Tasks in allen Listen und Notizen
+   * (N5-10, beide parallel im Core, entprellt, je höchstens 50), dazu passende Listen und Befehle. ↑/↓ wählen, Enter führt aus, Esc
    * schließt. Ohne Text: zuletzt geöffnete Tasks dieser Sitzung und alle Befehle. Ohne Treffer legt
    * Enter eine neue Task mit dem Text an. Wird erst beim ersten Öffnen geladen (lazy).
    */
-  import type { TaskListDto, TaskSummaryDto } from "@tasks/core-client";
+  import type { NoteHitDto, TaskListDto, TaskSummaryDto } from "@tasks/core-client";
   import { onMount, tick } from "svelte";
   import { toasts } from "../../components/toasts.svelte";
-  import { Circle, CircleCheck, Clock, Hash, Inbox, Search, Zap } from "../../icons";
+  import { Circle, CircleCheck, Clock, FileCode, FileText, Hash, Inbox, Search, Zap } from "../../icons";
   import { useCoreClient } from "../../lib/context";
   import { dueLabel } from "../../lib/format-date";
   import type { ListsState } from "../../lib/lists.svelte";
@@ -39,10 +39,15 @@
     onopenlist: (list: TaskListDto) => void;
     /** Kein Treffer: „Neue Task“ mit diesem Text öffnen. */
     onnewtask: (text: string) => void;
+    /** Notiz öffnen (Modus „Notes"), Cursor auf den Treffer im Inhalt (UTF-16). */
+    onopennote: (id: string, hit: { offset: number; length: number } | null) => void;
+    /** Aktiver Modus: bestimmt, welche Gruppe zuerst steht. */
+    mode?: "tasks" | "notes";
     onclose: () => void;
   }
 
-  let { lists, commands, recent, onopentask, onopenlist, onnewtask, onclose }: Props = $props();
+  let { lists, commands, recent, onopentask, onopenlist, onnewtask, onopennote, mode = "tasks", onclose }: Props =
+    $props();
 
   const client = useCoreClient();
   const LIMIT = 50;
@@ -51,6 +56,7 @@
 
   type Item =
     | { kind: "task"; task: TaskSummaryDto }
+    | { kind: "note"; hit: NoteHitDto }
     | { kind: "recent"; task: RecentTask }
     | { kind: "list"; list: TaskListDto }
     | { kind: "command"; command: PaletteCommand };
@@ -60,6 +66,7 @@
   let text = $state("");
   /** Tasks zum Text `searched` (nach dem Entprellen); `null` = noch keine Antwort. */
   let results = $state.raw<TaskSummaryDto[] | null>(null);
+  let noteResults = $state.raw<NoteHitDto[]>([]);
   let searched = $state("");
   let active = $state(0);
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -72,8 +79,11 @@
     const out: { label: string; items: Item[] }[] = [];
     if (words.length === 0) {
       if (recent.length > 0) out.push({ label: "Zuletzt geöffnet", items: recent.map((task) => ({ kind: "recent", task })) });
-    } else if (results && results.length > 0) {
-      out.push({ label: "Tasks", items: results.map((task) => ({ kind: "task", task })) });
+    } else {
+      const tasks = results && results.length > 0 ? { label: "Tasks", items: results.map((task): Item => ({ kind: "task", task })) } : null;
+      const notes =
+        noteResults.length > 0 ? { label: "Notizen", items: noteResults.map((hit): Item => ({ kind: "note", hit })) } : null;
+      for (const group of mode === "notes" ? [notes, tasks] : [tasks, notes]) if (group) out.push(group);
     }
     const matchingLists = lists.lists.filter((l) => words.length > 0 && matchesAll(listName(l), words)).slice(0, 5);
     if (matchingLists.length > 0) out.push({ label: "Listen", items: matchingLists.map((list) => ({ kind: "list", list })) });
@@ -104,6 +114,7 @@
     const value = (e.currentTarget as HTMLInputElement).value;
     if (!value.trim()) {
       results = null;
+      noteResults = [];
       searched = value;
       return;
     }
@@ -113,9 +124,13 @@
   async function search(value: string) {
     const mine = ++request;
     try {
-      const found = await client.searchTasks(value, LIMIT);
+      const [found, notes] = await Promise.all([
+        client.searchTasks(value, LIMIT),
+        client.notes.search(value, LIMIT).catch(() => [] as NoteHitDto[]),
+      ]);
       if (mine !== request) return; // überholt
       results = found;
+      noteResults = notes;
       searched = value;
       active = 0;
     } catch (e) {
@@ -126,6 +141,10 @@
   function run(item: Item) {
     onclose();
     if (item.kind === "task" || item.kind === "recent") onopentask(item.task.id);
+    else if (item.kind === "note") {
+      const s = item.hit.snippet;
+      onopennote(item.hit.note.id, s ? { offset: s.offset, length: s.length } : null);
+    }
     else if (item.kind === "list") onopenlist(item.list);
     else item.command.run();
   }
@@ -148,7 +167,7 @@
       e.preventDefault();
       const item = flat[active];
       if (item) run(item);
-      else if (words.length > 0 && searched === text) {
+      else if (words.length > 0 && searched === text && mode === "tasks") {
         onclose();
         onnewtask(text.trim());
       }
@@ -186,7 +205,7 @@
       aria-controls="{uid}-results"
       aria-autocomplete="list"
       aria-activedescendant={flat.length > 0 ? `${uid}-opt-${active}` : undefined}
-      placeholder="Tasks suchen oder Befehl eingeben…"
+      placeholder="Tasks und Notizen suchen oder Befehl eingeben…"
       autocomplete="off"
       spellcheck="false"
     />
@@ -196,7 +215,13 @@
     {#each sections as section (section.label)}
       <div role="group" aria-labelledby="{uid}-{section.label}">
         <div class="section" id="{uid}-{section.label}" role="presentation">{section.label}</div>
-        {#each section.items as item (item.kind === "command" ? `c:${item.command.id}` : item.kind === "list" ? `l:${item.list.id}` : `t:${item.task.id}`)}
+        {#each section.items as item (item.kind === "command"
+          ? `c:${item.command.id}`
+          : item.kind === "list"
+            ? `l:${item.list.id}`
+            : item.kind === "note"
+              ? `n:${item.hit.note.id}`
+              : `t:${item.task.id}`)}
           {@const i = indexOf(item)}
           <!-- Tastatur läuft über das Eingabefeld (aria-activedescendant); Klick wählt direkt. -->
           <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -228,6 +253,28 @@
                 {#if due}<span class="due {due.tone}">{due.text}</span>{/if}
                 <span class="list"><Hash size={12} strokeWidth={2} aria-hidden="true" />{names.get(t.listId) ?? "Liste"}</span>
               </span>
+            {:else if item.kind === "note"}
+              {@const hit = item.hit}
+              <span class="icon">
+                {#if hit.note.kind === "markdown"}<FileCode size={16} strokeWidth={1.75} aria-hidden="true" />{:else}<FileText
+                    size={16}
+                    strokeWidth={1.75}
+                    aria-hidden="true"
+                  />{/if}
+              </span>
+              <span class="note-text">
+                <span class="label">
+                  {#each highlight(hit.note.name, words) as seg, s (s)}{#if seg.hit}<mark>{seg.text}</mark>{:else}{seg.text}{/if}{/each}
+                </span>
+                {#if hit.snippet && !hit.nameHit}
+                  <span class="snippet">
+                    {#each highlight(hit.snippet.text, words) as seg, s (s)}{#if seg.hit}<mark>{seg.text}</mark>{:else}{seg.text}{/if}{/each}
+                  </span>
+                {/if}
+              </span>
+              <span class="meta">
+                <span class="list">{hit.path.length > 0 ? hit.path.join(" › ") : "Notizen"}</span>
+              </span>
             {:else if item.kind === "recent"}
               <span class="icon"><Clock size={16} strokeWidth={1.75} aria-hidden="true" /></span>
               <span class="label">{item.task.title}</span>
@@ -254,7 +301,13 @@
   </div>
 
   {#if nothing}
-    <p class="empty" role="status">Keine Task mit „{text.trim()}“ – mit Enter als neue Task anlegen</p>
+    <p class="empty" role="status">
+      {#if mode === "tasks"}
+        Keine Task oder Notiz mit „{text.trim()}“ – mit Enter als neue Task anlegen
+      {:else}
+        Keine Notiz oder Task mit „{text.trim()}“
+      {/if}
+    </p>
   {/if}
   <p class="hints" aria-hidden="true"><kbd>↑</kbd><kbd>↓</kbd> wählen · <kbd>Enter</kbd> öffnen · <kbd>Esc</kbd> schließen</p>
 </dialog>
@@ -349,6 +402,19 @@
     flex: 1;
     min-width: 0;
     overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .note-text {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .snippet {
+    overflow: hidden;
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
     white-space: nowrap;
     text-overflow: ellipsis;
   }

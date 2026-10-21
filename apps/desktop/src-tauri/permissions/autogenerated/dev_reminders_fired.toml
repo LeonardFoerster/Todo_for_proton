@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-dev-reminders-fired"
+description = "Enables the dev_reminders_fired command without any pre-configured scope."
+commands.allow = ["dev_reminders_fired"]
+
+[[permission]]
+identifier = "deny-dev-reminders-fired"
+description = "Denies the dev_reminders_fired command without any pre-configured scope."
+commands.deny = ["dev_reminders_fired"]

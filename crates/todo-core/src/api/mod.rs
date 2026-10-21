@@ -4,32 +4,62 @@
 //! meldet die tatsächlich geschriebenen Entities als [`CoreEvent::Changed`] an alle [`EventSink`]s.
 
 pub mod dto;
+pub mod export_dto;
+pub mod note_dto;
 
 use std::{
     fmt,
     sync::{Arc, RwLock},
 };
 
-use self::dto::{
-    list_id, task_id, CreateTaskDto, MoveListTargetDto, MoveTargetDto, PageDto, PageRequestDto,
-    TaskDto, TaskDueDto, TaskListDto, TaskPatchDto, TaskQueryDto, TaskSummaryDto,
+use self::{
+    dto::{
+        list_id, task_id, CompleteResultDto, CreateTaskDto, DueDto, LocalDayDto, MoveListTargetDto,
+        MoveTargetDto, OccurrenceDto, PageDto, PageRequestDto, TaskDto, TaskDueDto, TaskListDto,
+        TaskPatchDto, TaskQueryDto, TaskSummaryDto,
+    },
+    note_dto::{
+        folder_id, note_id, revision_id, ImportNoteFileDto, ImportReportDto, NoteConflictDto,
+        NoteDto, NoteFolderDto, NoteHitDto, NoteItemDto, NoteKindDto, NoteTargetDto,
+        NoteTrashEntryDto, NoteTreeItemDto,
+    },
 };
 use crate::{
     app::{
         check_bulk_len, CompleteTask, CompleteTaskInput, CompleteTasks, CompleteTasksInput,
-        CreateTask, CreateTaskInput, CreateTaskList, CreateTaskListInput, DeleteTask,
+        CreateTask, CreateTaskInput, CreateTaskList, CreateTaskListInput, DeleteTag, DeleteTask,
         DeleteTaskInput, DeleteTaskList, DeleteTaskListInput, DeleteTasks, DeleteTasksInput, Deps,
-        EnsureInbox, MoveTask, MoveTaskInput, MoveTaskList, MoveTaskListInput, MoveTasks,
-        MoveTasksInput, RenameTaskList, RenameTaskListInput, ReopenTask, ReopenTaskInput,
-        RestoreTasks, RestoreTasksInput, SetDues, SetDuesInput, TaskPatch, UpdateTask,
-        UpdateTaskInput,
+        EnsureInbox, EnsureTag, LinkTaskNote, ListLinks, MergeTaskLists, MergeTaskListsInput,
+        MoveTask, MoveTaskInput, MoveTaskList, MoveTaskListInput, MoveTasks, MoveTasksInput,
+        PurgeDanglingLinks, RenameTag, RenameTagInput, RenameTaskList, RenameTaskListInput,
+        ReopenTask, ReopenTaskInput, RestoreTasks, RestoreTasksInput, SetDues, SetDuesInput,
+        TaskPatch, UnlinkTaskNote, UpdateTask, UpdateTaskInput,
     },
-    domain::{DeviceId, SortKey, Task, TaskId, TaskList, TaskListId, TaskParts},
+    app::{
+        CreateNote, CreateNoteFolder, CreateNoteFolderInput, CreateNoteInput, DiscardEmptyNote,
+        DiscardEmptyNoteInput, EmptyNoteTrash, ImportNoteFile, ImportNotes, ImportNotesInput,
+        ListNoteTrash, MoveNote, MoveNoteFolder, MoveNoteFolderInput, MoveNoteInput, NoteItem,
+        PurgeExpiredNotes, PurgeNoteItems, PurgeNoteItemsInput, RenameNote, RenameNoteFolder,
+        RenameNoteFolderInput, RenameNoteInput, RestoreNoteItems, RestoreNoteItemsInput,
+        SetNoteKind, SetNoteKindInput, TrashNoteItems, TrashNoteItemsInput, UpdateNoteBody,
+        UpdateNoteBodyInput, NOTE_BULK_LIMIT_MAX,
+    },
+    app::{
+        EmptyTaskTrash, PurgeExpiredTasks, PurgeTasks, PurgeTasksInput, TrashTasks,
+        TrashTasksInput, UntrashTasks, UntrashTasksInput,
+    },
+    app::{ExportData, ExportNotes, ImportData, ImportDataInput},
+    app::{SkipOccurrence, SkipOccurrenceInput, UndoOccurrence, UndoOccurrenceInput},
+    domain::{
+        DeviceId, Link, Note, NoteFolder, NoteFolderId, NoteId, SortKey, Tag, TagId, Task, TaskId,
+        TaskList, TaskListId, TaskParts,
+    },
     ports::{
-        ChangeSet, Clock, CommitReceipt, EntityRef, MaybeSend, MaybeSync, Page, PageRequest,
-        SearchQuery, TaskQuery, TaskRepository, TaskSummary,
+        ChangeSet, Clock, CommitReceipt, EntityRef, FolderItemsQuery, MaybeSend, MaybeSync,
+        NoteHit, NoteRepository, NoteSummary, NoteTreeItem, Page, PageRequest, SearchQuery,
+        TaskQuery, TaskRepository, TaskSummary,
     },
-    sync::{EntityState, Op, RemoteBatch, RemoteReceipt},
+    sync::{EntityState, NoteConflict, Op, RemoteBatch, RemoteReceipt},
     CoreError, CoreResult,
 };
 
@@ -40,7 +70,15 @@ pub enum CoreEvent {
     Changed {
         tasks: Vec<String>,
         lists: Vec<String>,
+        notes: Vec<String>,
+        note_folders: Vec<String>,
+        /// Seit ADR-035.
+        tags: Vec<String>,
+        /// Verknüpfungen (ADR-036).
+        links: Vec<String>,
     },
+    /// Beim Zusammenlegen nebenläufiger Bearbeitungen entstanden Konfliktkopien (ADR-029).
+    NoteConflicts { conflicts: Vec<NoteConflictDto> },
 }
 
 /// Empfänger für [`CoreEvent`]s (z. B. Tauri-Event-Emitter, `postMessage` im Worker).
@@ -82,6 +120,13 @@ impl CoreApi {
             deps: Deps::new(repo, clock),
             sinks,
         }
+    }
+
+    /// Mit Zeitzonen (Serien mit Uhrzeit, N4). Vor dem ersten Aufruf setzen.
+    #[must_use]
+    pub fn with_time_zones(mut self, zones: Arc<dyn crate::ports::TimeZones>) -> Self {
+        self.deps = self.deps.with_zones(zones);
+        self
     }
 
     /// Das Repository, wie die Use-Cases es sehen: Jeder Commit bekommt die aktuelle Zeit
@@ -168,6 +213,21 @@ impl CoreApi {
         Ok(u32::try_from(out.moved_tasks).unwrap_or(u32::MAX))
     }
 
+    /// Führt `source` in `target` zusammen (ADR-020): Tasks ans Ende, `source` weg. Liefert die
+    /// Zahl verschobener Tasks.
+    ///
+    /// # Errors
+    /// `NotFound`, `Validation` (Inbox als Quelle, gleiche Listen, ungültige ID).
+    pub async fn merge_task_lists(&self, source: String, target: String) -> CoreResult<u32> {
+        let n = MergeTaskLists::new(self.deps.clone())
+            .execute(MergeTaskListsInput {
+                source: list_id(&source)?,
+                target: list_id(&target)?,
+            })
+            .await?;
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
+    }
+
     // --- Tasks ----------------------------------------------------------------------------------
 
     /// # Errors
@@ -179,8 +239,64 @@ impl CoreApi {
             notes: input.notes.unwrap_or_default(),
             priority: input.priority.map(Into::into).unwrap_or_default(),
             due: input.due.map(TryInto::try_into).transpose()?,
+            recurrence: input
+                .recurrence
+                .as_ref()
+                .map(TryInto::try_into)
+                .transpose()?,
+            tags: input
+                .tags
+                .as_deref()
+                .map(dto::tag_ids)
+                .transpose()?
+                .unwrap_or_default(),
         };
         Ok((&CreateTask::new(self.deps.clone()).execute(input).await?).into())
+    }
+
+    // --- Tags (ADR-035) -------------------------------------------------------------------------
+
+    /// Alle Tags, nach Name.
+    ///
+    /// # Errors
+    /// Fehler des Speichers.
+    pub async fn list_tags(&self) -> CoreResult<Vec<dto::TagDto>> {
+        Ok(self
+            .deps
+            .repo
+            .list_tags()
+            .await?
+            .iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    /// Tag mit diesem Namen (Groß/Klein egal) finden oder anlegen; `#` vorn fällt weg.
+    ///
+    /// # Errors
+    /// `Validation` (Name).
+    pub async fn ensure_tag(&self, name: String) -> CoreResult<dto::TagDto> {
+        Ok((&EnsureTag::new(self.deps.clone()).execute(&name).await?).into())
+    }
+
+    /// # Errors
+    /// `NotFound`, `Validation` (ungültiger oder schon vergebener Name).
+    pub async fn rename_tag(&self, id: String, name: String) -> CoreResult<dto::TagDto> {
+        let id = dto::tag_ids(&[id])?[0];
+        Ok((&RenameTag::new(self.deps.clone())
+            .execute(RenameTagInput { id, name })
+            .await?)
+            .into())
+    }
+
+    /// Löscht den Tag und nimmt ihn von allen Tasks; liefert die Zahl betroffener Tasks.
+    ///
+    /// # Errors
+    /// `Validation` (ID).
+    pub async fn delete_tag(&self, id: String) -> CoreResult<u32> {
+        let id = dto::tag_ids(&[id])?[0];
+        let n = DeleteTag::new(self.deps.clone()).execute(id).await?;
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
     }
 
     /// Vollständige Task (inkl. Notizen) für die Detailansicht.
@@ -209,6 +325,16 @@ impl CoreApi {
                 .due
                 .map(|due| due.map(TryInto::try_into).transpose())
                 .transpose()?,
+            recurrence: patch
+                .recurrence
+                .map(|r| r.as_ref().map(TryInto::try_into).transpose())
+                .transpose()?,
+            checklist: patch
+                .checklist
+                .as_deref()
+                .map(dto::checklist_from_dto)
+                .transpose()?,
+            tags: patch.tags.as_deref().map(dto::tag_ids).transpose()?,
         };
         let input = UpdateTaskInput {
             id: task_id(&id)?,
@@ -261,14 +387,77 @@ impl CoreApi {
     ///
     /// # Errors
     /// `Validation` (ID, mehr als [`crate::app::BULK_LIMIT_MAX`]).
-    pub async fn complete_tasks(&self, ids: Vec<String>, done: bool) -> CoreResult<Vec<TaskDto>> {
+    pub async fn complete_tasks(
+        &self,
+        ids: Vec<String>,
+        done: bool,
+        today: Option<LocalDayDto>,
+    ) -> CoreResult<CompleteResultDto> {
         let input = CompleteTasksInput {
             ids: task_ids(&ids)?,
             done,
+            today: today
+                .as_ref()
+                .map(crate::domain::LocalDay::try_from)
+                .transpose()?
+                .map(|d| d.date()),
         };
-        Ok(dtos(
-            &CompleteTasks::new(self.deps.clone()).execute(input).await?,
-        ))
+        let out = CompleteTasks::new(self.deps.clone()).execute(input).await?;
+        Ok(CompleteResultDto {
+            tasks: dtos(&out.changed),
+            occurrences: out
+                .occurrences
+                .iter()
+                .map(|o| OccurrenceDto {
+                    series_id: o.series.to_string(),
+                    occurrence_id: o.occurrence.map(|id| id.to_string()),
+                    previous_due: DueDto::from(&o.previous_due),
+                })
+                .collect(),
+        })
+    }
+
+    /// „Dieses Mal überspringen“: Serie aufs nächste Vorkommen, ohne Verlaufseintrag (ADR-028).
+    ///
+    /// # Errors
+    /// `NotFound`, `Validation` (keine offene Serie, Zeitzonen fehlen).
+    pub async fn skip_occurrence(
+        &self,
+        id: String,
+        today: Option<LocalDayDto>,
+    ) -> CoreResult<TaskDto> {
+        let input = SkipOccurrenceInput {
+            id: task_id(&id)?,
+            today: today
+                .as_ref()
+                .map(crate::domain::LocalDay::try_from)
+                .transpose()?
+                .map(|d| d.date()),
+        };
+        Ok((&SkipOccurrence::new(self.deps.clone())
+            .execute(input)
+            .await?)
+            .into())
+    }
+
+    /// Rückgängig nach dem Abhaken einer Serie: Verlaufseintrag weg, alte Fälligkeit zurück.
+    ///
+    /// # Errors
+    /// `NotFound` (Serie), `Validation`.
+    pub async fn undo_occurrence(&self, occurrence: OccurrenceDto) -> CoreResult<TaskDto> {
+        let input = UndoOccurrenceInput {
+            series: task_id(&occurrence.series_id)?,
+            occurrence: occurrence
+                .occurrence_id
+                .as_deref()
+                .map(task_id)
+                .transpose()?,
+            previous_due: Some(occurrence.previous_due.try_into()?),
+        };
+        Ok((&UndoOccurrence::new(self.deps.clone())
+            .execute(input)
+            .await?)
+            .into())
     }
 
     /// Löscht alle; liefert die gelöschten Tasks im Zustand davor (für `restore_tasks`).
@@ -282,6 +471,134 @@ impl CoreApi {
         Ok(dtos(
             &DeleteTasks::new(self.deps.clone()).execute(input).await?,
         ))
+    }
+
+    /// Legt Tasks in den Papierkorb (ADR-031); liefert die tatsächlich geänderten (für Rückgängig
+    /// per [`Self::untrash_tasks`], gleiche IDs).
+    ///
+    /// # Errors
+    /// `Validation` (ID, Obergrenze).
+    pub async fn trash_tasks(&self, ids: Vec<String>) -> CoreResult<Vec<TaskDto>> {
+        let input = TrashTasksInput {
+            ids: task_ids(&ids)?,
+        };
+        Ok(dtos(
+            &TrashTasks::new(self.deps.clone()).execute(input).await?,
+        ))
+    }
+
+    /// Holt Tasks aus dem Papierkorb zurück (gleiche ID, alter Platz); liefert die geänderten.
+    ///
+    /// # Errors
+    /// `Validation` (ID, Obergrenze).
+    pub async fn untrash_tasks(&self, ids: Vec<String>) -> CoreResult<Vec<TaskDto>> {
+        let input = UntrashTasksInput {
+            ids: task_ids(&ids)?,
+        };
+        Ok(dtos(
+            &UntrashTasks::new(self.deps.clone()).execute(input).await?,
+        ))
+    }
+
+    /// Löscht Tasks aus dem Papierkorb endgültig (andere werden übersprungen); Zahl gelöschter.
+    ///
+    /// # Errors
+    /// `Validation` (ID, Obergrenze).
+    pub async fn purge_tasks(&self, ids: Vec<String>) -> CoreResult<u32> {
+        let input = PurgeTasksInput {
+            ids: task_ids(&ids)?,
+        };
+        PurgeTasks::new(self.deps.clone()).execute(input).await
+    }
+
+    /// Leert den Papierkorb der Tasks.
+    ///
+    /// # Errors
+    /// Fehler des Repositories.
+    pub async fn empty_task_trash(&self) -> CoreResult<u32> {
+        EmptyTaskTrash::new(self.deps.clone()).execute().await
+    }
+
+    /// Löscht Tasks, die seit mehr als 30 Tagen im Papierkorb liegen (beim Start, höchstens täglich).
+    ///
+    /// # Errors
+    /// Fehler des Repositories.
+    pub async fn purge_expired_tasks(&self) -> CoreResult<u32> {
+        PurgeExpiredTasks::new(self.deps.clone()).execute().await
+    }
+
+    // --- Verknüpfungen Task ↔ Notiz (ADR-036) -------------------------------------------------
+
+    /// Verknüpft Task und Notiz (schon verknüpft: dieselbe Verknüpfung).
+    ///
+    /// # Errors
+    /// `NotFound`, `Validation` (IDs).
+    pub async fn link_task_note(
+        &self,
+        task: String,
+        note: String,
+    ) -> CoreResult<note_dto::LinkDto> {
+        let link = LinkTaskNote::new(self.deps.clone())
+            .execute(task_id(&task)?, note_id(&note)?)
+            .await?;
+        Ok((&link).into())
+    }
+
+    /// # Errors
+    /// `Validation` (ID).
+    pub async fn unlink(&self, id: String) -> CoreResult<()> {
+        let id =
+            crate::domain::LinkId::parse(&id).map_err(|e| CoreError::Validation(e.to_string()))?;
+        UnlinkTaskNote::new(self.deps.clone()).execute(id).await
+    }
+
+    /// Verknüpfte Notizen einer Task (ohne fehlende und solche im Papierkorb).
+    ///
+    /// # Errors
+    /// `Validation` (ID).
+    pub async fn task_links(&self, task: String) -> CoreResult<Vec<note_dto::LinkedNoteDto>> {
+        let found = ListLinks::new(self.deps.clone())
+            .notes_of(task_id(&task)?)
+            .await?;
+        Ok(found
+            .into_iter()
+            .map(|(link, note)| note_dto::LinkedNoteDto {
+                link_id: link.to_string(),
+                note_id: note.id().to_string(),
+                name: note.name().to_string(),
+                kind: note.kind().into(),
+            })
+            .collect())
+    }
+
+    /// Verknüpfte Tasks einer Notiz (ohne fehlende und solche im Papierkorb).
+    ///
+    /// # Errors
+    /// `Validation` (ID).
+    pub async fn note_links(&self, note: String) -> CoreResult<Vec<note_dto::LinkedTaskDto>> {
+        let found = ListLinks::new(self.deps.clone())
+            .tasks_of(note_id(&note)?)
+            .await?;
+        Ok(found
+            .into_iter()
+            .map(|(link, task)| note_dto::LinkedTaskDto {
+                link_id: link.to_string(),
+                task: (&TaskSummary {
+                    has_links: true,
+                    ..TaskSummary::from(&task)
+                })
+                    .into(),
+            })
+            .collect())
+    }
+
+    /// Verwaiste Verknüpfungen entfernen (beim Start, wie der Papierkorb).
+    ///
+    /// # Errors
+    /// Fehler des Repositories.
+    pub async fn purge_dangling_links(&self) -> CoreResult<u32> {
+        let n = PurgeDanglingLinks::new(self.deps.clone()).execute().await?;
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
     }
 
     /// Verschiebt alle als Block (bisherige Anzeigereihenfolge) an `target`; ohne `listId` in die
@@ -340,6 +657,56 @@ impl CoreApi {
         ))
     }
 
+    /// Alle Listen und Tasks als Inhalt von `tasks.json` (ADR-032).
+    ///
+    /// # Errors
+    /// Fehler des Repositories.
+    pub async fn export_data(&self) -> CoreResult<export_dto::ExportDto> {
+        let snapshot = ExportData::new(self.deps.clone()).execute().await?;
+        Ok(export_dto::ExportDto::from_snapshot(
+            &snapshot,
+            self.deps.clock.now(),
+        ))
+    }
+
+    /// Alle Notizen außerhalb des Papierkorbs mit Ordnerpfad (die Shell schreibt sie als Dateien).
+    ///
+    /// # Errors
+    /// Fehler des Repositories.
+    pub async fn export_notes(&self) -> CoreResult<Vec<export_dto::ExportNoteDto>> {
+        Ok(ExportNotes::new(self.deps.clone())
+            .execute()
+            .await?
+            .iter()
+            .map(export_dto::ExportNoteDto::from)
+            .collect())
+    }
+
+    /// Spielt einen Export ein: neue IDs, Listen über den Namen, Vorhandenes übersprungen.
+    ///
+    /// # Errors
+    /// `Validation` (Format, Version, Felder); Fehler des Repositories.
+    pub async fn import_data(
+        &self,
+        export: export_dto::ExportDto,
+    ) -> CoreResult<export_dto::ImportDataReportDto> {
+        let (lists, tasks, tags) = export.into_import()?;
+        Ok(ImportData::new(self.deps.clone())
+            .execute(ImportDataInput { lists, tasks, tags })
+            .await?
+            .into())
+    }
+
+    /// Anzahl der Tasks einer Abfrage (Zähler der Seitenleiste, FIX-04).
+    ///
+    /// # Errors
+    /// `Validation` (Abfrage).
+    pub async fn count_tasks(&self, query: TaskQueryDto) -> CoreResult<u32> {
+        let query = TaskQuery::try_from(&query)?;
+        let n = self.deps.repo.count_tasks(&query).await?;
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
+    }
+
     /// Eine Seite einer Ansicht.
     ///
     /// # Errors
@@ -375,6 +742,327 @@ impl CoreApi {
     }
 }
 
+impl CoreApi {
+    // --- Notizen (ADR-029) ----------------------------------------------------------------------
+
+    /// Alle Ordner (auch im Papierkorb), nach `sortKey`. Wenige; Grundlage für Pfade und
+    /// „Verschieben nach…".
+    ///
+    /// # Errors
+    /// Fehler des Repositories.
+    pub async fn list_note_folders(&self) -> CoreResult<Vec<NoteFolderDto>> {
+        Ok(self
+            .deps
+            .repo
+            .list_note_folders()
+            .await?
+            .iter()
+            .map(NoteFolderDto::from)
+            .collect())
+    }
+
+    /// Eine Seite des Inhalts eines Ordners (`folderId = null` = Wurzel): Ordner und Notizen
+    /// gemischt nach `sortKey`, ohne Elemente im Papierkorb.
+    ///
+    /// # Errors
+    /// `Validation` (ID, Limit, Cursor).
+    pub async fn list_note_items(
+        &self,
+        folder: Option<String>,
+        page: PageRequestDto,
+    ) -> CoreResult<PageDto<NoteTreeItemDto>> {
+        let query = FolderItemsQuery {
+            folder: folder.as_deref().map(folder_id).transpose()?,
+            include_trashed: false,
+        };
+        let page = PageRequest {
+            cursor: page.cursor,
+            limit: page.limit,
+        };
+        Ok(self.deps.repo.list_folder_items(query, page).await?.into())
+    }
+
+    /// Vollständige Notiz (Editor).
+    ///
+    /// # Errors
+    /// `NotFound`, `Validation` (ID).
+    pub async fn get_note(&self, id: String) -> CoreResult<NoteDto> {
+        let id = note_id(&id)?;
+        let note = self
+            .deps
+            .repo
+            .get_note(id)
+            .await?
+            .ok_or_else(|| CoreError::NotFound(format!("note {id}")))?;
+        Ok((&note).into())
+    }
+
+    /// Neue, leere Notiz am Ende des Ordners.
+    ///
+    /// # Errors
+    /// `NotFound` (Ordner), `Validation` (Papierkorb, ID).
+    pub async fn create_note(
+        &self,
+        folder: Option<String>,
+        kind: NoteKindDto,
+    ) -> CoreResult<NoteDto> {
+        let input = CreateNoteInput {
+            folder: folder.as_deref().map(folder_id).transpose()?,
+            kind: kind.into(),
+        };
+        Ok((&CreateNote::new(self.deps.clone()).execute(input).await?).into())
+    }
+
+    /// Speichert den Inhalt auf der Basis `baseRev` (zuletzt geliefertes `bodyRev`). Die Antwort
+    /// trägt den aufgelösten Inhalt (weicht nur nach einem Merge mit einer Remote-Revision ab)
+    /// und das neue `bodyRev`.
+    ///
+    /// # Errors
+    /// `NotFound`, `Validation` (Größe, Papierkorb, IDs).
+    pub async fn update_note_body(
+        &self,
+        id: String,
+        text: String,
+        base_rev: Option<String>,
+    ) -> CoreResult<NoteDto> {
+        let input = UpdateNoteBodyInput {
+            id: note_id(&id)?,
+            text,
+            base_rev: base_rev.as_deref().map(revision_id).transpose()?,
+        };
+        Ok((&UpdateNoteBody::new(self.deps.clone())
+            .execute(input)
+            .await?)
+            .into())
+    }
+
+    /// Verwirft eine leer verlassene neue Notiz (leerer Inhalt, Auto-Name); `true` = verworfen.
+    ///
+    /// # Errors
+    /// `Validation` (ID).
+    pub async fn discard_empty_note(&self, id: String) -> CoreResult<bool> {
+        DiscardEmptyNote::new(self.deps.clone())
+            .execute(DiscardEmptyNoteInput { id: note_id(&id)? })
+            .await
+    }
+
+    /// # Errors
+    /// `NotFound`, `Validation` (Name, Papierkorb, ID).
+    pub async fn rename_note(&self, id: String, name: String) -> CoreResult<NoteDto> {
+        let input = RenameNoteInput {
+            id: note_id(&id)?,
+            name,
+        };
+        Ok((&RenameNote::new(self.deps.clone()).execute(input).await?).into())
+    }
+
+    /// `.txt` ↔ `.md`; der Inhalt bleibt.
+    ///
+    /// # Errors
+    /// `NotFound`, `Validation` (Papierkorb, ID).
+    pub async fn set_note_kind(&self, id: String, kind: NoteKindDto) -> CoreResult<NoteDto> {
+        let input = SetNoteKindInput {
+            id: note_id(&id)?,
+            kind: kind.into(),
+        };
+        Ok((&SetNoteKind::new(self.deps.clone()).execute(input).await?).into())
+    }
+
+    /// # Errors
+    /// `NotFound`, `Validation` (Nachbarn, Papierkorb, IDs).
+    pub async fn move_note(&self, id: String, target: NoteTargetDto) -> CoreResult<NoteDto> {
+        let input = MoveNoteInput {
+            id: note_id(&id)?,
+            target: (&target).try_into()?,
+        };
+        Ok((&MoveNote::new(self.deps.clone()).execute(input).await?).into())
+    }
+
+    /// # Errors
+    /// `NotFound` (Elternordner), `Validation` (Name, Tiefe, Papierkorb).
+    pub async fn create_note_folder(
+        &self,
+        parent_id: Option<String>,
+        name: String,
+    ) -> CoreResult<NoteFolderDto> {
+        let input = CreateNoteFolderInput {
+            parent: parent_id.as_deref().map(folder_id).transpose()?,
+            name,
+        };
+        Ok((&CreateNoteFolder::new(self.deps.clone())
+            .execute(input)
+            .await?)
+            .into())
+    }
+
+    /// # Errors
+    /// `NotFound`, `Validation` (Name, Papierkorb).
+    pub async fn rename_note_folder(&self, id: String, name: String) -> CoreResult<NoteFolderDto> {
+        let input = RenameNoteFolderInput {
+            id: folder_id(&id)?,
+            name,
+        };
+        Ok((&RenameNoteFolder::new(self.deps.clone())
+            .execute(input)
+            .await?)
+            .into())
+    }
+
+    /// Verschiebt einen Ordner samt Inhalt (`target.folderId` = neuer Elternordner).
+    ///
+    /// # Errors
+    /// `NotFound`, `Validation` (Zyklus, Tiefe, Nachbarn, Papierkorb).
+    pub async fn move_note_folder(
+        &self,
+        id: String,
+        target: NoteTargetDto,
+    ) -> CoreResult<NoteFolderDto> {
+        let input = MoveNoteFolderInput {
+            id: folder_id(&id)?,
+            target: (&target).try_into()?,
+        };
+        Ok((&MoveNoteFolder::new(self.deps.clone())
+            .execute(input)
+            .await?)
+            .into())
+    }
+
+    /// In den Papierkorb; liefert die tatsächlich geänderten (für „Rückgängig").
+    ///
+    /// # Errors
+    /// `Validation` (IDs, Obergrenze).
+    pub async fn trash_note_items(&self, items: Vec<NoteItemDto>) -> CoreResult<Vec<NoteItemDto>> {
+        let items = note_items(&items)?;
+        let changed = TrashNoteItems::new(self.deps.clone())
+            .execute(TrashNoteItemsInput { items })
+            .await?;
+        Ok(changed.into_iter().map(Into::into).collect())
+    }
+
+    /// Aus dem Papierkorb holen (bei fehlendem Elternordner in die Wurzel).
+    ///
+    /// # Errors
+    /// `Validation` (IDs, Obergrenze).
+    pub async fn restore_note_items(
+        &self,
+        items: Vec<NoteItemDto>,
+    ) -> CoreResult<Vec<NoteItemDto>> {
+        let items = note_items(&items)?;
+        let changed = RestoreNoteItems::new(self.deps.clone())
+            .execute(RestoreNoteItemsInput { items })
+            .await?;
+        Ok(changed.into_iter().map(Into::into).collect())
+    }
+
+    /// Endgültig löschen (samt Inhalt); liefert die Zahl gelöschter Elemente.
+    ///
+    /// # Errors
+    /// `Validation` (IDs, Obergrenze).
+    pub async fn purge_note_items(&self, items: Vec<NoteItemDto>) -> CoreResult<u32> {
+        let items = note_items(&items)?;
+        PurgeNoteItems::new(self.deps.clone())
+            .execute(PurgeNoteItemsInput { items })
+            .await
+    }
+
+    /// # Errors
+    /// Fehler des Repositories.
+    pub async fn empty_note_trash(&self) -> CoreResult<u32> {
+        EmptyNoteTrash::new(self.deps.clone()).execute().await
+    }
+
+    /// Löscht, was seit mehr als 30 Tagen im Papierkorb liegt (beim Start, höchstens täglich).
+    ///
+    /// # Errors
+    /// Fehler des Repositories.
+    pub async fn purge_expired_notes(&self) -> CoreResult<u32> {
+        PurgeExpiredNotes::new(self.deps.clone()).execute().await
+    }
+
+    /// Oberste Elemente im Papierkorb, neueste zuerst.
+    ///
+    /// # Errors
+    /// Fehler des Repositories.
+    pub async fn list_note_trash(&self) -> CoreResult<Vec<NoteTrashEntryDto>> {
+        Ok(ListNoteTrash::new(self.deps.clone())
+            .execute()
+            .await?
+            .iter()
+            .map(NoteTrashEntryDto::from)
+            .collect())
+    }
+
+    /// Suche über Name und Inhalt (wie `search_tasks`); mit Ordnerpfad und Ausschnitt.
+    ///
+    /// # Errors
+    /// `Validation` (Limit, Länge).
+    pub async fn search_notes(&self, text: String, limit: u32) -> CoreResult<Vec<NoteHitDto>> {
+        let repo = self.deps.repo.as_ref();
+        let hits = repo.search_notes(&SearchQuery { text, limit }).await?;
+        if hits.is_empty() {
+            return Ok(Vec::new());
+        }
+        let folders: std::collections::BTreeMap<_, _> = repo
+            .list_note_folders()
+            .await?
+            .into_iter()
+            .map(|f| (f.id(), f))
+            .collect();
+        let path = |mut folder: Option<NoteFolderId>| {
+            let mut names = Vec::new();
+            while let Some(id) = folder {
+                let Some(f) = folders.get(&id) else { break };
+                if names.len() > crate::domain::note_tree::NOTE_TREE_MAX_DEPTH {
+                    break;
+                }
+                names.push(f.name().to_string());
+                folder = f.parent();
+            }
+            names.reverse();
+            names
+        };
+        Ok(hits
+            .iter()
+            .map(|hit| NoteHitDto::new(hit, path(hit.note.folder)))
+            .collect())
+    }
+
+    /// Importiert eingelesene Dateien unter einem neuen Ordner `root` in der Wurzel (Commits zu
+    /// je ≤ 500 Elementen).
+    ///
+    /// # Errors
+    /// Fehler des Repositories (bis dahin importierte Blöcke bleiben).
+    pub async fn import_notes(
+        &self,
+        root: String,
+        files: Vec<ImportNoteFileDto>,
+    ) -> CoreResult<ImportReportDto> {
+        let input = ImportNotesInput {
+            root,
+            files: files
+                .into_iter()
+                .map(|f| ImportNoteFile {
+                    dirs: f.dirs,
+                    name: f.name,
+                    kind: f.kind.into(),
+                    text: f.text,
+                })
+                .collect(),
+        };
+        Ok((&ImportNotes::new(self.deps.clone()).execute(input).await?).into())
+    }
+}
+
+fn note_items(items: &[NoteItemDto]) -> CoreResult<Vec<NoteItem>> {
+    if items.len() > NOTE_BULK_LIMIT_MAX {
+        return Err(CoreError::Validation(format!(
+            "at most {NOTE_BULK_LIMIT_MAX} items per call, got {}",
+            items.len()
+        )));
+    }
+    items.iter().map(TryInto::try_into).collect()
+}
+
 fn task_ids(ids: &[String]) -> CoreResult<Vec<TaskId>> {
     check_bulk_len(ids.len())?;
     ids.iter().map(|id| task_id(id)).collect()
@@ -390,18 +1078,57 @@ fn write_sinks(sinks: &Sinks) -> std::sync::RwLockWriteGuard<'_, Vec<Box<dyn Eve
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+fn emit_conflicts(sinks: &Sinks, conflicts: &[NoteConflict]) {
+    if conflicts.is_empty() {
+        return;
+    }
+    let event = CoreEvent::NoteConflicts {
+        conflicts: conflicts
+            .iter()
+            .map(|c| NoteConflictDto {
+                note_id: c.note.to_string(),
+                copy_id: c.copy.to_string(),
+            })
+            .collect(),
+    };
+    let sinks = sinks
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    for sink in sinks.iter() {
+        sink.emit(event.clone());
+    }
+}
+
 fn emit(sinks: &Sinks, changed: &[EntityRef]) {
     if changed.is_empty() {
         return;
     }
-    let (mut tasks, mut lists) = (Vec::new(), Vec::new());
+    let (mut tasks, mut lists, mut notes, mut note_folders, mut tags, mut links) = (
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
     for entity in changed {
         match entity {
             EntityRef::Task(id) => tasks.push(id.to_string()),
             EntityRef::TaskList(id) => lists.push(id.to_string()),
+            EntityRef::Note(id) => notes.push(id.to_string()),
+            EntityRef::NoteFolder(id) => note_folders.push(id.to_string()),
+            EntityRef::Tag(id) => tags.push(id.to_string()),
+            EntityRef::Link(id) => links.push(id.to_string()),
         }
     }
-    let event = CoreEvent::Changed { tasks, lists };
+    let event = CoreEvent::Changed {
+        tasks,
+        lists,
+        notes,
+        note_folders,
+        tags,
+        links,
+    };
     let sinks = sinks
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -416,6 +1143,45 @@ struct NotifyingRepository {
     inner: Arc<dyn TaskRepository>,
     clock: Arc<dyn Clock>,
     sinks: Sinks,
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+impl NoteRepository for NotifyingRepository {
+    async fn get_note(&self, id: NoteId) -> CoreResult<Option<Note>> {
+        self.inner.get_note(id).await
+    }
+
+    async fn get_note_folder(&self, id: NoteFolderId) -> CoreResult<Option<NoteFolder>> {
+        self.inner.get_note_folder(id).await
+    }
+
+    async fn list_note_folders(&self) -> CoreResult<Vec<NoteFolder>> {
+        self.inner.list_note_folders().await
+    }
+
+    async fn list_folder_items(
+        &self,
+        query: FolderItemsQuery,
+        page: PageRequest,
+    ) -> CoreResult<Page<NoteTreeItem>> {
+        self.inner.list_folder_items(query, page).await
+    }
+
+    async fn list_trashed_notes(&self) -> CoreResult<Vec<NoteSummary>> {
+        self.inner.list_trashed_notes().await
+    }
+
+    async fn last_note_sort_key(
+        &self,
+        folder: Option<NoteFolderId>,
+    ) -> CoreResult<Option<SortKey>> {
+        self.inner.last_note_sort_key(folder).await
+    }
+
+    async fn search_notes(&self, query: &SearchQuery) -> CoreResult<Vec<NoteHit>> {
+        self.inner.search_notes(query).await
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
@@ -437,6 +1203,22 @@ impl TaskRepository for NotifyingRepository {
         self.inner.list_task_lists().await
     }
 
+    async fn get_tag(&self, id: TagId) -> CoreResult<Option<Tag>> {
+        self.inner.get_tag(id).await
+    }
+
+    async fn list_tags(&self) -> CoreResult<Vec<Tag>> {
+        self.inner.list_tags().await
+    }
+
+    async fn list_links(
+        &self,
+        task: Option<TaskId>,
+        note: Option<NoteId>,
+    ) -> CoreResult<Vec<Link>> {
+        self.inner.list_links(task, note).await
+    }
+
     async fn list_tasks(
         &self,
         query: &TaskQuery,
@@ -449,10 +1231,20 @@ impl TaskRepository for NotifyingRepository {
         self.inner.last_sort_key(list_id).await
     }
 
+    async fn count_tasks(&self, query: &TaskQuery) -> CoreResult<u64> {
+        self.inner.count_tasks(query).await
+    }
+
+    // FIX-13: weiterleiten, sonst liefe die O(n)-Standardsuche statt des FTS5-Index (ADR-027).
+    async fn search_tasks(&self, query: &SearchQuery) -> CoreResult<Vec<TaskSummary>> {
+        self.inner.search_tasks(query).await
+    }
+
     async fn commit(&self, changes: ChangeSet) -> CoreResult<CommitReceipt> {
         let changes = changes.at(self.clock.now());
         let receipt = self.inner.commit(changes).await?;
         emit(&self.sinks, &receipt.changed);
+        emit_conflicts(&self.sinks, &receipt.conflicts);
         Ok(receipt)
     }
 
@@ -472,9 +1264,22 @@ impl TaskRepository for NotifyingRepository {
         self.inner.mark_ops_pushed(up_to).await
     }
 
+    async fn freeze_outbox(&self, up_to: u64) -> CoreResult<()> {
+        self.inner.freeze_outbox(up_to).await
+    }
+
+    async fn revision_ops(&self) -> CoreResult<Vec<Op>> {
+        self.inner.revision_ops().await
+    }
+
+    async fn prune_revisions(&self, acked: Vec<(DeviceId, u64)>) -> CoreResult<u32> {
+        self.inner.prune_revisions(acked).await
+    }
+
     async fn apply_remote(&self, batch: RemoteBatch) -> CoreResult<RemoteReceipt> {
         let receipt = self.inner.apply_remote(batch).await?;
         emit(&self.sinks, &receipt.changed);
+        emit_conflicts(&self.sinks, &receipt.conflicts);
         Ok(receipt)
     }
 
@@ -576,6 +1381,10 @@ mod sync_tests {
             [CoreEvent::Changed {
                 tasks: vec![task.id().to_string()],
                 lists: Vec::new(),
+                notes: Vec::new(),
+                note_folders: Vec::new(),
+                tags: Vec::new(),
+                links: Vec::new(),
             }]
         );
         assert_eq!(inbox.id, TaskListId::INBOX.to_string());
@@ -652,6 +1461,10 @@ mod bulk_tests {
         vec![CoreEvent::Changed {
             tasks: ids.to_vec(),
             lists: Vec::new(),
+            notes: Vec::new(),
+            note_folders: Vec::new(),
+            tags: Vec::new(),
+            links: Vec::new(),
         }]
     }
 
@@ -667,8 +1480,8 @@ mod bulk_tests {
     #[test]
     fn each_bulk_call_is_one_commit_with_one_event() {
         let s = setup();
-        let done = block_on(s.api.complete_tasks(s.ids.clone(), true)).unwrap();
-        assert_eq!(done.len(), 3);
+        let done = block_on(s.api.complete_tasks(s.ids.clone(), true, None)).unwrap();
+        assert_eq!(done.tasks.len(), 3);
         let (events, ops) = s.take();
         assert_eq!(events, changed(&s.ids));
         assert_eq!(fields(&ops), vec![Some(FieldName::Status); 3]);
@@ -691,7 +1504,7 @@ mod bulk_tests {
             .iter()
             .map(|id| TaskDueDto {
                 id: id.clone(),
-                due: Some(dto::DueDto::Date {
+                due: Some(DueDto::Date {
                     date: "2026-10-20".into(),
                 }),
             })
@@ -736,11 +1549,13 @@ mod bulk_tests {
     #[test]
     fn noop_and_invalid_calls_emit_nothing() {
         let s = setup();
-        assert!(block_on(s.api.complete_tasks(Vec::new(), true))
+        assert!(block_on(s.api.complete_tasks(Vec::new(), true, None))
             .unwrap()
+            .tasks
             .is_empty());
-        assert!(block_on(s.api.complete_tasks(s.ids.clone(), false))
+        assert!(block_on(s.api.complete_tasks(s.ids.clone(), false, None))
             .unwrap()
+            .tasks
             .is_empty());
         assert!(matches!(
             block_on(s.api.delete_tasks(vec![s.ids[0].clone(), "kaputt".into()])),
@@ -824,7 +1639,7 @@ mod tests {
             Arc::new(crate::ports::FixedClock(crate::domain::Timestamp::EPOCH)),
         );
         assert_send(api.ensure_inbox());
-        assert_send(api.complete_tasks(Vec::new(), true));
+        assert_send(api.complete_tasks(Vec::new(), true, None));
         assert_send(api.delete_tasks(Vec::new()));
         assert_send(api.set_dues(Vec::new()));
         assert_send(api.search_tasks(String::new(), 10));
@@ -836,11 +1651,192 @@ mod tests {
                 view: dto::ViewDto::All,
                 status: None,
                 tag: None,
+                priority: None,
+                sort: None,
             },
             PageRequestDto {
                 cursor: None,
                 limit: 10,
             },
         ));
+    }
+}
+
+#[cfg(test)]
+mod note_tests {
+    use std::sync::Mutex;
+
+    use futures::executor::block_on;
+
+    use super::*;
+    use crate::{
+        domain::Timestamp,
+        ports::SteppingClock,
+        sync::{OpKind, RemoteBatch},
+        testing::InMemoryTaskRepository,
+    };
+
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<CoreEvent>>);
+
+    impl EventSink for Recorder {
+        fn emit(&self, event: CoreEvent) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
+    fn api(start: i64) -> (CoreApi, Arc<Recorder>) {
+        let api = CoreApi::new(
+            Arc::new(InMemoryTaskRepository::new()),
+            Arc::new(SteppingClock::new(Timestamp::from_millis(start), 3)),
+        );
+        let recorder = Arc::new(Recorder::default());
+        api.subscribe(Box::new(recorder.clone()));
+        (api, recorder)
+    }
+
+    fn take(r: &Recorder) -> Vec<CoreEvent> {
+        std::mem::take(&mut *r.0.lock().unwrap())
+    }
+
+    /// Ops von `from` nach `to` „hochladen" (wie die Engine, mit Freeze).
+    fn send(from: &CoreApi, to: &CoreApi) {
+        let (a, b) = (from.repository(), to.repository());
+        let ops = block_on(a.pending_ops(1_000)).unwrap();
+        let Some(last) = ops.iter().map(|op| op.id.seq).max() else {
+            return;
+        };
+        block_on(a.freeze_outbox(last)).unwrap();
+        let device = block_on(a.device_id()).unwrap();
+        block_on(b.apply_remote(RemoteBatch {
+            ops,
+            cursors: vec![(device, last)],
+            now: Timestamp::from_millis(1_800_000_000_000),
+        }))
+        .unwrap();
+        block_on(a.mark_ops_pushed(last)).unwrap();
+    }
+
+    #[test]
+    fn note_lifecycle_emits_note_events() {
+        let (api, events) = api(1_700_000_000_000);
+        let folder = block_on(api.create_note_folder(None, "Uni".into())).unwrap();
+        let note =
+            block_on(api.create_note(Some(folder.id.clone()), NoteKindDto::Markdown)).unwrap();
+        take(&events);
+        let saved = block_on(api.update_note_body(
+            note.id.clone(),
+            "# Blatt 3\nAufgabe".into(),
+            note.body_rev.clone(),
+        ))
+        .unwrap();
+        assert_eq!(saved.name, "Blatt 3");
+        assert!(saved.body_rev.is_some());
+        assert_eq!(
+            take(&events),
+            [CoreEvent::Changed {
+                tasks: Vec::new(),
+                lists: Vec::new(),
+                notes: vec![note.id.clone()],
+                note_folders: Vec::new(),
+                tags: Vec::new(),
+                links: Vec::new(),
+            }]
+        );
+        let page = block_on(api.list_note_items(
+            Some(folder.id.clone()),
+            PageRequestDto {
+                cursor: None,
+                limit: 10,
+            },
+        ))
+        .unwrap();
+        assert!(matches!(&page.items[..], [NoteTreeItemDto::Note(n)] if n.name == "Blatt 3"));
+        let hits = block_on(api.search_notes("aufgabe".into(), 10)).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].path, ["Uni"]);
+        assert_eq!(hits[0].snippet.as_ref().unwrap().offset, 10);
+
+        let item = NoteItemDto::Folder {
+            id: folder.id.clone(),
+        };
+        assert_eq!(
+            block_on(api.trash_note_items(vec![item.clone()])).unwrap(),
+            std::slice::from_ref(&item)
+        );
+        let trash = block_on(api.list_note_trash()).unwrap();
+        assert_eq!(trash.len(), 1);
+        assert!(block_on(api.search_notes("aufgabe".into(), 10))
+            .unwrap()
+            .is_empty());
+        block_on(api.restore_note_items(vec![item.clone()])).unwrap();
+        assert_eq!(block_on(api.purge_note_items(vec![item])).unwrap(), 2);
+        assert!(matches!(
+            block_on(api.get_note(note.id)),
+            Err(CoreError::NotFound(_))
+        ));
+    }
+
+    /// Speichern auf einer alten Basis nach einer Remote-Revision: Die Antwort trägt den
+    /// gemergten Text; ein Konflikt meldet die Kopie per Event.
+    #[test]
+    fn remote_merge_returns_the_merged_body_and_reports_conflicts() {
+        let (a, _) = api(1_700_000_000_000);
+        let (b, b_events) = api(1_700_000_000_500);
+        let note = block_on(a.create_note(None, NoteKindDto::Text)).unwrap();
+        let note = block_on(a.update_note_body(note.id, "eins\nzwei\ndrei".into(), note.body_rev))
+            .unwrap();
+        send(&a, &b);
+        let on_b = block_on(b.get_note(note.id.clone())).unwrap();
+        block_on(a.update_note_body(
+            note.id.clone(),
+            "eins\nzwei\ndrei A".into(),
+            note.body_rev.clone(),
+        ))
+        .unwrap();
+        send(&a, &b);
+        take(&b_events);
+        // B tippt noch auf dem alten Stand weiter.
+        let merged = block_on(b.update_note_body(
+            on_b.id.clone(),
+            "eins B\nzwei\ndrei".into(),
+            on_b.body_rev.clone(),
+        ))
+        .unwrap();
+        assert_eq!(merged.body, "eins B\nzwei\ndrei A");
+
+        let conflict = block_on(b.update_note_body(
+            merged.id.clone(),
+            "eins B\nzwei von B\ndrei A".into(),
+            merged.body_rev.clone(),
+        ))
+        .unwrap();
+        send(&b, &a);
+        let from_a = block_on(a.get_note(note.id.clone())).unwrap();
+        block_on(a.update_note_body(
+            note.id.clone(),
+            from_a.body.replace("zwei", "zwei von A"),
+            from_a.body_rev,
+        ))
+        .unwrap();
+        // B bearbeitet dieselbe Zeile erneut, bevor A ankommt.
+        block_on(b.update_note_body(
+            conflict.id.clone(),
+            "eins B\nzwei von B!\ndrei A".into(),
+            conflict.body_rev,
+        ))
+        .unwrap();
+        take(&b_events);
+        send(&a, &b);
+        let reported = take(&b_events)
+            .into_iter()
+            .any(|e| matches!(e, CoreEvent::NoteConflicts { conflicts } if conflicts.len() == 1));
+        assert!(reported, "Konflikt gemeldet");
+        let ops = block_on(b.repository().pending_ops(100)).unwrap();
+        assert!(
+            ops.iter()
+                .any(|op| matches!(op.kind, OpKind::Revise { .. })),
+            "Merge-Revision"
+        );
     }
 }

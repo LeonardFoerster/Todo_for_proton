@@ -34,7 +34,18 @@ pub enum OpKind {
 - **Delete** ist ein Tombstone mit HLC. Ein `Set` mit *höherer* HLC nach dem Delete wird ignoriert
   (Delete gewinnt – „Delete-wins" ist für Todos die erwartete Semantik). Wiederherstellen = expliziter `Restore`-Op (später).
 - **Status Done/Open**: normales LWW-Feld; `completed_at` wird mitgeführt.
+- **Wiederholung (N4, ADR-028)**: Feld `Recurrence` (Code 17, ganze Regel als LWW-Register, `None` = keine).
+  Abhaken einer Serie = ein `ChangeSet` aus „Serie: neue `due`" und „Verlaufseintrag anlegen". Die ID des Eintrags
+  ist **deterministisch** (UUIDv5 aus Serie + lokalem Tag des Vorkommens): Haken zwei Geräte offline dasselbe
+  Vorkommen ab, entsteht nur **ein** Eintrag (gleiche ID, Felder per LWW), und beide schreiben dieselbe `due`. Nach
+  „Rückgängig" (Tombstone) nimmt erneutes Abhaken die nächste ID-Variante. Ältere Apps kennen Code 17 nicht und
+  überspringen solche Segmente (Hinweis „alle Geräte aktualisieren").
 - **Notizen**: v1 LWW für das ganze Feld. Später ggf. Text-CRDT (z. B. `yrs`) nur für `notes`.
+- **Checkliste (N8, ADR-034)**: Feld `Checklist` (Code 18), LWW auf die ganze Liste der Punkte `{id, text, done}`.
+- **Tag-Entity (N8, ADR-035)**: `EntityRef::Tag` mit `Name`/`CreatedAt`; die ID ist aus dem Namen abgeleitet
+  (UUIDv5), damit offline doppelt angelegte Tags zu einem werden.
+- **Verknüpfung (N9, ADR-036)**: `EntityRef::Link` mit `LinkTask`/`LinkNote` (19/20), ID aus beiden Enden; nur
+  anlegen und löschen.
 - **Tags**: v1 LWW auf die ganze Menge; bei Bedarf Upgrade auf OR-Set über `AddToSet`/`RemoveFromSet`.
 - **Reihenfolge**: `sort_key` als Fractional Index (String, z. B. Base62). Verschieben ändert nur
   das eine Feld der bewegten Task. Gleiche Keys nach parallelen Moves → Tie-Break über `TaskId`.
@@ -42,11 +53,28 @@ pub enum OpKind {
 - **Hierarchie**: Subtask, deren Parent gelöscht wurde → wird mit gelöscht (Kaskade beim Materialisieren,
   nicht als eigene Ops).
 
-### Notes (N5, Entwurf – `notes.md` §4, ADR-029)
-- `EntityRef::Note`/`NoteFolder` und neue Felder angehängt. Der Inhalt einer Notiz ist **kein** LWW-Feld, sondern
-  ein DAG unveränderlicher Revisionen (`OpKind::Revise { parents, text }`), aufgelöst per deterministischem diff3,
-  bei Überlappung Konfliktkopie mit deterministischer ID. Papierkorb = LWW-Feld `Trashed`, endgültig = `Delete`.
-- Upload für Inhalte: Debounce 3 s, höchstens 30 s, sofort bei Notiz-/Moduswechsel, Fokusverlust, Schließen.
+### Notes (N5, umgesetzt 2026-10-20 – `notes.md` §4, ADR-029)
+- `EntityRef::Note`/`NoteFolder`, Felder 13–16 und `FieldValue::Folder`/`NoteKind`/`Trashed` angehängt (postcard,
+  Golden-Dateien `ops_v1_notes.bin`). Name, Ordner, Reihenfolge, Typ und Papierkorb sind LWW-Felder; der Name wird
+  nicht synchronisiert, solange er automatisch aus der ersten Zeile folgt (jedes Gerät leitet ihn aus dem
+  aufgelösten Inhalt ab).
+- Der Inhalt ist **kein** LWW-Feld, sondern ein DAG unveränderlicher Revisionen (`OpKind::Revise { parents, text }`,
+  `RevisionId` = `OpId`, höchstens 64 Eltern). Mehrere Köpfe werden in `apply_remote` deterministisch aufgelöst:
+  Merge-Basis (bei Kreuz-Merges virtuelle Basis), eigener Myers-Diff + diff3 (`sync/text_merge.rs`; benachbarte
+  Zeilen sind kein Konflikt). Überlappung → Konfliktkopie mit UUIDv5-ID aus den beteiligten Revisionen und Name
+  „<Name> (Konflikt TT.MM.JJJJ)"; jedes Gerät erzeugt dieselbe Kopie, nie doppelt. Die Merge-Revision entsteht im
+  selben Commit bzw. Pull (Property-Test: Konvergenz bei beliebiger Reihenfolge).
+- Ordnerbaum: verwaiste Einträge → oberste Ebene, Zyklen bricht der `ParentFolder`-Wert mit der höchsten HLC,
+  Papierkorb wird vererbt, Tiefe ≤ 32. Papierkorb = LWW-Feld `Trashed`, endgültig = `Delete` (nach 30 Tagen
+  automatisch, täglich beim Start).
+- Outbox: ungepushte `Revise`/`Set`-Ops derselben Notiz werden zusammengefasst (gleiche `seq`, keine Lücken im
+  Segment); vor dem Upload friert `freeze_outbox` den Stand ein. Segmente bis 2 MiB Klartext.
+- Snapshot-Format v2 enthält Notizen, Ordner und die gespeicherten Revisionen (`Revise`-Ops mit Original-ID).
+  Compaction kürzt vorher: Revisionen, die alle Geräte bestätigt haben und die kein Kopf mehr braucht, entfallen.
+- Upload für Inhalte: Scheduler-Ereignis `ContentChange` (Debounce 3 s, höchstens 30 s); sofort (`Flush`) bei
+  Notiz-/Moduswechsel, Fokusverlust und Schließen.
+- **Kompatibilität:** Geräte mit älterer App-Version können die neuen Op-Varianten nicht lesen – alle Geräte
+  gleichzeitig aktualisieren (README).
 
 ### Lokale Tabellen (Auszug)
 | Tabelle | Zweck |
@@ -58,6 +86,9 @@ pub enum OpKind {
 | `outbox_ops` | lokal erzeugte, noch nicht hochgeladene Ops |
 | `remote_cursors` | pro fremdem Gerät: zuletzt verarbeitetes Segment |
 | `sync_meta` | eigene `device_id`, nächste `seq`, letzter Snapshot, HLC-Zustand |
+| `notes`, `note_folders` | materialisierte Notizen (Inhalt = aufgelöster Text) und Ordner (Migration 0004) |
+| `note_revisions`, `note_revision_parents` | Revisions-DAG (Text je Revision, Kanten); geladen werden nur die Köpfe |
+| `notes_fts` | Volltext (FTS5, Trigramm) für die Suche über Namen und Inhalt |
 
 ## 3. Layout im Proton Drive
 

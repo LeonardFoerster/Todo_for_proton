@@ -5,18 +5,25 @@ use std::collections::BTreeMap;
 
 use rusqlite::{named_params, Connection, OptionalExtension, TransactionBehavior};
 use todo_core::{
-    domain::{DeviceId, Task, TaskId, TaskList, TaskListId},
+    domain::{
+        DeviceId, Link, LinkId, Note, NoteFolder, NoteFolderId, NoteId, RevisionId, SortKey, Tag,
+        TagId, Task, TaskId, TaskList, TaskListId,
+    },
     ports::{Change, ChangeSet, EntityRef},
     sync::{
-        record_local, EntityState, FieldName, FieldValue, Hlc, HlcState, Op, OpClock, Register,
-        Registers, ReplicaStore,
+        record_local, EntityState, FieldName, FieldValue, Hlc, HlcState, Op, OpClock, OpId, OpKind,
+        Register, Registers, ReplicaStore, Revision, RevisionSet,
     },
     CoreResult,
 };
 
 use crate::{
     error::{corrupt, storage},
-    mapping::{read_list, read_task, write_list, write_task, LIST_COLUMNS, TASK_COLUMNS},
+    mapping::{
+        folder_id, note_id, read_folder, read_link, read_list, read_note, read_sort_key, read_tag,
+        read_task, write_folder, write_link, write_list, write_note, write_tag, write_task,
+        FOLDER_COLUMNS, LINK_COLUMNS, LIST_COLUMNS, NOTE_COLUMNS, TAG_COLUMNS, TASK_COLUMNS,
+    },
 };
 
 const DEVICE_ID: &str = "device_id";
@@ -25,8 +32,19 @@ const LAST_SEQ: &str = "last_seq";
 /// Präfix für Werte der Sync-Engine in `sync_meta` (getrennt von den eigenen Schlüsseln).
 const ENGINE_PREFIX: &str = "engine.";
 
+/// Bis zu dieser Op-Nummer ist die Outbox zum Upload herausgegeben (`freeze_outbox`).
+const OUTBOX_FROZEN: &str = "outbox_frozen";
+
 const KIND_TASK: i64 = 0;
 const KIND_LIST: i64 = 1;
+const KIND_NOTE: i64 = 2;
+const KIND_FOLDER: i64 = 3;
+const KIND_TAG: i64 = 4;
+const KIND_LINK: i64 = 5;
+
+/// `outbox_ops.slot` für Revise- und Create-Ops (Set: Feld-Code).
+const SLOT_REVISE: i64 = -1;
+const SLOT_CREATE: i64 = 0;
 
 /// [`ReplicaStore`] auf einer Verbindung; für Schreibzugriffe innerhalb einer Transaktion
 /// verwenden (eine `rusqlite::Transaction` dereferenziert auf `Connection`).
@@ -131,6 +149,52 @@ pub(crate) fn pending_op_count(conn: &Connection) -> CoreResult<u64> {
     Ok(u64::try_from(n).unwrap_or(0))
 }
 
+pub(crate) fn freeze_outbox(conn: &Connection, up_to: u64) -> CoreResult<()> {
+    let current: i64 = meta(conn, OUTBOX_FROZEN)?.unwrap_or(0);
+    if sql_seq(up_to) > current {
+        set_meta(conn, OUTBOX_FROZEN, &sql_seq(up_to))?;
+    }
+    Ok(())
+}
+
+/// Alle Revisionen nicht gelöschter Notizen als `Revise`-Ops, nach Notiz und ID sortiert.
+pub(crate) fn revision_ops(conn: &Connection) -> CoreResult<Vec<Op>> {
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT note_id, rev_device, rev_seq, hlc, parents, text FROM note_revisions r
+             WHERE NOT EXISTS (SELECT 1 FROM tombstones t WHERE t.entity_id = r.note_id)
+             ORDER BY note_id, rev_device, rev_seq",
+        )
+        .map_err(storage)?;
+    let mut rows = stmt.query([]).map_err(storage)?;
+    let mut ops = Vec::new();
+    while let Some(row) = rows.next().map_err(storage)? {
+        let note = note_id(&row.get::<_, String>(0).map_err(storage)?)?;
+        let rev = read_revision(row, 1)?;
+        ops.push(todo_core::sync::revise_op(note, &rev));
+    }
+    Ok(ops)
+}
+
+/// Revision aus den Spalten `rev_device, rev_seq, hlc, parents, text` ab `at`.
+fn read_revision(row: &rusqlite::Row<'_>, at: usize) -> CoreResult<Revision> {
+    let device: String = row.get(at).map_err(storage)?;
+    let seq: i64 = row.get(at + 1).map_err(storage)?;
+    let hlc: Vec<u8> = row.get(at + 2).map_err(storage)?;
+    let parents: Vec<u8> = row.get(at + 3).map_err(storage)?;
+    let parents: Vec<OpId> =
+        postcard::from_bytes(&parents).map_err(|e| corrupt("revision parents", e))?;
+    Ok(Revision {
+        id: RevisionId {
+            device: DeviceId::parse(&device).map_err(|e| corrupt("revision device", e))?,
+            seq: u64::try_from(seq).map_err(|e| corrupt("revision seq", e))?,
+        },
+        hlc: Hlc::from_bytes(&hlc).map_err(|e| corrupt("hlc", e))?,
+        parents: parents.into_iter().map(Into::into).collect(),
+        text: row.get(at + 4).map_err(storage)?,
+    })
+}
+
 pub(crate) fn mark_ops_pushed(conn: &Connection, up_to: u64) -> CoreResult<()> {
     conn.prepare_cached("DELETE FROM outbox_ops WHERE seq <= ?1")
         .and_then(|mut stmt| stmt.execute([sql_seq(up_to)]))
@@ -207,6 +271,14 @@ fn read_entity(row: &rusqlite::Row<'_>, at: usize) -> CoreResult<EntityRef> {
         KIND_LIST => Ok(EntityRef::TaskList(
             TaskListId::parse(&id).map_err(|e| corrupt("list id", e))?,
         )),
+        KIND_NOTE => Ok(EntityRef::Note(note_id(&id)?)),
+        KIND_FOLDER => Ok(EntityRef::NoteFolder(folder_id(&id)?)),
+        KIND_TAG => Ok(EntityRef::Tag(
+            TagId::parse(&id).map_err(|e| corrupt("tag id", e))?,
+        )),
+        KIND_LINK => Ok(EntityRef::Link(
+            LinkId::parse(&id).map_err(|e| corrupt("link id", e))?,
+        )),
         other => Err(corrupt("entity kind", other)),
     }
 }
@@ -220,7 +292,45 @@ fn entity_key(entity: EntityRef) -> (String, i64) {
     match entity {
         EntityRef::Task(id) => (id.to_string(), KIND_TASK),
         EntityRef::TaskList(id) => (id.to_string(), KIND_LIST),
+        EntityRef::Note(id) => (id.to_string(), KIND_NOTE),
+        EntityRef::NoteFolder(id) => (id.to_string(), KIND_FOLDER),
+        EntityRef::Tag(id) => (id.to_string(), KIND_TAG),
+        EntityRef::Link(id) => (id.to_string(), KIND_LINK),
     }
+}
+
+/// Spalten `entity_id`, `slot` einer Outbox-Zeile (siehe `0004_notes.sql`).
+fn outbox_slot(op: &Op) -> (String, Option<i64>) {
+    let slot = match &op.kind {
+        OpKind::Revise { .. } => Some(SLOT_REVISE),
+        OpKind::Create { .. } => Some(SLOT_CREATE),
+        OpKind::Set { field, .. } => Some(i64::from(field.code())),
+        OpKind::Delete => None,
+    };
+    (entity_key(op.entity).0, slot)
+}
+
+/// Registers aller lebenden Entities einer Art.
+fn live_registers(conn: &Connection, kind: i64) -> CoreResult<Vec<(String, Registers)>> {
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT field, hlc, value, entity_id FROM field_clocks
+             WHERE entity_kind = ?1 ORDER BY entity_id",
+        )
+        .map_err(storage)?;
+    let mut rows = stmt.query([kind]).map_err(storage)?;
+    let mut out: Vec<(String, Registers)> = Vec::new();
+    while let Some(row) = rows.next().map_err(storage)? {
+        let id: String = row.get(3).map_err(storage)?;
+        let (field, register) = read_register(row)?;
+        match out.last_mut() {
+            Some((last, registers)) if *last == id => {
+                registers.insert(field, register);
+            }
+            _ => out.push((id, Registers::from([(field, register)]))),
+        }
+    }
+    Ok(out)
 }
 
 fn read_register(row: &rusqlite::Row<'_>) -> CoreResult<(FieldName, Register)> {
@@ -341,9 +451,19 @@ impl ReplicaStore for SqliteReplica<'_> {
     }
 
     fn push_outbox(&mut self, op: &Op) -> CoreResult<()> {
+        let (entity, slot) = outbox_slot(op);
         self.conn
-            .prepare_cached("INSERT INTO outbox_ops (seq, op) VALUES (?1, ?2)")
-            .and_then(|mut stmt| stmt.execute(rusqlite::params![sql_seq(op.id.seq), op.encode()]))
+            .prepare_cached(
+                "INSERT INTO outbox_ops (seq, op, entity_id, slot) VALUES (?1, ?2, ?3, ?4)",
+            )
+            .and_then(|mut stmt| {
+                stmt.execute(rusqlite::params![
+                    sql_seq(op.id.seq),
+                    op.encode(),
+                    entity,
+                    slot
+                ])
+            })
             .map_err(storage)?;
         Ok(())
     }
@@ -369,6 +489,269 @@ impl ReplicaStore for SqliteReplica<'_> {
             tasks.entry(id).or_default().insert(field, register);
         }
         Ok(tasks.into_iter().collect())
+    }
+
+    fn revisions(&mut self, note: NoteId) -> CoreResult<RevisionSet> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT rev_device, rev_seq, hlc, parents, text FROM note_revisions
+                 WHERE note_id = ?1",
+            )
+            .map_err(storage)?;
+        let mut rows = stmt.query([note.to_string()]).map_err(storage)?;
+        let mut revs = RevisionSet::new();
+        while let Some(row) = rows.next().map_err(storage)? {
+            revs.insert(read_revision(row, 0)?);
+        }
+        Ok(revs)
+    }
+
+    fn revision_heads(&mut self, note: NoteId) -> CoreResult<Vec<Revision>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT rev_device, rev_seq, hlc, parents, text FROM note_revisions r
+                 WHERE note_id = ?1 AND NOT EXISTS (
+                     SELECT 1 FROM note_revision_parents p
+                     WHERE p.note_id = r.note_id AND p.parent_device = r.rev_device
+                       AND p.parent_seq = r.rev_seq)",
+            )
+            .map_err(storage)?;
+        let mut rows = stmt.query([note.to_string()]).map_err(storage)?;
+        let mut heads = Vec::new();
+        while let Some(row) = rows.next().map_err(storage)? {
+            heads.push(read_revision(row, 0)?);
+        }
+        heads.sort_by_key(|r| r.hlc);
+        Ok(heads)
+    }
+
+    fn revision(&mut self, note: NoteId, id: RevisionId) -> CoreResult<Option<Revision>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT rev_device, rev_seq, hlc, parents, text FROM note_revisions
+                 WHERE note_id = ?1 AND rev_device = ?2 AND rev_seq = ?3",
+            )
+            .map_err(storage)?;
+        let mut rows = stmt
+            .query(rusqlite::params![
+                note.to_string(),
+                id.device.to_string(),
+                sql_seq(id.seq)
+            ])
+            .map_err(storage)?;
+        rows.next()
+            .map_err(storage)?
+            .map(|row| read_revision(row, 0))
+            .transpose()
+    }
+
+    fn put_revision(&mut self, note: NoteId, rev: &Revision) -> CoreResult<()> {
+        let (note_id, device, seq) = (
+            note.to_string(),
+            rev.id.device.to_string(),
+            sql_seq(rev.id.seq),
+        );
+        self.conn
+            .prepare_cached(
+                "DELETE FROM note_revision_parents
+                 WHERE note_id = ?1 AND rev_device = ?2 AND rev_seq = ?3",
+            )
+            .and_then(|mut stmt| stmt.execute(rusqlite::params![note_id, device, seq]))
+            .map_err(storage)?;
+        let mut edge = self
+            .conn
+            .prepare_cached(
+                "INSERT OR IGNORE INTO note_revision_parents
+                 (note_id, parent_device, parent_seq, rev_device, rev_seq)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            )
+            .map_err(storage)?;
+        for parent in &rev.parents {
+            edge.execute(rusqlite::params![
+                note_id,
+                parent.device.to_string(),
+                sql_seq(parent.seq),
+                device,
+                seq
+            ])
+            .map_err(storage)?;
+        }
+        let parents: Vec<OpId> = rev.parents.iter().map(|p| (*p).into()).collect();
+        let parents = postcard::to_allocvec(&parents).expect("serializing to a Vec cannot fail");
+        self.conn
+            .prepare_cached(
+                "INSERT INTO note_revisions (note_id, rev_device, rev_seq, hlc, parents, text)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT (note_id, rev_device, rev_seq) DO UPDATE
+                 SET hlc = excluded.hlc, parents = excluded.parents, text = excluded.text",
+            )
+            .and_then(|mut stmt| {
+                stmt.execute(rusqlite::params![
+                    note.to_string(),
+                    rev.id.device.to_string(),
+                    sql_seq(rev.id.seq),
+                    rev.hlc.to_bytes().to_vec(),
+                    parents,
+                    rev.text,
+                ])
+            })
+            .map_err(storage)?;
+        Ok(())
+    }
+
+    fn remove_revisions(&mut self, note: NoteId, ids: Option<&[RevisionId]>) -> CoreResult<()> {
+        match ids {
+            None => {
+                for table in ["note_revisions", "note_revision_parents"] {
+                    self.conn
+                        .prepare_cached(&format!("DELETE FROM {table} WHERE note_id = ?1"))
+                        .and_then(|mut stmt| stmt.execute([note.to_string()]))
+                        .map_err(storage)?;
+                }
+            }
+            Some(ids) => {
+                for table in ["note_revisions", "note_revision_parents"] {
+                    let mut stmt = self
+                        .conn
+                        .prepare_cached(&format!(
+                            "DELETE FROM {table}
+                             WHERE note_id = ?1 AND rev_device = ?2 AND rev_seq = ?3"
+                        ))
+                        .map_err(storage)?;
+                    for id in ids {
+                        stmt.execute(rusqlite::params![
+                            note.to_string(),
+                            id.device.to_string(),
+                            sql_seq(id.seq)
+                        ])
+                        .map_err(storage)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn notes_with_revisions(&mut self) -> CoreResult<Vec<NoteId>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT DISTINCT note_id FROM note_revisions ORDER BY note_id")
+            .map_err(storage)?;
+        let mut rows = stmt.query([]).map_err(storage)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().map_err(storage)? {
+            out.push(note_id(&row.get::<_, String>(0).map_err(storage)?)?);
+        }
+        Ok(out)
+    }
+
+    fn replaceable_op(
+        &mut self,
+        entity: EntityRef,
+        field: Option<FieldName>,
+    ) -> CoreResult<Option<Op>> {
+        let (id, _) = entity_key(entity);
+        let slot = field.map_or(SLOT_REVISE, |f| i64::from(f.code()));
+        let frozen: i64 = meta(self.conn, OUTBOX_FROZEN)?.unwrap_or(0);
+        let found: Option<(i64, Vec<u8>)> = self
+            .conn
+            .prepare_cached(
+                "SELECT seq, op FROM outbox_ops
+                 WHERE entity_id = ?1 AND (slot = ?2 OR (slot = ?3 AND ?2 <> ?4))
+                 ORDER BY seq DESC LIMIT 1",
+            )
+            .and_then(|mut stmt| {
+                stmt.query_row(
+                    rusqlite::params![id, slot, SLOT_CREATE, SLOT_REVISE],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+            })
+            .map_err(storage)?;
+        let Some((_, bytes)) = found.filter(|(seq, _)| *seq > frozen) else {
+            return Ok(None);
+        };
+        let op = Op::decode(&bytes).map_err(|e| corrupt("outbox op", e))?;
+        Ok((!matches!(op.kind, OpKind::Create { .. })).then_some(op))
+    }
+
+    fn replace_outbox(&mut self, op: &Op) -> CoreResult<()> {
+        let (entity, slot) = outbox_slot(op);
+        self.conn
+            .prepare_cached(
+                "UPDATE outbox_ops SET op = ?2, entity_id = ?3, slot = ?4 WHERE seq = ?1",
+            )
+            .and_then(|mut stmt| {
+                stmt.execute(rusqlite::params![
+                    sql_seq(op.id.seq),
+                    op.encode(),
+                    entity,
+                    slot
+                ])
+            })
+            .map_err(storage)?;
+        Ok(())
+    }
+
+    fn live_note_folders(&mut self) -> CoreResult<Vec<(NoteFolderId, Registers)>> {
+        live_registers(self.conn, KIND_FOLDER)?
+            .into_iter()
+            .map(|(id, registers)| Ok((folder_id(&id)?, registers)))
+            .collect()
+    }
+
+    fn live_notes(&mut self) -> CoreResult<Vec<(NoteId, Registers)>> {
+        live_registers(self.conn, KIND_NOTE)?
+            .into_iter()
+            .map(|(id, registers)| Ok((note_id(&id)?, registers)))
+            .collect()
+    }
+
+    fn next_sort_key(
+        &mut self,
+        folder: Option<NoteFolderId>,
+        after: &SortKey,
+    ) -> CoreResult<Option<SortKey>> {
+        let folder = folder.map(|f| f.to_string());
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT min(sort_key) FROM (
+                     SELECT min(sort_key) AS sort_key FROM notes
+                     WHERE folder_id IS ?1 AND sort_key > ?2
+                     UNION ALL
+                     SELECT min(sort_key) FROM note_folders
+                     WHERE parent_id IS ?1 AND sort_key > ?2)",
+            )
+            .map_err(storage)?;
+        let mut rows = stmt
+            .query(rusqlite::params![folder, after.as_str()])
+            .map_err(storage)?;
+        match rows.next().map_err(storage)? {
+            Some(row) if row.get_ref(0).map_err(storage)? != rusqlite::types::ValueRef::Null => {
+                Ok(Some(read_sort_key(row, 0)?))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn note(&mut self, id: NoteId) -> CoreResult<Option<Note>> {
+        read_note_row(self.conn, id)
+    }
+
+    fn note_folder(&mut self, id: NoteFolderId) -> CoreResult<Option<NoteFolder>> {
+        read_folder_row(self.conn, id)
+    }
+
+    fn put_note(&mut self, note: &Note) -> CoreResult<()> {
+        write_note(self.conn, note)
+    }
+
+    fn put_note_folder(&mut self, folder: &NoteFolder) -> CoreResult<()> {
+        write_folder(self.conn, folder)
     }
 
     fn task(&mut self, id: TaskId) -> CoreResult<Option<Task>> {
@@ -399,10 +782,40 @@ impl ReplicaStore for SqliteReplica<'_> {
         write_list(self.conn, list)
     }
 
+    fn tag(&mut self, id: TagId) -> CoreResult<Option<Tag>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(&format!("SELECT {TAG_COLUMNS} FROM tags WHERE id = ?1"))
+            .map_err(storage)?;
+        let mut rows = stmt.query([id.to_string()]).map_err(storage)?;
+        rows.next().map_err(storage)?.map(read_tag).transpose()
+    }
+
+    fn put_tag(&mut self, tag: &Tag) -> CoreResult<()> {
+        write_tag(self.conn, tag)
+    }
+
+    fn link(&mut self, id: LinkId) -> CoreResult<Option<Link>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(&format!("SELECT {LINK_COLUMNS} FROM links WHERE id = ?1"))
+            .map_err(storage)?;
+        let mut rows = stmt.query([id.to_string()]).map_err(storage)?;
+        rows.next().map_err(storage)?.map(read_link).transpose()
+    }
+
+    fn put_link(&mut self, link: &Link) -> CoreResult<()> {
+        write_link(self.conn, link)
+    }
+
     fn remove(&mut self, entity: EntityRef) -> CoreResult<()> {
         let (table, id) = match entity {
             EntityRef::Task(id) => ("tasks", id.to_string()),
             EntityRef::TaskList(id) => ("task_lists", id.to_string()),
+            EntityRef::Note(id) => ("notes", id.to_string()),
+            EntityRef::NoteFolder(id) => ("note_folders", id.to_string()),
+            EntityRef::Tag(id) => ("tags", id.to_string()),
+            EntityRef::Link(id) => ("links", id.to_string()),
         };
         self.conn
             .prepare_cached(&format!("DELETE FROM {table} WHERE id = ?1"))
@@ -410,6 +823,27 @@ impl ReplicaStore for SqliteReplica<'_> {
             .map_err(storage)?;
         Ok(())
     }
+}
+
+pub(crate) fn read_note_row(conn: &Connection, id: NoteId) -> CoreResult<Option<Note>> {
+    let mut stmt = conn
+        .prepare_cached(&format!("SELECT {NOTE_COLUMNS} FROM notes WHERE id = ?1"))
+        .map_err(storage)?;
+    let mut rows = stmt.query([id.to_string()]).map_err(storage)?;
+    rows.next().map_err(storage)?.map(read_note).transpose()
+}
+
+pub(crate) fn read_folder_row(
+    conn: &Connection,
+    id: NoteFolderId,
+) -> CoreResult<Option<NoteFolder>> {
+    let mut stmt = conn
+        .prepare_cached(&format!(
+            "SELECT {FOLDER_COLUMNS} FROM note_folders WHERE id = ?1"
+        ))
+        .map_err(storage)?;
+    let mut rows = stmt.query([id.to_string()]).map_err(storage)?;
+    rows.next().map_err(storage)?.map(read_folder).transpose()
 }
 
 pub(crate) fn set_cursor(conn: &Connection, device: DeviceId, seq: u64) -> CoreResult<()> {

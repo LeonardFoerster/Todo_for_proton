@@ -298,6 +298,8 @@ async fn execute(api: &CoreApi, command: Command, remote: Option<PathBuf>) -> Re
                 view: parse_view(api, &view).await?,
                 status: open_only.then_some(TaskStatusDto::Open),
                 tag: None,
+                priority: None,
+                sort: None,
             };
             let mut cursor = None;
             let mut count = 0;
@@ -372,6 +374,7 @@ async fn execute(api: &CoreApi, command: Command, remote: Option<PathBuf>) -> Re
                 notes,
                 priority: prio.as_deref().map(parse_prio).transpose()?,
                 due: due.as_deref().map(parse_due),
+                ..TaskPatchDto::default()
             };
             let id = resolve_task(api, &id).await?;
             let task = api.update_task(id, patch).await?;
@@ -434,6 +437,8 @@ async fn resolve_task(api: &CoreApi, input: &str) -> Result<String> {
         view: ViewDto::All,
         status: None,
         tag: None,
+        priority: None,
+        sort: None,
     };
     let mut matches = Vec::new();
     let mut cursor = None;

@@ -134,8 +134,21 @@ features/task-list/
 
 Regel: Container-Komponenten sprechen mit `CoreClient`; Präsentationskomponenten bekommen nur Props.
 
-Geplant (N5): `features/notes/` (Baum, Editor, Vorschau, Papierkorb) als Lazy-Chunk, Modus in
-`lib/app-mode.svelte.ts` – Dateiliste in `notes.md` §10.
+```
+features/notes/                 # Modus „Notes" (N5), Lazy-Chunk – Modus selbst in lib/app-mode.svelte.ts
+├── index.ts                    # Einstieg des Chunks (NotesState, NotesSidebar, NotesMain)
+├── notes-state.svelte.ts       # Zustand: Baum, offene Notiz, Papierkorb, Import, Konflikt-Hinweise
+├── tree-model.ts               # Baum flach machen (virtualisiert), Tastatur-Cursor
+├── NotesSidebar.svelte, NoteTree.svelte, NoteTreeRow.svelte, FolderPicker.svelte, NoteTrash.svelte
+├── NotesMain.svelte            # Editor-Bereich (Zen, Schließen-Protokoll)
+├── NoteEditor.svelte, NoteStatusBar.svelte, editor-commands.ts   # Textarea + reine Editor-Befehle
+├── ImportResultDialog.svelte   # Ergebnis von „Ordner importieren…" (nur Desktop)
+├── notes-actions.ts            # Papierkorb mit Rückgängig u. Ä.
+└── markdown/                   # render.ts (eigener Renderer, nur DOM, keine HTML-Durchreichung), MarkdownPreview.svelte
+```
+
+Rust-Seite: `todo-core` `domain/note*.rs`, `app/notes.rs`, `sync/{revision,text_merge}.rs`,
+`ports/note_repository.rs`, `api/note_dto.rs`; Desktop-Shell `src-tauri/src/import.rs` (Ordner-Import).
 
 ## 4. Namenskonventionen (Ergänzung zu AGENTS.md)
 

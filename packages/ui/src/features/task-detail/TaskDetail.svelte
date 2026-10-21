@@ -1,15 +1,31 @@
 <script lang="ts">
+  import DueField from "../due/DueField.svelte";
   import ListPicker from "../lists/ListPicker.svelte";
-  import { CoreClientError, type DueDto, type PriorityDto, type TaskDto, type TaskPatchDto } from "@tasks/core-client";
+  import RecurrenceField from "../recurrence/RecurrenceField.svelte";
+  import Checklist from "./Checklist.svelte";
+  import TagPicker from "../tags/TagPicker.svelte";
+  import type NoteLinkPickerType from "../links/NoteLinkPicker.svelte";
+  import {
+    CoreClientError,
+    type ChecklistItemDto,
+    type LinkedNoteDto,
+    type DueDto,
+    type PriorityDto,
+    type RecurrenceDto,
+    type TaskDto,
+    type TaskPatchDto,
+  } from "@tasks/core-client";
   import { onMount } from "svelte";
   import Checkbox from "../../components/Checkbox.svelte";
   import IconButton from "../../components/IconButton.svelte";
   import { toasts } from "../../components/toasts.svelte";
-  import { CalendarDays, Flag, Hash, Trash, X } from "../../icons";
+  import Button from "../../components/Button.svelte";
+  import { CalendarDays, FileCode, FileText, Flag, Hash, Link2, ListChecks, Plus, Redo, Repeat, Tag, Trash, X } from "../../icons";
   import { useCoreClient } from "../../lib/context";
-  import { dueFromInputs, dueLabel, dueToInputDate, dueToInputTime, keepTime, todayPlus } from "../../lib/format-date";
-  import { isoDate } from "../../lib/local-day";
   import type { ListsState } from "../../lib/lists.svelte";
+  import { isoDate } from "../../lib/local-day";
+  import { firstOnOrAfter } from "../../lib/recurrence";
+  import { completeManyWithUndo, skipWithToast } from "../../lib/task-actions";
   import { listName } from "../../lib/views";
 
   interface Props {
@@ -17,9 +33,11 @@
     lists: ListsState;
     onclose: () => void;
     ondelete: (id: string) => void;
+    /** Verknüpfte Notiz öffnen (wechselt in den Modus „Notes“, ADR-036). */
+    onopennote?: (noteId: string) => void;
   }
 
-  let { taskId, lists, onclose, ondelete }: Props = $props();
+  let { taskId, lists, onclose, ondelete, onopennote }: Props = $props();
 
   const client = useCoreClient();
   const SAVE_DELAY_MS = 600;
@@ -31,7 +49,6 @@
   let titleInvalid = $state(false);
   let timers: Partial<Record<"title" | "notes", ReturnType<typeof setTimeout>>> = {};
 
-  const due = $derived(task?.due ? dueLabel(task.due) : null);
   const priorities: { value: PriorityDto; label: string }[] = [
     { value: "none", label: "Keine" },
     { value: "low", label: "Niedrig" },
@@ -59,11 +76,59 @@
 
   $effect(() => {
     void load(taskId);
+    void loadLinks(taskId);
   });
+
+  // --- Verknüpfte Notizen (N9-02, ADR-036) ---
+  let linked = $state.raw<LinkedNoteDto[]>([]);
+  let linkButton = $state<HTMLButtonElement>();
+  let NoteLinkPicker = $state<typeof NoteLinkPickerType | null>(null);
+  let linking = $state(false);
+
+  async function loadLinks(id: string) {
+    linked = await client.taskLinks(id).catch(() => []);
+  }
+
+  async function openPicker() {
+    NoteLinkPicker ??= (await import("../links/NoteLinkPicker.svelte")).default;
+    linking = !linking;
+  }
+
+  async function link(noteId: string) {
+    linking = false;
+    try {
+      await client.linkTaskNote(taskId, noteId);
+    } catch (e) {
+      toasts.show({ message: `Nicht verknüpft: ${(e as Error).message}`, tone: "danger" });
+    }
+  }
+
+  async function unlink(item: LinkedNoteDto) {
+    try {
+      await client.unlink(item.linkId);
+    } catch (e) {
+      toasts.show({ message: `Nicht gelöst: ${(e as Error).message}`, tone: "danger" });
+    }
+  }
+
+  /** Neue Notiz mit dem Titel der Task als Überschrift, verknüpft und geöffnet. */
+  async function createLinkedNote() {
+    linking = false;
+    if (!task) return;
+    try {
+      const note = await client.notes.create(null, "markdown");
+      await client.notes.updateBody(note.id, `# ${task.title}\n\n`, null);
+      await client.linkTaskNote(task.id, note.id);
+      onopennote?.(note.id);
+    } catch (e) {
+      toasts.show({ message: `Notiz nicht angelegt: ${(e as Error).message}`, tone: "danger" });
+    }
+  }
 
   onMount(() => {
     const off = client.onChange((e) => {
       if (e.tasks.includes(taskId)) void load(taskId);
+      if (e.links.length > 0 || e.notes.length > 0) void loadLinks(taskId);
     });
     return () => {
       flush();
@@ -106,20 +171,45 @@
     timers[field] = setTimeout(field === "title" ? saveTitle : saveNotes, SAVE_DELAY_MS);
   }
 
+  let tagButton = $state<HTMLButtonElement>();
+  let tagsOpen = $state(false);
+  const tagNames = $derived(task ? lists.tagNames(task.tags) : []);
+
+  /** Tag an/aus; ein neuer Name wird erst angelegt (ADR-035). */
+  async function toggleTag(name: string) {
+    if (!task) return;
+    const known = lists.tags.find((t) => t.name.toLowerCase() === name.toLowerCase());
+    if (known && task.tags.includes(known.id)) {
+      await save({ tags: task.tags.filter((id) => id !== known.id) });
+      return;
+    }
+    try {
+      const id = known?.id ?? (await client.ensureTag(name)).id;
+      await save({ tags: [...task.tags, id] });
+    } catch (e) {
+      toasts.show({ message: `Tag nicht gesetzt: ${(e as Error).message}`, tone: "danger" });
+    }
+  }
+
+  async function setChecklist(items: ChecklistItemDto[]) {
+    await save({ checklist: items });
+  }
+
   function setDue(next: DueDto | null) {
     void save({ due: next });
   }
 
-  /** Neuer Tag (Feld oder Schnellwahl); eine gesetzte Uhrzeit bleibt. */
-  function setDay(next: DueDto | null) {
-    setDue(keepTime(next, task?.due ?? null));
+  /** Regel ohne Fälligkeit: erstes Vorkommen ab heute (lokal) gleich mitsetzen. */
+  function setRecurrence(next: RecurrenceDto | null) {
+    const due: DueDto | undefined =
+      next && !task?.due ? { kind: "date", date: isoDate(firstOnOrAfter(next, new Date())) } : undefined;
+    void save(due ? { due, recurrence: next } : { recurrence: next });
   }
 
-  /** Uhrzeit setzen oder leeren (→ ganztägig); ohne Datum gilt heute. */
-  function setTime(time: string) {
-    const date = dueToInputDate(task?.due ?? null) || isoDate(new Date());
-    if (!time && !task?.due) return;
-    setDue(dueFromInputs(date, time, task?.due?.kind === "dateTime" ? task.due.tz : undefined));
+  async function skip() {
+    if (!task) return;
+    const next = await skipWithToast(client, task);
+    if (next) adopt(next);
   }
 
   async function moveTo(listId: string) {
@@ -133,6 +223,12 @@
 
   async function toggle(done: boolean) {
     if (!task) return;
+    // Serie (ADR-028): bleibt offen, rückt vor – mit Toast „nächstes Mal …“ und Rückgängig.
+    if (done && task.recurrence) {
+      const [next] = (await completeManyWithUndo(client, [task.id], true)) ?? [];
+      if (next) adopt(next);
+      return;
+    }
     try {
       adopt(await client.completeTask(task.id, done));
     } catch (e) {
@@ -200,35 +296,98 @@
         oninput={() => schedule("notes")}
       ></textarea>
 
+      <section class="checklist" aria-labelledby="detail-checklist">
+        <h3 id="detail-checklist"><ListChecks size={16} strokeWidth={1.75} aria-hidden="true" />Checkliste</h3>
+        <Checklist items={task.checklist} onchange={setChecklist} />
+      </section>
+
+      <section class="links" aria-labelledby="detail-links">
+        <h3 id="detail-links"><Link2 size={16} strokeWidth={1.75} aria-hidden="true" />Notizen</h3>
+        {#if linked.length > 0}
+          <ul>
+            {#each linked as item (item.linkId)}
+              {@const Icon = item.kind === "markdown" ? FileCode : FileText}
+              <li>
+                <button type="button" class="note" onclick={() => onopennote?.(item.noteId)} title="Notiz öffnen">
+                  <Icon size={14} strokeWidth={1.75} aria-hidden="true" />{item.name}
+                </button>
+                <button type="button" class="unlink" aria-label="Verknüpfung lösen: {item.name}" onclick={() => void unlink(item)}>
+                  <X size={14} strokeWidth={2} aria-hidden="true" />
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+        <button
+          bind:this={linkButton}
+          type="button"
+          class="add-tag"
+          aria-haspopup="dialog"
+          aria-expanded={linking}
+          onclick={() => void openPicker()}
+        >
+          <Plus size={14} strokeWidth={2} aria-hidden="true" />Notiz verknüpfen
+        </button>
+        {#if linking && linkButton && NoteLinkPicker}
+          <NoteLinkPicker
+            anchor={linkButton}
+            linked={linked.map((l) => l.noteId)}
+            onpick={(id) => void link(id)}
+            oncreate={() => void createLinkedNote()}
+            onclose={(refocus) => {
+              linking = false;
+              if (refocus) linkButton?.focus();
+            }}
+          />
+        {/if}
+      </section>
+
       <dl class="props">
         <dt><CalendarDays size={16} strokeWidth={1.75} aria-hidden="true" /><label for="detail-due">Fällig</label></dt>
         <dd>
-          <div class="due-row">
-            <input
-              id="detail-due"
-              type="date"
-              class="field date {due?.tone ?? ''}"
-              value={dueToInputDate(task.due)}
-              onchange={(e) => {
-                const v = (e.currentTarget as HTMLInputElement).value;
-                setDay(v ? { kind: "date", date: v } : null);
+          <DueField id="detail-due" value={task.due} onchange={setDue} />
+        </dd>
+
+        <dt><Repeat size={16} strokeWidth={1.75} aria-hidden="true" /><label for="detail-repeat">Wiederholung</label></dt>
+        <dd class="repeat">
+          <RecurrenceField id="detail-repeat" value={task.recurrence} due={task.due} onchange={setRecurrence} />
+          {#if task.recurrence && task.status === "open"}
+            <Button variant="ghost" icon={Redo} onclick={() => void skip()}>Dieses Mal überspringen</Button>
+          {/if}
+        </dd>
+
+        <dt><Tag size={16} strokeWidth={1.75} aria-hidden="true" /><span id="detail-tags">Tags</span></dt>
+        <dd class="tags" aria-labelledby="detail-tags">
+          {#each tagNames as name (name)}
+            <span class="tag-chip">
+              #{name}
+              <button type="button" aria-label="Tag entfernen: {name}" onclick={() => void toggleTag(name)}>
+                <X size={12} strokeWidth={2} aria-hidden="true" />
+              </button>
+            </span>
+          {/each}
+          <button
+            bind:this={tagButton}
+            type="button"
+            class="add-tag"
+            aria-haspopup="dialog"
+            aria-expanded={tagsOpen}
+            onclick={() => (tagsOpen = !tagsOpen)}
+          >
+            <Plus size={14} strokeWidth={2} aria-hidden="true" />Tag
+          </button>
+          {#if tagsOpen && tagButton}
+            <TagPicker
+              anchor={tagButton}
+              tags={lists.tags}
+              selected={tagNames}
+              ontoggle={(name) => void toggleTag(name)}
+              onclose={(refocus) => {
+                tagsOpen = false;
+                if (refocus) tagButton?.focus();
               }}
             />
-            <input
-              type="time"
-              class="field time"
-              aria-label="Uhrzeit"
-              value={dueToInputTime(task.due)}
-              onchange={(e) => setTime((e.currentTarget as HTMLInputElement).value)}
-            />
-            {#if due}<span class="due-text {due.tone}">{due.text}</span>{/if}
-          </div>
-          <div class="chips">
-            <button type="button" class="chip" onclick={() => setDay(todayPlus(0))}>Heute</button>
-            <button type="button" class="chip" onclick={() => setDay(todayPlus(1))}>Morgen</button>
-            <button type="button" class="chip" onclick={() => setDay(todayPlus(7))}>In einer Woche</button>
-            {#if task.due}<button type="button" class="chip ghost" onclick={() => setDue(null)}>Entfernen</button>{/if}
-          </div>
+          {/if}
         </dd>
 
         <dt><Flag size={16} strokeWidth={1.75} aria-hidden="true" /><span id="detail-prio">Priorität</span></dt>
@@ -242,7 +401,7 @@
                 aria-checked={task.priority === p.value}
                 onclick={() => void save({ priority: p.value })}
               >
-                {#if p.value !== "none"}<Flag size={12} strokeWidth={2} aria-hidden="true" />{/if}{p.label}
+                {#if p.value !== "none"}<span class="ring" aria-hidden="true"></span>{/if}{p.label}
               </button>
             {/each}
           </div>
@@ -253,11 +412,12 @@
           <ListPicker id="detail-list" {lists} value={task.listId} onchange={(id) => void moveTo(id)} />
         </dd>
       </dl>
-    </div>
 
-    <footer>
-      Erstellt {DATE.format(new Date(task.createdAt))} · Geändert {DATE.format(new Date(task.updatedAt))}
-    </footer>
+      <!-- Direkt unter dem Inhalt statt fest am unteren Rand (P5-07). -->
+      <p class="stamp">
+        Erstellt {DATE.format(new Date(task.createdAt))} · Geändert {DATE.format(new Date(task.updatedAt))}
+      </p>
+    </div>
   {/if}
 </section>
 
@@ -338,13 +498,81 @@
   .notes {
     margin: var(--space-3) calc(-1 * var(--space-2)) 0;
     width: calc(100% + 2 * var(--space-2));
+    /* Wächst mit dem Text (P5-07), ohne Griff; die Fläche scrollt als Ganzes. */
+    field-sizing: content;
     min-height: 96px;
     padding: var(--space-2);
     line-height: 1.55;
-    resize: vertical;
   }
   .notes::placeholder {
     color: var(--color-text-muted);
+  }
+  .checklist,
+  .links {
+    margin-top: var(--space-4);
+  }
+  .links ul {
+    margin: 0 0 var(--space-2);
+    padding: 0;
+    list-style: none;
+  }
+  .links li {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    border-radius: var(--radius-md);
+  }
+  .links li:hover {
+    background: var(--color-bg-hover);
+  }
+  .links .note {
+    display: inline-flex;
+    flex: 1;
+    min-width: 0;
+    align-items: center;
+    gap: var(--space-2);
+    height: 30px;
+    padding: 0 var(--space-2);
+    border: 0;
+    background: transparent;
+    color: var(--color-text);
+    font: inherit;
+    font-size: var(--text-sm);
+    text-align: left;
+    cursor: pointer;
+  }
+  .links .note :global(svg) {
+    flex: none;
+    color: var(--color-text-muted);
+  }
+  .links .unlink {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    opacity: 0;
+  }
+  .links li:hover .unlink,
+  .links li:focus-within .unlink {
+    opacity: 1;
+  }
+  .links .unlink:hover {
+    color: var(--color-danger);
+  }
+  .checklist h3,
+  .links h3 {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0 0 var(--space-2);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
   }
   .props {
     margin: var(--space-6) 0 0;
@@ -363,58 +591,59 @@
   dd {
     margin: 0;
   }
-  .field {
-    height: var(--control-height);
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border-strong);
-    border-radius: var(--radius-md);
-    background: var(--color-bg);
-    color: var(--color-text);
-    font: inherit;
-  }
-  .field:focus {
-    outline: none;
-    border-color: var(--color-accent);
-    box-shadow: 0 0 0 3px var(--color-focus-ring);
-  }
-  .due-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-  }
-  .due-text {
-    color: var(--color-text-muted);
-    font-size: var(--text-sm);
-  }
-  .due-text.overdue {
-    color: var(--color-danger);
-  }
-  .due-text.today {
-    color: var(--color-accent-text);
-  }
-  .chips {
+  dd.tags {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: var(--space-1);
-    margin-top: var(--space-2);
   }
-  .chip {
+  .tag-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
     height: 26px;
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-full);
-    background: var(--color-bg);
-    color: var(--color-text);
-    font: inherit;
+    padding: 0 2px 0 var(--space-2);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-hover);
     font-size: var(--text-sm);
+  }
+  .tag-chip button,
+  .add-tag {
+    display: inline-flex;
+    align-items: center;
+    border: 0;
+    background: transparent;
+    color: var(--color-text-muted);
+    font: inherit;
     cursor: pointer;
   }
-  .chip:hover {
-    background: var(--color-bg-hover);
+  .tag-chip button {
+    width: 22px;
+    height: 22px;
+    justify-content: center;
+    border-radius: var(--radius-sm);
   }
-  .chip.ghost {
-    border-color: transparent;
-    color: var(--color-text-muted);
+  .tag-chip button:hover {
+    color: var(--color-danger);
+  }
+  .add-tag {
+    gap: 2px;
+    height: 26px;
+    padding: 0 var(--space-2);
+    border: 1px dashed var(--color-border-strong);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+  }
+  .add-tag:hover,
+  .add-tag[aria-expanded="true"] {
+    border-color: var(--color-accent);
+    color: var(--color-text);
+  }
+  dd.repeat {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
   }
   .segments {
     display: grid;
@@ -448,20 +677,25 @@
     font-weight: var(--weight-medium);
     box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
   }
-  .segment.high :global(svg) {
-    color: var(--color-danger);
+  /* Ring wie der Haken in der Liste – die Priorität hat überall dieselbe Form (P5-07). */
+  .ring {
+    --ring: var(--color-accent);
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid var(--ring);
+    border-radius: var(--radius-full);
+    background: color-mix(in srgb, var(--ring) 12%, transparent);
   }
-  .segment.medium :global(svg) {
-    color: var(--color-warning);
+  .segment.high .ring {
+    --ring: var(--color-danger);
   }
-  .segment.low :global(svg) {
-    color: var(--color-accent);
+  .segment.medium .ring {
+    --ring: var(--color-warning);
   }
-  footer {
-    flex: none;
-    padding: var(--space-3) var(--space-5);
-    border-top: 1px solid var(--color-border);
+  .stamp {
+    margin: var(--space-8) 0 0;
     color: var(--color-text-muted);
     font-size: var(--text-xs);
+    font-variant-numeric: tabular-nums;
   }
 </style>

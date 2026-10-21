@@ -4,10 +4,15 @@ use std::path::Path;
 
 use rusqlite::{params_from_iter, Connection, TransactionBehavior};
 use todo_core::{
-    domain::{DeviceId, SortKey, Task, TaskId, TaskList, TaskListId},
+    domain::{
+        tag_key, DeviceId, Link, Note, NoteFolder, NoteFolderId, NoteId, SortKey, Tag, TagId, Task,
+        TaskId, TaskList, TaskListId,
+    },
     ports::{
-        Change, ChangeSet, CommitReceipt, EntityRef, Page, PageRequest, SearchQuery, SmartView,
-        TaskQuery, TaskRepository, TaskSummary, PAGE_LIMIT_MAX,
+        check_page_limit, decode_tree_cursor, encode_tree_cursor, Change, ChangeSet, CommitReceipt,
+        EntityRef, FolderItemsQuery, NoteHit, NoteRepository, NoteSummary, NoteTreeItem, Page,
+        PageRequest, SearchQuery, SmartView, TaskQuery, TaskRepository, TaskSummary,
+        PAGE_LIMIT_MAX,
     },
     sync::{self, EntityState, Op, RemoteBatch, RemoteReceipt, ReplicaStore},
     CoreError, CoreResult,
@@ -17,10 +22,12 @@ use crate::{
     connection::Database,
     error::{corrupt, storage},
     mapping::{
-        read_list, read_sort_key, read_summary, read_task, write_list, write_task, LIST_COLUMNS,
-        TASK_COLUMNS,
+        read_folder, read_link, read_list, read_note, read_note_summary, read_sort_key,
+        read_summary, read_tag, read_task, read_tree_item, write_folder, write_link, write_list,
+        write_note, write_tag, write_task, FOLDER_COLUMNS, LINK_COLUMNS, LIST_COLUMNS,
+        NOTE_SUMMARY_COLUMNS, TAG_COLUMNS, TASK_COLUMNS,
     },
-    query::{list_tasks_sql, search_tasks_sql, Position},
+    query::{count_tasks_sql, list_tasks_sql, search_notes_sql, search_tasks_sql, Position},
     sync_store::{self, SqliteReplica},
 };
 
@@ -51,6 +58,152 @@ impl SqliteTaskRepository {
         Ok(Self {
             db: Database::open_in_memory()?,
         })
+    }
+}
+
+#[async_trait::async_trait]
+impl NoteRepository for SqliteTaskRepository {
+    async fn get_note(&self, id: NoteId) -> CoreResult<Option<Note>> {
+        self.db
+            .call(move |conn| sync_store::read_note_row(conn, id))
+            .await
+    }
+
+    async fn get_note_folder(&self, id: NoteFolderId) -> CoreResult<Option<NoteFolder>> {
+        self.db
+            .call(move |conn| sync_store::read_folder_row(conn, id))
+            .await
+    }
+
+    async fn list_note_folders(&self) -> CoreResult<Vec<NoteFolder>> {
+        self.db
+            .call(|conn| {
+                let mut stmt = conn
+                    .prepare_cached(&format!(
+                        "SELECT {FOLDER_COLUMNS} FROM note_folders ORDER BY sort_key, id"
+                    ))
+                    .map_err(storage)?;
+                let mut rows = stmt.query([]).map_err(storage)?;
+                let mut folders = Vec::new();
+                while let Some(row) = rows.next().map_err(storage)? {
+                    folders.push(read_folder(row)?);
+                }
+                Ok(folders)
+            })
+            .await
+    }
+
+    async fn list_folder_items(
+        &self,
+        query: FolderItemsQuery,
+        page: PageRequest,
+    ) -> CoreResult<Page<NoteTreeItem>> {
+        check_page_limit(page.limit)?;
+        let after = page.cursor.as_deref().map(decode_tree_cursor).transpose()?;
+        let limit = page.limit as usize;
+        self.db
+            .call(move |conn| {
+                let mut stmt = conn
+                    .prepare_cached(&format!(
+                        "SELECT 0, {FOLDER_COLUMNS}, NULL, NULL, NULL FROM note_folders
+                         WHERE parent_id IS :folder AND (:all OR trashed_at IS NULL)
+                           AND (sort_key > :key OR (sort_key = :key AND id > :id))
+                         UNION ALL
+                         SELECT 1, id, folder_id, name, sort_key, created_at, trashed_at,
+                                kind, modified_at, size FROM notes
+                         WHERE folder_id IS :folder AND (:all OR trashed_at IS NULL)
+                           AND (sort_key > :key OR (sort_key = :key AND id > :id))
+                         ORDER BY 5, 2 LIMIT :limit"
+                    ))
+                    .map_err(storage)?;
+                let (key, id) = after.map_or((String::new(), String::new()), |(k, id)| {
+                    (k.as_str().to_owned(), id)
+                });
+                let mut rows = stmt
+                    .query(rusqlite::named_params! {
+                        ":folder": query.folder.map(|f| f.to_string()),
+                        ":all": query.include_trashed,
+                        ":key": key,
+                        ":id": id,
+                        ":limit": i64::try_from(limit + 1).unwrap_or(i64::MAX),
+                    })
+                    .map_err(storage)?;
+                let mut items = Vec::with_capacity(limit + 1);
+                while let Some(row) = rows.next().map_err(storage)? {
+                    let is_note: i64 = row.get(0).map_err(storage)?;
+                    items.push(read_tree_item(row, is_note == 1)?);
+                }
+                let next_cursor = (items.len() > limit).then(|| {
+                    items.truncate(limit);
+                    encode_tree_cursor(&items[limit - 1].position())
+                });
+                Ok(Page { items, next_cursor })
+            })
+            .await
+    }
+
+    async fn list_trashed_notes(&self) -> CoreResult<Vec<NoteSummary>> {
+        self.db
+            .call(|conn| {
+                let mut stmt = conn
+                    .prepare_cached(&format!(
+                        "SELECT {NOTE_SUMMARY_COLUMNS} FROM notes WHERE trashed_at IS NOT NULL
+                         ORDER BY trashed_at, id"
+                    ))
+                    .map_err(storage)?;
+                let mut rows = stmt.query([]).map_err(storage)?;
+                let mut out = Vec::new();
+                while let Some(row) = rows.next().map_err(storage)? {
+                    out.push(read_note_summary(row, 0)?);
+                }
+                Ok(out)
+            })
+            .await
+    }
+
+    async fn last_note_sort_key(
+        &self,
+        folder: Option<NoteFolderId>,
+    ) -> CoreResult<Option<SortKey>> {
+        self.db
+            .call(move |conn| {
+                let mut stmt = conn
+                    .prepare_cached(
+                        "SELECT max(sort_key) FROM (
+                             SELECT max(sort_key) AS sort_key FROM notes WHERE folder_id IS ?1
+                             UNION ALL
+                             SELECT max(sort_key) FROM note_folders WHERE parent_id IS ?1)",
+                    )
+                    .map_err(storage)?;
+                let key: Option<String> = stmt
+                    .query_row([folder.map(|f| f.to_string())], |row| row.get(0))
+                    .map_err(storage)?;
+                key.map(|k| SortKey::parse(&k).map_err(|e| corrupt("sort key", e)))
+                    .transpose()
+            })
+            .await
+    }
+
+    async fn search_notes(&self, query: &SearchQuery) -> CoreResult<Vec<NoteHit>> {
+        let terms = query.terms()?;
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
+        let (sql, params) = search_notes_sql(&terms, query.limit);
+        self.db
+            .call(move |conn| {
+                let mut stmt = conn.prepare_cached(&sql).map_err(storage)?;
+                let mut rows = stmt.query(params_from_iter(params)).map_err(storage)?;
+                let mut hits = Vec::new();
+                while let Some(row) = rows.next().map_err(storage)? {
+                    // Der Index findet Kandidaten; Treffer, Rang und Ausschnitt nach den Regeln
+                    // des Cores (gleiches Ergebnis wie ohne Index).
+                    hits.extend(NoteHit::of(&terms, &read_note(row)?));
+                }
+                hits.sort_by_key(NoteHit::rank);
+                Ok(hits)
+            })
+            .await
     }
 }
 
@@ -101,6 +254,65 @@ impl TaskRepository for SqliteTaskRepository {
             .await
     }
 
+    async fn get_tag(&self, id: TagId) -> CoreResult<Option<Tag>> {
+        self.db
+            .call(move |conn| {
+                let mut stmt = conn
+                    .prepare_cached(&format!("SELECT {TAG_COLUMNS} FROM tags WHERE id = ?1"))
+                    .map_err(storage)?;
+                let mut rows = stmt.query([id.to_string()]).map_err(storage)?;
+                rows.next().map_err(storage)?.map(read_tag).transpose()
+            })
+            .await
+    }
+
+    async fn list_tags(&self) -> CoreResult<Vec<Tag>> {
+        self.db
+            .call(|conn| {
+                let mut stmt = conn
+                    .prepare_cached(&format!("SELECT {TAG_COLUMNS} FROM tags"))
+                    .map_err(storage)?;
+                let mut rows = stmt.query([]).map_err(storage)?;
+                let mut tags = Vec::new();
+                while let Some(row) = rows.next().map_err(storage)? {
+                    tags.push(read_tag(row)?);
+                }
+                // Groß/Klein egal wie im Core (`tag_key`); SQLite `NOCASE` kennt nur ASCII.
+                tags.sort_by_cached_key(|t| (tag_key(t.name()), t.id()));
+                Ok(tags)
+            })
+            .await
+    }
+
+    async fn list_links(
+        &self,
+        task: Option<TaskId>,
+        note: Option<NoteId>,
+    ) -> CoreResult<Vec<Link>> {
+        self.db
+            .call(move |conn| {
+                let mut stmt = conn
+                    .prepare_cached(&format!(
+                        "SELECT {LINK_COLUMNS} FROM links
+                         WHERE (?1 IS NULL OR task_id = ?1) AND (?2 IS NULL OR note_id = ?2)
+                         ORDER BY created_at, id"
+                    ))
+                    .map_err(storage)?;
+                let mut rows = stmt
+                    .query(rusqlite::params![
+                        task.map(|t| t.to_string()),
+                        note.map(|n| n.to_string())
+                    ])
+                    .map_err(storage)?;
+                let mut links = Vec::new();
+                while let Some(row) = rows.next().map_err(storage)? {
+                    links.push(read_link(row)?);
+                }
+                Ok(links)
+            })
+            .await
+    }
+
     async fn list_task_lists(&self) -> CoreResult<Vec<TaskList>> {
         self.db
             .call(|conn| {
@@ -119,6 +331,20 @@ impl TaskRepository for SqliteTaskRepository {
             .await
     }
 
+    async fn count_tasks(&self, query: &TaskQuery) -> CoreResult<u64> {
+        let query = *query;
+        self.db
+            .call(move |conn| {
+                let (sql, params) = count_tasks_sql(&query);
+                let n: i64 = conn
+                    .prepare_cached(&sql)
+                    .and_then(|mut stmt| stmt.query_row(params_from_iter(params), |row| row.get(0)))
+                    .map_err(storage)?;
+                Ok(u64::try_from(n).unwrap_or(0))
+            })
+            .await
+    }
+
     async fn list_tasks(
         &self,
         query: &TaskQuery,
@@ -133,7 +359,7 @@ impl TaskRepository for SqliteTaskRepository {
         let after = page
             .cursor
             .as_deref()
-            .map(|c| Position::decode(c, &query.view))
+            .map(|c| Position::decode(c, query.order()))
             .transpose()?;
         let query = *query;
         let limit = page.limit as usize;
@@ -155,7 +381,7 @@ impl TaskRepository for SqliteTaskRepository {
                 }
                 let next_cursor = (items.len() > limit).then(|| {
                     items.truncate(limit);
-                    Position::of(&items[limit - 1], &query.view).encode()
+                    Position::of(&items[limit - 1], query.order()).encode()
                 });
                 Ok(Page { items, next_cursor })
             })
@@ -201,19 +427,24 @@ impl TaskRepository for SqliteTaskRepository {
     }
 
     async fn commit(&self, changes: ChangeSet) -> CoreResult<CommitReceipt> {
-        let changed = changes.entities();
+        let requested = changes.entities();
         self.db
             .call(move |conn| {
                 let tx = conn
                     .transaction_with_behavior(TransactionBehavior::Immediate)
                     .map_err(storage)?;
-                for change in sync::record_local(&mut SqliteReplica::new(&tx), changes)? {
-                    apply(&tx, &change)?;
+                let recorded = sync::record_local(&mut SqliteReplica::new(&tx), changes)?;
+                let changed = recorded.changed(requested);
+                for change in recorded.changes.changes() {
+                    apply(&tx, change)?;
                 }
                 // Aufgeschobene Fremdschlüssel werden hier geprüft; bei Verstoß rollt der Drop
                 // der Transaktion alles zurück – Zustand, Outbox und Register gemeinsam.
                 tx.commit().map_err(storage)?;
-                Ok(CommitReceipt { changed })
+                Ok(CommitReceipt {
+                    changed,
+                    conflicts: recorded.conflicts,
+                })
             })
             .await
     }
@@ -237,6 +468,30 @@ impl TaskRepository for SqliteTaskRepository {
     async fn mark_ops_pushed(&self, up_to: u64) -> CoreResult<()> {
         self.db
             .call(move |conn| sync_store::mark_ops_pushed(conn, up_to))
+            .await
+    }
+
+    async fn freeze_outbox(&self, up_to: u64) -> CoreResult<()> {
+        self.db
+            .call(move |conn| sync_store::freeze_outbox(conn, up_to))
+            .await
+    }
+
+    async fn revision_ops(&self) -> CoreResult<Vec<Op>> {
+        self.db.call(|conn| sync_store::revision_ops(conn)).await
+    }
+
+    async fn prune_revisions(&self, acked: Vec<(DeviceId, u64)>) -> CoreResult<u32> {
+        self.db
+            .call(move |conn| {
+                let tx = conn
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .map_err(storage)?;
+                let acked = acked.into_iter().collect();
+                let removed = sync::prune_revisions(&mut SqliteReplica::new(&tx), &acked)?;
+                tx.commit().map_err(storage)?;
+                Ok(removed)
+            })
             .await
     }
 
@@ -324,8 +579,16 @@ fn apply(conn: &Connection, change: &Change) -> CoreResult<()> {
     match change {
         Change::UpsertTask(task) => write_task(conn, task),
         Change::UpsertList(list) => write_list(conn, list),
+        Change::UpsertNote(note) => write_note(conn, note),
+        Change::UpsertNoteFolder(folder) => write_folder(conn, folder),
         Change::Delete(EntityRef::Task(id)) => delete(conn, "tasks", &id.to_string()),
         Change::Delete(EntityRef::TaskList(id)) => delete(conn, "task_lists", &id.to_string()),
+        Change::Delete(EntityRef::Note(id)) => delete(conn, "notes", &id.to_string()),
+        Change::Delete(EntityRef::NoteFolder(id)) => delete(conn, "note_folders", &id.to_string()),
+        Change::UpsertTag(tag) => write_tag(conn, tag),
+        Change::Delete(EntityRef::Tag(id)) => delete(conn, "tags", &id.to_string()),
+        Change::UpsertLink(link) => write_link(conn, link),
+        Change::Delete(EntityRef::Link(id)) => delete(conn, "links", &id.to_string()),
     }
 }
 
@@ -373,6 +636,38 @@ mod tests {
     }
 
     #[async_trait::async_trait]
+    impl NoteRepository for OnDisk {
+        async fn get_note(&self, id: NoteId) -> CoreResult<Option<Note>> {
+            self.repo.get_note(id).await
+        }
+        async fn get_note_folder(&self, id: NoteFolderId) -> CoreResult<Option<NoteFolder>> {
+            self.repo.get_note_folder(id).await
+        }
+        async fn list_note_folders(&self) -> CoreResult<Vec<NoteFolder>> {
+            self.repo.list_note_folders().await
+        }
+        async fn list_folder_items(
+            &self,
+            query: FolderItemsQuery,
+            page: PageRequest,
+        ) -> CoreResult<Page<NoteTreeItem>> {
+            self.repo.list_folder_items(query, page).await
+        }
+        async fn list_trashed_notes(&self) -> CoreResult<Vec<NoteSummary>> {
+            self.repo.list_trashed_notes().await
+        }
+        async fn last_note_sort_key(
+            &self,
+            folder: Option<NoteFolderId>,
+        ) -> CoreResult<Option<SortKey>> {
+            self.repo.last_note_sort_key(folder).await
+        }
+        async fn search_notes(&self, query: &SearchQuery) -> CoreResult<Vec<NoteHit>> {
+            self.repo.search_notes(query).await
+        }
+    }
+
+    #[async_trait::async_trait]
     impl TaskRepository for OnDisk {
         async fn get_task(&self, id: TaskId) -> CoreResult<Option<Task>> {
             self.repo.get_task(id).await
@@ -385,6 +680,22 @@ mod tests {
         }
         async fn list_task_lists(&self) -> CoreResult<Vec<TaskList>> {
             self.repo.list_task_lists().await
+        }
+        async fn get_tag(&self, id: TagId) -> CoreResult<Option<Tag>> {
+            self.repo.get_tag(id).await
+        }
+        async fn list_tags(&self) -> CoreResult<Vec<Tag>> {
+            self.repo.list_tags().await
+        }
+        async fn list_links(
+            &self,
+            task: Option<TaskId>,
+            note: Option<NoteId>,
+        ) -> CoreResult<Vec<Link>> {
+            self.repo.list_links(task, note).await
+        }
+        async fn count_tasks(&self, query: &TaskQuery) -> CoreResult<u64> {
+            self.repo.count_tasks(query).await
         }
         async fn list_tasks(
             &self,
@@ -413,6 +724,15 @@ mod tests {
         }
         async fn mark_ops_pushed(&self, up_to: u64) -> CoreResult<()> {
             self.repo.mark_ops_pushed(up_to).await
+        }
+        async fn freeze_outbox(&self, up_to: u64) -> CoreResult<()> {
+            self.repo.freeze_outbox(up_to).await
+        }
+        async fn revision_ops(&self) -> CoreResult<Vec<Op>> {
+            self.repo.revision_ops().await
+        }
+        async fn prune_revisions(&self, acked: Vec<(DeviceId, u64)>) -> CoreResult<u32> {
+            self.repo.prune_revisions(acked).await
         }
         async fn apply_remote(&self, batch: RemoteBatch) -> CoreResult<RemoteReceipt> {
             self.repo.apply_remote(batch).await
@@ -549,9 +869,8 @@ mod tests {
             let cursor = cursor.cloned();
             let plan = block_on(repo.db.call(move |conn| {
                 let query = TaskQuery {
-                    view,
                     status,
-                    tag: None,
+                    ..TaskQuery::view(view)
                 };
                 let query = resolve_inbox(conn, query)?.expect("inbox exists");
                 let (sql, params) = list_tasks_sql(&query, cursor.as_ref(), 51);

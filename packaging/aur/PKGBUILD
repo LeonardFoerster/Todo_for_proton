@@ -1,0 +1,73 @@
+# Maintainer: Leonard <Leonard.Foerster@proton.me>
+#
+# Tasks – Aufgaben und Notizen offline-first, Ende-zu-Ende-verschlüsselt synchronisiert (N11-01).
+# VCS-Paket: baut den aktuellen Stand von `main` mit cargo (Toolchain aus rust-toolchain.toml über
+# rustup) und pnpm (Vite + Tauri CLI aus dem Lockfile). Prüfen ohne Installation: `makepkg -f`.
+
+pkgname=tasks-app-git
+_name=tasks-app
+_id=dev.tasks.app
+pkgver=0.1.0.r0.g0000000
+pkgrel=1
+pkgdesc="Aufgaben und Notizen offline-first, Ende-zu-Ende-verschlüsselt zwischen Geräten synchronisiert"
+arch=('x86_64')
+url="https://github.com/LeonardFoerster/Todo_for_proton"
+# TODO(User): Lizenz festlegen (README „Lizenz“) und hier als SPDX-Kennung eintragen, vor dem Veröffentlichen.
+license=('LicenseRef-unspecified')
+# libayatana-appindicator lädt das Tray-Symbol zur Laufzeit (dlopen) – namcap sieht es nicht.
+depends=('webkit2gtk-4.1' 'gtk3' 'libsoup3' 'glib2' 'cairo' 'gdk-pixbuf2' 'glibc' 'gcc-libs'
+         'libayatana-appindicator' 'dbus' 'hicolor-icon-theme')
+makedepends=('git' 'rustup' 'nodejs' 'pnpm')
+optdepends=(
+  'xdg-desktop-portal: Erinnerungen als Benachrichtigung, Datei-Dialoge für Export/Import'
+  'gnome-keyring: Schlüsselbund für Sync-Schlüssel und Sitzung (oder ein anderer Secret-Service-Anbieter)'
+)
+provides=("$_name")
+conflicts=("$_name")
+options=('!lto' '!debug')
+source=("$_name::git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$_name"
+  local version
+  version=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' apps/desktop/src-tauri/tauri.conf.json)
+  printf '%s.r%s.g%s' "$version" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd "$_name"
+  export RUSTUP_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+  rustup toolchain install --profile minimal "$RUSTUP_TOOLCHAIN"
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/^host: //p')"
+  pnpm install --frozen-lockfile
+}
+
+build() {
+  cd "$_name"
+  export RUSTUP_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+  export CARGO_TARGET_DIR="$PWD/target"
+  cd apps/desktop
+  pnpm tauri build --no-bundle -- --frozen
+}
+
+check() {
+  cd "$_name"
+  # Die Tests laufen im Projekt (`just check`); hier nur: das Binary ist gebaut.
+  test -x target/release/todo-desktop
+}
+
+package() {
+  cd "$_name"
+  install -Dm755 target/release/todo-desktop "$pkgdir/usr/bin/$_name"
+
+  local icons=apps/desktop/src-tauri/icons
+  install -Dm644 "$icons/32x32.png" "$pkgdir/usr/share/icons/hicolor/32x32/apps/$_id.png"
+  install -Dm644 "$icons/128x128.png" "$pkgdir/usr/share/icons/hicolor/128x128/apps/$_id.png"
+  install -Dm644 "$icons/128x128@2x.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/$_id.png"
+  install -Dm644 "$icons/icon.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/$_id.png"
+  install -Dm644 "apps/desktop/src-tauri/icon.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/$_id.svg"
+
+  install -Dm644 packaging/aur/$_id.desktop "$pkgdir/usr/share/applications/$_id.desktop"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$_name/README.md"
+}

@@ -4,7 +4,7 @@
  * oben rechts (PASS/FAIL je Schritt). In normalen Builds nicht enthalten.
  */
 
-import type { CoreClient, TaskSummaryDto } from "@tasks/core-client";
+import type { CoreClient, NoteSummaryDto, TaskSummaryDto } from "@tasks/core-client";
 
 /** Ein Schritt; ein zurückgegebener Text erscheint als Messwert hinter PASS. */
 type Step = [name: string, run: (client: CoreClient) => Promise<string | void>];
@@ -273,7 +273,7 @@ const p708b: Step[] = [
       await until("Notiz", () => notes.value === "Überlebt den Neustart");
       const high = await until("Priorität", () => byRole("radio", "Hoch"));
       if (high.getAttribute("aria-checked") !== "true") throw new Error("Priorität nicht hoch");
-      const due = await until("Datum", () => document.querySelector<HTMLInputElement>("#detail-due")?.value);
+      const due = await until("Datum", () => document.querySelector<HTMLElement>("#detail-due")?.dataset.value);
       const tomorrow = new Date(Date.now() + 86_400_000);
       const expected = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
       if (due !== expected) throw new Error(`Fällig ${due}, erwartet ${expected}`);
@@ -338,7 +338,7 @@ const p709a: Step[] = [
       (await until("S2", () => byRole("option", "S2"))).click();
       key(document.activeElement ?? document.body, "Delete");
       await until("S2 weg", () => order().join() === "S4,S3,S1");
-      await until("Toast", () => document.querySelector('[role="status"]')?.textContent?.includes("gelöscht"));
+      await until("Toast", () => document.querySelector('[role="status"]')?.textContent?.includes("Papierkorb"));
       await sleep(400);
       return order().join(" ");
     },
@@ -728,7 +728,7 @@ const p002: Step[] = [
       for (const title of ["s1", "s2", "s3"]) ids.push((await client.createTask({ title, listId: list.id })).id);
       const events: string[][] = [];
       const off = client.onChange((e) => events.push(e.tasks));
-      const done = await client.completeTasks([...ids, ids[0]], true);
+      const { tasks: done } = await client.completeTasks([...ids, ids[0]], true);
       const moved = await client.moveTasks([ids[2], ids[1]], { listId: list.id, before: ids[0] });
       const deleted = await client.deleteTasks(ids);
       const restored = await client.restoreTasks(deleted);
@@ -758,7 +758,10 @@ const row = (title: string) => until(`Zeile ${title}`, () => byRole("option", ti
 const focused = (): HTMLElement => (document.activeElement as HTMLElement | null) ?? document.body;
 
 /** Zählt Aufrufe einer Client-Methode (dieselbe Instanz wie die UI). */
-function countCalls(client: CoreClient, method: "completeTasks" | "deleteTasks" | "moveTasks" | "restoreTasks" | "getTask") {
+function countCalls(
+  client: CoreClient,
+  method: "completeTasks" | "deleteTasks" | "trashTasks" | "moveTasks" | "restoreTasks" | "getTask",
+) {
   const original = client[method] as (...args: never[]) => Promise<unknown>;
   const counter = { calls: 0, restore: () => void (client[method] = original as never) };
   client[method] = ((...args: never[]) => {
@@ -901,7 +904,8 @@ const p0sel: Step[] = [
   [
     `${SELECT_N} löschen: 1 Aufruf, sofort leer, Rückgängig an alter Stelle`,
     async (client) => {
-      const deletes = countCalls(client, "deleteTasks");
+      // Löschen = Papierkorb (ADR-031): ein `trashTasks`, Rückgängig mit gleichen IDs.
+      const deletes = countCalls(client, "trashTasks");
       const gets = countCalls(client, "getTask");
       try {
         const before = await titlesOf(client, "Auswahl");
@@ -914,7 +918,7 @@ const p0sel: Step[] = [
         const painted = performance.now() - t0;
         if (!empty) throw new Error("Liste nicht sofort leer");
         await until("Toast", () => byRole("button", "Rückgängig"));
-        if (deletes.calls !== 1) throw new Error(`${deletes.calls} deleteTasks`);
+        if (deletes.calls !== 1) throw new Error(`${deletes.calls} trashTasks`);
         (await until("Rückgängig", () => byRole("button", "Rückgängig"))).click();
         await until("zurück", () => visibleTitles(3) === "W001,W002,W003", 8000);
         const after = await titlesOf(client, "Auswahl");
@@ -1647,13 +1651,41 @@ const p2layout: Step[] = [
 // P3-03: Fenster „Neue Task“ mit erkannten Angaben und Notiz – ein `createTask` über die echte IPC.
 const p3new: Step[] = [
   [
+    "Datums-Popover und Prioritätsmenü liegen sichtbar über dem Fenster; Esc schließt nur das Popover (P6)",
+    async () => {
+      const input = await openNewTask();
+      /** Liegt das Element an seinem Mittelpunkt wirklich oben (nicht hinter der modalen Ebene)? */
+      const onTop = (el: Element) => {
+        const r = el.getBoundingClientRect();
+        return el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
+      };
+      key(input, "d", { altKey: true });
+      const popover = await until("Popover", () => document.querySelector('dialog[open] [role="dialog"][aria-label="Fälligkeit wählen"]'));
+      await frame();
+      if (!onTop(popover)) throw new Error("Popover verdeckt");
+      key(document.activeElement ?? popover, "Escape");
+      await until("Popover zu", () => !document.querySelector('[aria-label="Fälligkeit wählen"]'));
+      if (!document.querySelector('dialog[open] input[aria-label="Neue Task"]')) throw new Error("Fenster mit geschlossen");
+      key(input, "p", { altKey: true });
+      const menu = await until("Menü", () => document.querySelector('[role="menu"][aria-label="Priorität wählen"]'));
+      await frame();
+      if (!onTop(menu)) throw new Error("Menü verdeckt");
+      key(menu, "Escape");
+      key(input, "Escape");
+      await newTaskClosed();
+      return "beide oben, Fenster bleibt bei Esc im Popover offen";
+    },
+  ],
+  [
     "Neue Task mit Uhrzeit, Priorität und Notiz",
     async (client) => {
       const input = await openNewTask();
       type(input, "Sprechstunde morgen um 14:00 !1");
-      await until("Titelvorschau", () => document.querySelector("dialog[open] .hint strong")?.textContent === "Sprechstunde");
+      // P6: erkannte Stellen im Titel markiert, Notiz als zweite Zeile (kein Chip mehr).
+      await until("Markierung", () =>
+        [...document.querySelectorAll("dialog[open] mark")].map((m) => m.textContent).join("|") === "morgen um 14:00|!1",
+      );
       await click("button", "Priorität: Hoch");
-      await click("button", /Notiz/);
       const notes = await field("Notiz");
       type(notes, "Fragen zu Blatt 3");
       key(notes, "Enter", { ctrlKey: true });
@@ -1683,9 +1715,13 @@ const p4due: Step[] = [
       key(input, "Enter");
       await newTaskClosed();
       await openTask(/^Termin/);
-      const date = await until("Datumsfeld", () => document.querySelector<HTMLInputElement>("#detail-due"));
-      date.value = "2030-01-15";
-      date.dispatchEvent(new Event("change", { bubbles: true }));
+      // P5-08: Fälligkeitsfeld öffnet den Wähler; Text wie in der Titelzeile, Enter übernimmt.
+      (await until("Fälligkeitsfeld", () => document.querySelector<HTMLElement>("#detail-due"))).click();
+      const text = await field("Fällig am");
+      await until("Fokus im Wähler", () => document.activeElement === text);
+      type(text, "15.01.2030");
+      key(text, "Enter");
+      await until("Wähler zu", () => !document.querySelector('[role="dialog"][aria-label="Fälligkeit wählen"]'));
       const all = await client.listTasks({ view: { kind: "all" } }, { limit: 50 });
       const id = all.items.find((t) => t.title === "Termin")?.id;
       if (!id) throw new Error("nicht angelegt");
@@ -1700,8 +1736,8 @@ const p4due: Step[] = [
       await click("button", "Schließen");
       location.hash = "#/all";
       await openTask(/^Termin/);
-      const time = await field("Uhrzeit");
-      await until("Uhrzeit im Feld", () => time.value === "14:00");
+      const dueField = await until("Fälligkeitsfeld", () => document.querySelector<HTMLElement>("#detail-due"));
+      await until("Uhrzeit im Feld", () => dueField.dataset.time === "14:00");
       return `${at.toLocaleString("de-DE")}`;
     },
   ],
@@ -1881,8 +1917,528 @@ const p4search: Step[] = [
   ],
 ];
 
+// N5-12: Modus „Notes" in der echten WebView – umschalten, anlegen, tippen (natives `insertText`
+// von WebKitGTK), Autosave, Vorschau, zurück zu Tasks mit erhaltenem Zustand, Eingabe bis Repaint.
+const editor = () => document.querySelector<HTMLTextAreaElement>('textarea[aria-label^="Inhalt"]');
+const saveLabel = () => document.querySelector('footer[aria-label="Status der Notiz"]')?.textContent ?? "";
+const toMode = async (mode: "tasks" | "notes") => {
+  const t0 = performance.now();
+  key(document.activeElement ?? document.body, mode === "tasks" ? "1" : "2", { ctrlKey: true, code: mode === "tasks" ? "Digit1" : "Digit2" });
+  await until(`Modus ${mode}`, () => byRole("button", mode === "tasks" ? /Zu Notes wechseln/ : /Zu Tasks wechseln/));
+  await frame();
+  return performance.now() - t0;
+};
+
+async function allNotes(client: CoreClient, folderId: string | null = null): Promise<NoteSummaryDto[]> {
+  const out: NoteSummaryDto[] = [];
+  let cursor: string | null = null;
+  do {
+    const page = await client.notes.listItems(folderId, { cursor, limit: 500 });
+    for (const item of page.items) {
+      if (item.type === "note") out.push(item);
+      else out.push(...(await allNotes(client, item.id)));
+    }
+    cursor = page.nextCursor;
+  } while (cursor);
+  return out;
+}
+
+async function noteNamed(client: CoreClient, name: string) {
+  const summary = (await allNotes(client)).find((n) => n.name === name);
+  if (!summary) throw new Error(`Notiz ${name} fehlt`);
+  return client.notes.get(summary.id);
+}
+
+/** Wie getippt: natives `insertText` (Rückgängig bleibt), sonst Fehler – genau das prüft der Schritt. */
+function typeNative(el: HTMLTextAreaElement, text: string) {
+  el.focus();
+  for (const ch of text) {
+    if (!document.execCommand("insertText", false, ch)) throw new Error("execCommand(insertText) nicht unterstützt");
+  }
+}
+
+const NOTE_TEXT = "# Selbsttest Notiz\n\n- [ ] Punkt eins\n- Punkt zwei\n\nText mit **fett**.";
+
+const notes: Step[] = [
+  ["App startet im Eingang", async () => void (await until("h1 Eingang", () => heading() === "Eingang"))],
+  [
+    "Eine Task auswählen (Zustand für später)",
+    async (client) => {
+      await client.createTask({ title: "Bleibt offen" });
+      await click("option", /^Bleibt offen/);
+      await until("Detail", () => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Titel"]')?.value === "Bleibt offen");
+    },
+  ],
+  ["Umschalten nach Notes (Strg+2)", async () => `${(await toMode("notes")).toFixed(0)} ms (lädt den Notes-Teil)`],
+  [
+    "Neue Notiz → Editor hat den Fokus",
+    async () => {
+      await click("button", "Neue Notiz");
+      await until("Editor fokussiert", () => document.activeElement === editor());
+    },
+  ],
+  [
+    "Tippen mit nativem insertText (WebKitGTK)",
+    async () => {
+      const el = editor()!;
+      typeNative(el, NOTE_TEXT);
+      if (el.value !== NOTE_TEXT) throw new Error(`Inhalt ${JSON.stringify(el.value.slice(0, 60))}`);
+      document.execCommand("undo");
+      const undone = el.value === NOTE_TEXT.slice(0, -1);
+      document.execCommand("redo");
+      if (el.value !== NOTE_TEXT) throw new Error("Wiederholen stellt den Text nicht her");
+      return `Rückgängig ${undone ? "zeichenweise" : "in Gruppen"} (nativ)`;
+    },
+  ],
+  [
+    "Autosave: Core hat den Text, Name aus der ersten Zeile",
+    async (client) => {
+      const t0 = performance.now();
+      await untilAsync("gespeichert", async () => (await allNotes(client)).some((n) => n.name === "Selbsttest Notiz"), 5000);
+      const note = await noteNamed(client, "Selbsttest Notiz");
+      if (note.body !== NOTE_TEXT) throw new Error("Inhalt im Core weicht ab");
+      await until("Statuszeile Gespeichert", () => saveLabel().includes("Gespeichert"), 3000);
+      return `nach ${Math.round(performance.now() - t0)} ms`;
+    },
+  ],
+  [
+    "Vorschau (Strg+E): Überschrift, Checkliste anklickbar",
+    async (client) => {
+      const t0 = performance.now();
+      key(editor()!, "e", { ctrlKey: true, code: "KeyE" });
+      const h1 = await until("Vorschau h1", () => document.querySelector(".preview h1")).catch(() => {
+        const sw = document.querySelector('[aria-label="Ansicht"]');
+        throw new Error(`keine Vorschau; Umschalter ${sw ? "da" : "fehlt"}, Fokus ${document.activeElement?.tagName}, preview-Elemente ${document.querySelectorAll(".preview").length}, pressed ${sw?.querySelector("[aria-pressed=true]")?.textContent}`);
+      });
+      const ms = performance.now() - t0;
+      if (h1.textContent !== "Selbsttest Notiz") throw new Error(`h1 ${h1.textContent}`);
+      document.querySelector<HTMLInputElement>(".preview input[type=checkbox]")!.click();
+      await untilAsync("Haken gespeichert", async () => (await noteNamed(client, "Selbsttest Notiz")).body.includes("- [x] Punkt eins"), 5000);
+      key(document.querySelector(".preview")!, "e", { ctrlKey: true, code: "KeyE" });
+      await until("Quelltext", () => editor() && !editor()!.hidden);
+      return `Umschalten ${ms.toFixed(0)} ms`;
+    },
+  ],
+  [
+    "Eingabe bis Repaint (200 Zeichen): Arbeit p95 < 16 ms, Bild im nächsten Frame",
+    async () => {
+      const el = editor()!;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+      document.execCommand("insertText", false, "\n");
+      // Bildrate dieses Bildschirms (rAF wartet bis zum nächsten vsync).
+      let last = await frame();
+      const intervals: number[] = [];
+      for (let i = 0; i < 30; i++) intervals.push(-last + (last = await frame()));
+      const period = stats(intervals).p50;
+      const work: number[] = [];
+      let late = 0;
+      for (let i = 0; i < 200; i++) {
+        const before = await frame();
+        const t0 = performance.now();
+        document.execCommand("insertText", false, i % 40 === 39 ? "\n" : "x");
+        work.push(performance.now() - t0);
+        // Das Bild mit der Eingabe ist das nächste; später = verpasster Frame.
+        if ((await frame()) - before > period * 1.5) late++;
+      }
+      const s = stats(work);
+      if (s.p95 > 50) throw new Error(`Arbeit p95 ${s.p95.toFixed(1)} ms (hart 50)`);
+      if (late > 10) throw new Error(`${late} von 200 Eingaben verpassen den nächsten Frame`);
+      return `Arbeit p50 ${s.p50.toFixed(2)} / p95 ${s.p95.toFixed(2)} / max ${s.max.toFixed(1)} ms · ${late}/200 verpasste Frames · Frame ${period.toFixed(1)} ms`;
+    },
+  ],
+  [
+    "Zurück zu Tasks (Strg+1): Task bleibt geöffnet",
+    async () => {
+      const ms = await toMode("tasks");
+      await until("h1 Eingang", () => heading() === "Eingang");
+      const title = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Titel"]')?.value;
+      if (title !== "Bleibt offen") throw new Error(`Detail ${title ?? "zu"}`);
+      return `${ms.toFixed(1)} ms`;
+    },
+  ],
+  [
+    "Wieder Notes: dieselbe Notiz, Cursor am Ende",
+    async () => {
+      const ms = await toMode("notes");
+      const el = await until("Editor", () => editor());
+      if (!el.value.startsWith("# Selbsttest Notiz") || !el.getAttribute("aria-label")?.endsWith("Selbsttest Notiz")) {
+        throw new Error(`Editor ${el.getAttribute("aria-label")}`);
+      }
+      return `${ms.toFixed(1)} ms`;
+    },
+  ],
+  [
+    "Suche (Strg+K) findet die Notiz",
+    async () => {
+      await openPaletteTimed();
+      type(paletteInput()!, "Punkt zwei");
+      await until("Treffer", () => byRole("option", /Selbsttest Notiz/), 3000);
+      key(paletteInput()!, "Escape");
+      await until("zu", () => !paletteInput());
+    },
+  ],
+  ["Zurück zu Tasks (Ausgangszustand für andere Suiten)", async () => void (await toMode("tasks"))],
+];
+
+// N5-12: Budgets aus `notes.md` §9 mit Daten – Ordner mit 500 Notizen, eine 20-KB-Notiz. Das Profil dient
+// danach `MODE=notes NOTES_OPEN=<id> tools/measure-desktop.sh` (RAM mit offener Notiz, Release).
+const n5seed: Step[] = [
+  ["App startet im Eingang", async () => void (await until("h1 Eingang", () => heading() === "Eingang"))],
+  [
+    "Ordner „Masse“ mit 500 Notizen, Notiz „Groß“ mit 20 KB (IPC)",
+    async (client) => {
+      const folder = await client.notes.createFolder(null, "Masse");
+      for (let i = 0; i < 500; i += 50) {
+        await Promise.all(
+          Array.from({ length: 50 }, async (_, j) => {
+            const note = await client.notes.create(folder.id, "text");
+            await client.notes.updateBody(note.id, `M${String(i + j + 1).padStart(3, "0")}\nInhalt`, null);
+          }),
+        );
+      }
+      const chunk = "## Abschnitt\n\nText mit **fett**, `code` und [Link](https://example.org).\n\n- [ ] Punkt\n- Punkt 2\n\n";
+      const big = await client.notes.create(null, "markdown");
+      await client.notes.updateBody(big.id, `# Groß\n\n${chunk.repeat(Math.ceil(20_000 / chunk.length))}`, null);
+    },
+  ],
+  ["Umschalten nach Notes", async () => `${(await toMode("notes")).toFixed(0)} ms`],
+  [
+    "Ordner mit 500 Einträgen aufklappen (< 30 ms)",
+    async () => {
+      const row = await until("Masse", () => byRole("treeitem", "Masse"));
+      const t0 = performance.now();
+      row.click();
+      await until("erste Notiz", () => byRole("treeitem", "M001.txt"));
+      await frame();
+      const ms = performance.now() - t0;
+      const rows = document.querySelectorAll('[role="treeitem"]').length;
+      if (ms > 100) throw new Error(`${ms.toFixed(0)} ms`);
+      return `${ms.toFixed(0)} ms bis gezeichnet, ${rows} Zeilen im DOM (virtualisiert)`;
+    },
+  ],
+  [
+    "Notiz mit 20 KB öffnen bis Text sichtbar (< 50 ms)",
+    async () => {
+      byRole("treeitem", "Masse")!.click(); // zuklappen – sonst liegt „Groß" außerhalb des virtualisierten Bereichs
+      const row = await until("Groß", () => byRole("treeitem", "Groß.md"));
+      const t0 = performance.now();
+      row.click();
+      await until("Text", () => (editor()?.value.length ?? 0) > 20_000 && editor()!.getAttribute("aria-label") === "Inhalt von Groß");
+      await frame();
+      const ms = performance.now() - t0;
+      if (ms > 150) throw new Error(`${ms.toFixed(0)} ms`);
+      return `${ms.toFixed(0)} ms`;
+    },
+  ],
+  [
+    "Zustand",
+    async (client) => {
+      await toMode("tasks");
+      return (await noteNamed(client, "Groß")).id;
+    },
+  ],
+];
+
+// N5-12: „Notiz auf zwei Geräten" (`tools/acceptance-two-devices.sh`, Abschnitt 8). A legt zwei
+// Notizen an; beide ändern offline – „Zwei Geräte" in verschiedenen Zeilen (sauberer Merge),
+// „Streit" in derselben Zeile (Konfliktkopie); danach n5sync auf A, B, A.
+const MERGE_BASE = "Zwei Geräte\nZeile 1\nZeile 2\nZeile 3\n";
+const CLASH_BASE = "Streit\nGemeinsame Zeile\n";
+
+/** Alle Notizen als eine vergleichbare Zeile (Name: Inhalt, Zeilenumbrüche als ⏎). */
+async function notesState(client: CoreClient): Promise<string> {
+  const list = await allNotes(client);
+  const parts = await Promise.all(list.map(async (n) => `${n.name}: ${(await client.notes.get(n.id)).body.replaceAll("\n", "⏎")}`));
+  return parts.sort().join(" | ");
+}
+
+async function editNote(client: CoreClient, name: string, edit: (body: string) => string) {
+  const note = await noteNamed(client, name);
+  await client.notes.updateBody(note.id, edit(note.body), note.bodyRev);
+}
+
+const n5create: Step[] = [
+  [
+    "A: Notizen „Zwei Geräte“ und „Streit“",
+    async (client) => {
+      for (const text of [MERGE_BASE, CLASH_BASE]) {
+        const note = await client.notes.create(null, "text");
+        await client.notes.updateBody(note.id, text, null);
+      }
+    },
+  ],
+  ["Hochgeladen", async (client) => syncedNow(client)],
+  ["Zustand", async (client) => notesState(client)],
+];
+
+const n5offA: Step[] = [
+  ["B hat schon den Stand von A", async (client) => syncedNow(client)],
+  offline,
+  [
+    "A: Zeile 1 und die gemeinsame Zeile ändern",
+    async (client) => {
+      await editNote(client, "Zwei Geräte", (b) => b.replace("Zeile 1", "Zeile 1 von A"));
+      await editNote(client, "Streit", (b) => b.replace("Gemeinsame Zeile", "Fassung von A"));
+    },
+  ],
+];
+
+const n5offB: Step[] = [
+  ["Stand von A holen", async (client) => syncedNow(client)],
+  offline,
+  [
+    "B: Zeile 3 und die gemeinsame Zeile ändern",
+    async (client) => {
+      await editNote(client, "Zwei Geräte", (b) => b.replace("Zeile 3", "Zeile 3 von B"));
+      await editNote(client, "Streit", (b) => b.replace("Gemeinsame Zeile", "Fassung von B"));
+    },
+  ],
+];
+
+const n5sync: Step[] = [
+  [
+    "Online, synchronisieren",
+    async (client) => {
+      await online();
+      return syncedNow(client);
+    },
+  ],
+  [
+    "Editor zeigt den zusammengeführten Text",
+    async (client) => {
+      const note = await noteNamed(client, "Zwei Geräte");
+      await toMode("notes");
+      await click("treeitem", "Zwei Geräte.txt");
+      await until("Editor", () => editor()?.value === note.body, 3000);
+      await toMode("tasks");
+    },
+  ],
+  ["Zustand", async (client) => notesState(client)],
+];
+
+// N7 (ADR-033): Erinnerung zur Fälligkeit – im Debug-Build mit `TODO_NOTIFY=log` ohne Meldung auf dem Desktop;
+// geprüft über die gemeldeten Erinnerungen der Shell.
+const n7rem: Step[] = [
+  [
+    "Task fällig in 3 s → Erinnerung gemeldet, Verschieben meldet neu, Erledigen nicht",
+    async (client) => {
+      const { devSelftest } = await import("@tasks/core-client/tauri");
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const at = (ms: number) => ({ kind: "dateTime" as const, at: new Date(Date.now() + ms).toISOString(), tz });
+      const fired = async (id: string) => (await devSelftest.remindersFired()).filter((r) => r.taskId === id).length;
+      const t0 = performance.now();
+      const task = await client.createTask({ title: "Erinnerungstest", due: at(3000) });
+      await untilAsync("gemeldet", async () => (await fired(task.id)) === 1, 10_000);
+      const delay = performance.now() - t0;
+      if (delay < 2500) throw new Error(`zu früh: ${delay.toFixed(0)} ms`);
+      await client.updateTask(task.id, { due: at(2000) });
+      await untilAsync("nach Verschieben erneut", async () => (await fired(task.id)) === 2, 10_000);
+      const done = await client.createTask({ title: "Schon erledigt", due: at(1500) });
+      await client.completeTask(done.id, true);
+      await sleep(3500);
+      if ((await fired(done.id)) !== 0) throw new Error("erledigte Task gemeldet");
+      return `nach ${(delay / 1000).toFixed(1)} s`;
+    },
+  ],
+];
+
+// N7 (ADR-033): Im Hintergrundbetrieb versteckt Schließen das Fenster nur – die App läuft weiter.
+const n7bg: Step[] = [
+  [
+    "Hintergrund an: Schließen versteckt, App läuft weiter",
+    async (client) => {
+      const { devSelftest } = await import("@tasks/core-client/tauri");
+      const settings = await client.background!.get();
+      await client.background!.set({ ...settings, background: true });
+      await devSelftest.closeWindow();
+      await sleep(2500);
+      // Noch am Leben: Der Core antwortet, das Fenster ist versteckt.
+      await client.listTaskLists();
+      const hidden = document.visibilityState;
+      await client.background!.set({ ...settings, background: false });
+      return `nach dem Schließen weiter aktiv (Sichtbarkeit: ${hidden})`;
+    },
+  ],
+];
+
+// N4 (ADR-028): Serie über das Fenster „Neue Task“, Abhaken mit Verlauf, Rückgängig, Überspringen –
+// in der echten WebView mit Zeitzonen aus der Shell.
+const n4rec: Step[] = [];
+{
+  let seriesId = "";
+  const plusDays = (date: string, n: number) => {
+    const d = new Date(`${date}T12:00:00`);
+    d.setDate(d.getDate() + n);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const dueOf = async (client: CoreClient) => {
+    const due = (await client.getTask(seriesId)).due;
+    return due?.kind === "date" ? due.date : (due?.at ?? "");
+  };
+  const history = async (client: CoreClient) =>
+    (await client.listTasks({ view: { kind: "completed" } }, { limit: 50 })).items.filter((t) => t.title === "Blatt");
+  let first = "";
+  n4rec.push(
+    [
+      "„Blatt jeden Fr“ im Fenster „Neue Task“: Regel markiert, Serie am nächsten Freitag",
+      async (client) => {
+        const input = await openNewTask();
+        type(input, "Blatt jeden Fr");
+        await until("Markierung", () => document.querySelector("dialog[open] mark.repeat")?.textContent === "jeden Fr");
+        key(input, "Enter");
+        await newTaskClosed();
+        const row = await until("Zeile", () => byRole("option", /^Blatt, .*wiederholt sich/));
+        seriesId = row.dataset.taskId ?? "";
+        const task = await client.getTask(seriesId);
+        if (task.recurrence?.freq !== "weekly" || task.recurrence.weekdays.join() !== "fr") throw new Error(JSON.stringify(task.recurrence));
+        first = await dueOf(client);
+        if (new Date(`${first}T12:00:00`).getDay() !== 5) throw new Error(`kein Freitag: ${first}`);
+        return first;
+      },
+    ],
+    [
+      "Abhaken: Zeile bleibt, Fälligkeit +7 Tage, Eintrag in „Erledigt“; Rückgängig stellt alles her",
+      async (client) => {
+        await click("checkbox", "Erledigt: Blatt");
+        await untilAsync("+7 Tage", async () => (await dueOf(client)) === plusDays(first, 7));
+        await until("Toast", () => byRole("button", "Rückgängig"));
+        if (!byRole("option", /^Blatt/)) throw new Error("Zeile verschwunden");
+        const entries = await history(client);
+        if (entries.length !== 1 || entries[0].due?.kind !== "date" || entries[0].due.date !== first) {
+          throw new Error(`Verlauf: ${JSON.stringify(entries)}`);
+        }
+        (await until("Rückgängig", () => byRole("button", "Rückgängig"))).click();
+        await untilAsync("zurück", async () => (await dueOf(client)) === first && (await history(client)).length === 0);
+        return `${first} → ${plusDays(first, 7)} → ${first}`;
+      },
+    ],
+    [
+      "Überspringen (Kontextmenü): +7 Tage ohne Verlaufseintrag",
+      async (client) => {
+        const row = await until("Zeile", () => byRole("option", /^Blatt/));
+        row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 200, clientY: 200 }));
+        await click("menuitem", "Dieses Mal überspringen");
+        await untilAsync("+7", async () => (await dueOf(client)) === plusDays(first, 7));
+        if ((await history(client)).length !== 0) throw new Error("Verlauf beim Überspringen");
+      },
+    ],
+    [
+      "Interaktion: Abhaken einer Serie bis Repaint (10×)",
+      async (client) => {
+        const times: number[] = [];
+        for (let i = 0; i < 10; i++) {
+          const before = await dueOf(client);
+          await frame();
+          const t0 = performance.now();
+          (await until("Haken", () => byRole("checkbox", "Erledigt: Blatt"))).click();
+          times.push((await frame()) - t0);
+          await untilAsync("vorgerückt", async () => (await dueOf(client)) !== before);
+        }
+        // Bis zum nächsten Frame (wie `repaint`): ein Frame bei 60 Hz sind schon 16,7 ms – geprüft wird die harte Grenze.
+        const st = stats(times);
+        if (st.p95 > 50) throw new Error(`p95 ${st.p95.toFixed(1)} ms > 50 ms`);
+        const entries = await history(client);
+        if (entries.length !== 10) throw new Error(`${entries.length} Verlaufseinträge statt 10`);
+        return `p50 ${st.p50.toFixed(1)} / p95 ${st.p95.toFixed(1)} / max ${st.max.toFixed(1)} ms`;
+      },
+    ],
+  );
+}
+
+// N4-07, Abnahme Abschnitt 9: Serie auf zwei Geräten – beide haken offline dasselbe Vorkommen ab.
+const SERIES = "Serie Zwei Geräte";
+function today() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const date = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`;
+  return { date, start: start.toISOString(), end: end.toISOString() };
+}
+
+async function seriesState(client: CoreClient): Promise<string> {
+  const all = (await client.listTasks({ view: { kind: "all" } }, { limit: 200 })).items.filter((t) => t.title === SERIES);
+  const due = (t: TaskSummaryDto) => (t.due?.kind === "date" ? t.due.date : (t.due?.at ?? "-"));
+  const series = all.filter((t) => t.recurring).map((t) => `Serie ${t.status} ${due(t)}`);
+  const entries = all.filter((t) => !t.recurring).map((t) => `Eintrag ${t.status} ${due(t)} ${t.id}`);
+  return [...series, ...entries.sort()].join(" | ");
+}
+
+const seriesComplete: Step = [
+  "Vorkommen von heute abhaken",
+  async (client) => {
+    const s = (await client.listTasks({ view: { kind: "all" } }, { limit: 200 })).items.find((t) => t.title === SERIES && t.recurring);
+    if (!s) throw new Error("Serie fehlt");
+    const res = await client.completeTasks([s.id], true, today());
+    return `Eintrag ${res.occurrences[0]?.occurrenceId ?? "-"}`;
+  },
+];
+
+const n4create: Step[] = [
+  [
+    `A: „${SERIES}“ täglich ab heute`,
+    async (client) => {
+      await client.createTask({
+        title: SERIES,
+        due: { kind: "date", date: today().date },
+        recurrence: { freq: "daily", interval: 1, weekdays: [], anchor: "schedule" },
+      });
+    },
+  ],
+  ["Hochgeladen", async (client) => syncedNow(client)],
+];
+const n4offA: Step[] = [["B hat schon den Stand von A", async (client) => syncedNow(client)], offline, seriesComplete];
+const n4offB: Step[] = [["Stand von A holen", async (client) => syncedNow(client)], offline, seriesComplete];
+const n4sync: Step[] = [
+  [
+    "Online, synchronisieren",
+    async (client) => {
+      await online();
+      return syncedNow(client);
+    },
+  ],
+  ["Zustand", async (client) => seriesState(client)],
+];
+
+// N8: Checkliste und Tags in der echten WebView.
+const n8: Step[] = [
+  [
+    "„Blatt #selbsttest“: Tag angelegt, in der Zeile, Ansicht je Tag",
+    async (client) => {
+      const input = await openNewTask();
+      type(input, "Blatt #selbsttest");
+      await until("Markierung", () => document.querySelector("dialog[open] mark.tag")?.textContent === "#selbsttest");
+      key(input, "Enter");
+      await newTaskClosed();
+      const tag = (await client.listTags()).find((t) => t.name === "selbsttest");
+      if (!tag) throw new Error("Tag fehlt");
+      await until("Chip in der Zeile", () => byRole("option", /^Blatt, .*#selbsttest/));
+      await click("link", /selbsttest/);
+      await until("Tag-Ansicht", () => heading() === "#selbsttest");
+      await until("Zeile in der Tag-Ansicht", () => byRole("option", /^Blatt/));
+    },
+  ],
+  [
+    "Checkliste im Detail: zwei Punkte, einer erledigt → „1/2“ in der Zeile",
+    async (client) => {
+      (await until("Zeile", () => byRole("option", /^Blatt/))).click();
+      const add = await until("Punkt hinzufügen", () => document.querySelector<HTMLInputElement>('input[aria-label="Punkt hinzufügen"]'));
+      for (const text of ["Aufgabe 1", "Aufgabe 2"]) {
+        type(add, text);
+        key(add, "Enter");
+        await sleep(100);
+      }
+      (await until("Haken", () => document.querySelector<HTMLInputElement>('input[type="checkbox"][aria-label="Erledigt: Aufgabe 1"]'))).click();
+      await until("1/2", () => byRole("option", /^Blatt/)?.textContent?.includes("1/2"));
+      const task = (await client.listTasks({ view: { kind: "all" } }, { limit: 50 })).items.find((t) => t.title === "Blatt");
+      if (task?.checklistDone !== 1 || task.checklistTotal !== 2) throw new Error(JSON.stringify(task));
+    },
+  ],
+];
+
 const SUITES: Record<string, Step[]> = { p002, p3new, p4due, p4today, p4upcoming, p4keys, p4search, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
-  p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth };
+  p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth, notes, n5seed, n5create, n5offA, n5offB, n5sync, n7rem, n7bg, n4rec,
+  n4create, n4offA, n4offB, n4sync, n8 };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */
 export async function runSelftest(
@@ -1900,6 +2456,11 @@ export async function runSelftest(
       .catch(() => null);
     if (listButton?.getAttribute("aria-pressed") === "false") listButton.click();
   }
+  // Der Modus liegt ebenfalls im localStorage: Jede Suite beginnt im Modus „Tasks".
+  const toTasks = await until("Kopfzeile", () => document.querySelector("h1") ?? byRole("button", /Zu Tasks wechseln/), 10_000)
+    .then(() => byRole("button", /Zu Tasks wechseln/))
+    .catch(() => null);
+  toTasks?.click();
   const steps = names.flatMap((n) => SUITES[n] ?? [[`Suite ${n}`, async () => Promise.reject(new Error("unbekannt"))] as Step]);
   const box = document.createElement("pre");
   box.style.cssText =

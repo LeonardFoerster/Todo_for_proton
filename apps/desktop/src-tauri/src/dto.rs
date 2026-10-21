@@ -44,6 +44,20 @@ impl ErrorDto {
             message: message.into(),
         }
     }
+
+    pub fn validation(message: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::Validation,
+            message: message.into(),
+        }
+    }
+
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::Internal,
+            message: message.into(),
+        }
+    }
 }
 
 impl From<CoreError> for ErrorDto {
@@ -74,6 +88,12 @@ impl From<CoreError> for ErrorDto {
 pub struct ChangedEventDto {
     pub tasks: Vec<String>,
     pub lists: Vec<String>,
+    pub notes: Vec<String>,
+    pub note_folders: Vec<String>,
+    /// Tags (ADR-035).
+    pub tags: Vec<String>,
+    /// Verknüpfungen Task ↔ Notiz (ADR-036).
+    pub links: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

@@ -196,7 +196,7 @@ fn bulk_commands_through_ipc() {
         json!({ "ids": [ids[0], ids[1], "0190f5c4-0000-7000-8000-000000000000"], "done": true }),
     );
     assert_eq!(
-        done.as_array().unwrap().len(),
+        done["tasks"].as_array().unwrap().len(),
         2,
         "unbekannte ID übersprungen"
     );
@@ -253,7 +253,42 @@ fn only_writing_commands_trigger_a_sync() {
         json!({ "id": list["id"], "name": "Büro" }),
         1,
     );
-    let a = expect("create_task", json!({ "input": { "title": "a" } }), 1);
+    // Tags (ADR-035): Lesen löst nichts aus, Anlegen/Umbenennen/Löschen genau einmal.
+    let tag = expect("ensure_tag", json!({ "name": "#Uni" }), 1);
+    assert_eq!(tag["name"], "Uni");
+    expect("list_tags", json!({}), 0);
+    expect(
+        "rename_tag",
+        json!({ "id": tag["id"], "name": "Studium" }),
+        1,
+    );
+    let a = expect(
+        "create_task",
+        json!({ "input": { "title": "a", "tags": [tag["id"]] } }),
+        1,
+    );
+    assert_eq!(a["tags"], json!([tag["id"]]));
+    assert_eq!(expect("delete_tag", json!({ "id": tag["id"] }), 1), 1);
+    // Verknüpfungen (ADR-036): Lesen löst nichts aus.
+    let note = expect(
+        "create_note",
+        json!({ "folder": null, "kind": "markdown" }),
+        1,
+    );
+    let link = expect(
+        "link_task_note",
+        json!({ "task": a["id"], "note": note["id"] }),
+        1,
+    );
+    assert_eq!(
+        expect("task_links", json!({ "task": a["id"] }), 0)[0]["noteId"],
+        note["id"]
+    );
+    assert_eq!(
+        expect("note_links", json!({ "note": note["id"] }), 0)[0]["task"]["id"],
+        a["id"]
+    );
+    expect("unlink", json!({ "id": link["id"] }), 1);
     let b = expect("create_task", json!({ "input": { "title": "b" } }), 1);
     expect(
         "update_task",
@@ -282,12 +317,65 @@ fn only_writing_commands_trigger_a_sync() {
         json!({ "dues": [{ "id": a["id"], "due": { "kind": "date", "date": "2026-10-20" } }, { "id": b["id"], "due": null }] }),
         1,
     );
+    // Serie mit Uhrzeit (ADR-028): Zeitzonen kommen aus der Shell (jiff).
+    let rule = json!({ "freq": "weekly", "interval": 1, "weekdays": [], "anchor": "schedule" });
+    let series = expect(
+        "create_task",
+        json!({ "input": { "title": "Serie", "recurrence": rule,
+            "due": { "kind": "dateTime", "at": "2026-10-24T12:00:00.000Z", "tz": "Europe/Berlin" } } }),
+        1,
+    );
+    let today = json!({ "date": "2026-10-24", "start": "2026-10-23T22:00:00.000Z", "end": "2026-10-24T22:00:00.000Z" });
+    let res = expect(
+        "complete_tasks",
+        json!({ "ids": [series["id"]], "done": true, "today": today }),
+        1,
+    );
+    assert_eq!(
+        res["tasks"].as_array().unwrap().len(),
+        2,
+        "Serie + Verlaufseintrag"
+    );
+    assert_eq!(
+        res["tasks"][0]["due"]["at"], "2026-10-31T13:00:00.000Z",
+        "14:00 Ortszeit nach der Zeitumstellung"
+    );
+    let skipped = expect(
+        "skip_occurrence",
+        json!({ "id": series["id"], "today": today }),
+        1,
+    );
+    assert_eq!(skipped["due"]["at"], "2026-11-07T13:00:00.000Z");
+    let undone = expect(
+        "undo_occurrence",
+        json!({ "occurrence": res["occurrences"][0] }),
+        1,
+    );
+    assert_eq!(undone["due"]["at"], "2026-10-24T12:00:00.000Z");
+    expect("delete_task", json!({ "id": series["id"] }), 1);
+    expect("trash_tasks", json!({ "ids": [a["id"]] }), 1);
+    expect("untrash_tasks", json!({ "ids": [a["id"]] }), 1);
+    expect("trash_tasks", json!({ "ids": [b["id"]] }), 1);
+    expect("purge_tasks", json!({ "ids": [b["id"]] }), 1);
+    expect("empty_task_trash", json!({}), 1);
+    let b = expect("create_task", json!({ "input": { "title": "B2" } }), 1);
     let deleted = expect("delete_tasks", json!({ "ids": [a["id"]] }), 1);
     expect("restore_tasks", json!({ "tasks": deleted }), 1);
     expect("delete_task", json!({ "id": b["id"] }), 1);
+    let twin = expect("create_task_list", json!({ "name": "Büro" }), 1);
+    expect(
+        "merge_task_lists",
+        json!({ "source": twin["id"], "target": list["id"] }),
+        1,
+    );
     expect("delete_task_list", json!({ "id": list["id"] }), 1);
 
     expect("list_task_lists", json!({}), 0);
+    expect(
+        "count_tasks",
+        json!({ "query": { "view": { "kind": "all" } } }),
+        0,
+    );
     expect(
         "list_tasks",
         json!({ "query": { "view": { "kind": "list", "listId": inbox["id"] } }, "page": { "limit": 10 } }),
@@ -297,4 +385,135 @@ fn only_writing_commands_trigger_a_sync() {
     expect("sync_status", json!({}), 0);
     expect("auth_info", json!({}), 0);
     expect("app_ready", json!({}), 0);
+    // Gerätelokale Einstellungen (ADR-033): kein Sync.
+    expect("background_settings", json!({}), 0);
+    expect(
+        "set_background_settings",
+        json!({ "settings": { "reminders": true, "allDayTime": "08:00", "background": false, "autostart": false } }),
+        0,
+    );
+
+    // Notizen: jedes schreibende Command genau eine Meldung, lesende keine.
+    let folder = expect("create_note_folder", json!({ "name": "Uni" }), 1);
+    expect(
+        "rename_note_folder",
+        json!({ "id": folder["id"], "name": "Studium" }),
+        1,
+    );
+    let other = expect("create_note_folder", json!({ "name": "Privat" }), 1);
+    expect(
+        "move_note_folder",
+        json!({ "id": other["id"], "target": { "folderId": folder["id"] } }),
+        1,
+    );
+    let note = expect(
+        "create_note",
+        json!({ "folderId": folder["id"], "kind": "markdown" }),
+        1,
+    );
+    let saved = expect(
+        "update_note_body",
+        json!({ "id": note["id"], "text": "# Blatt", "baseRev": note["bodyRev"] }),
+        1,
+    );
+    expect(
+        "rename_note",
+        json!({ "id": note["id"], "name": "Blatt 3" }),
+        1,
+    );
+    expect(
+        "set_note_kind",
+        json!({ "id": note["id"], "kind": "text" }),
+        1,
+    );
+    expect("move_note", json!({ "id": note["id"], "target": {} }), 1);
+    let item = json!({ "type": "note", "id": note["id"] });
+    expect("trash_note_items", json!({ "items": [item] }), 1);
+    expect("restore_note_items", json!({ "items": [item] }), 1);
+    let empty = expect("create_note", json!({ "kind": "text" }), 1);
+    expect("discard_empty_note", json!({ "id": empty["id"] }), 1);
+    expect("discard_empty_note", json!({ "id": saved["id"] }), 0);
+    expect(
+        "purge_note_items",
+        json!({ "items": [{ "type": "folder", "id": other["id"] }] }),
+        1,
+    );
+    expect("empty_note_trash", json!({}), 1);
+    expect("list_note_folders", json!({}), 0);
+    expect("list_note_items", json!({ "page": { "limit": 10 } }), 0);
+    expect("get_note", json!({ "id": note["id"] }), 0);
+    expect("list_note_trash", json!({}), 0);
+    expect("search_notes", json!({ "text": "blatt", "limit": 10 }), 0);
+    expect("sync_flush", json!({}), 0);
+}
+
+#[test]
+fn external_links_are_limited_to_web_and_mail() {
+    let h = harness();
+    let err = h
+        .invoke("open_external", json!({ "url": "javascript:alert(1)" }))
+        .unwrap_err();
+    assert_eq!(err["kind"], "validation");
+}
+
+#[test]
+fn note_lifecycle_through_ipc() {
+    let h = harness();
+    let folder = h.ok("create_note_folder", json!({ "name": "Uni" }));
+    assert_eq!(folder["parentId"], Value::Null);
+    let note = h.ok(
+        "create_note",
+        json!({ "folderId": folder["id"], "kind": "markdown" }),
+    );
+    assert_eq!(note["name"], "Unbenannt");
+    assert_eq!(note["autoName"], true);
+    assert_eq!(note["bodyRev"], Value::Null);
+    let saved = h.ok(
+        "update_note_body",
+        json!({ "id": note["id"], "text": "# Blatt 3\nAufgabe 1", "baseRev": null }),
+    );
+    assert_eq!(saved["body"], "# Blatt 3\nAufgabe 1");
+    assert_eq!(saved["name"], "Blatt 3");
+    assert!(saved["bodyRev"].is_string());
+    let again = h.ok(
+        "update_note_body",
+        json!({ "id": note["id"], "text": "# Blatt 3\nAufgabe 2", "baseRev": saved["bodyRev"] }),
+    );
+    assert_eq!(again["body"], "# Blatt 3\nAufgabe 2");
+
+    let page = h.ok(
+        "list_note_items",
+        json!({ "folderId": folder["id"], "page": { "limit": 10 } }),
+    );
+    assert_eq!(page["items"][0]["type"], "note");
+    assert_eq!(page["items"][0]["name"], "Blatt 3");
+    assert!(page["items"][0].get("body").is_none(), "Baum ohne Inhalt");
+
+    let hits = h.ok("search_notes", json!({ "text": "aufgabe", "limit": 10 }));
+    assert_eq!(hits[0]["path"], json!(["Uni"]));
+    assert_eq!(hits[0]["snippet"]["offset"], 10);
+
+    let err = h
+        .invoke(
+            "update_note_body",
+            json!({ "id": note["id"], "text": "x", "baseRev": "kaputt" }),
+        )
+        .unwrap_err();
+    assert_eq!(err["kind"], "validation");
+    let err = h
+        .invoke(
+            "get_note",
+            json!({ "id": "00000000-0000-7000-8000-000000000099" }),
+        )
+        .unwrap_err();
+    assert_eq!(err["kind"], "notFound");
+
+    let trashed = h.ok(
+        "trash_note_items",
+        json!({ "items": [{ "type": "folder", "id": folder["id"] }] }),
+    );
+    assert_eq!(trashed.as_array().unwrap().len(), 1);
+    let trash = h.ok("list_note_trash", json!({}));
+    assert_eq!(trash[0]["item"]["type"], "folder");
+    assert_eq!(h.ok("empty_note_trash", json!({})), json!(2));
 }

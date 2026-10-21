@@ -1,5 +1,6 @@
-import type { CoreClient, DueDto, TaskDto, TaskSummaryDto } from "@tasks/core-client";
+import type { CompleteResultDto, CoreClient, DueDto, OccurrenceDto, TaskDto, TaskSummaryDto } from "@tasks/core-client";
 import { toasts } from "../components/toasts.svelte";
+import { localDay, parseIsoDate } from "./local-day";
 
 /** Wie im Core (`BULK_LIMIT_MAX`): größere Auswahlen gehen in mehreren Aufrufen. */
 export const BULK_LIMIT = 2000;
@@ -36,64 +37,138 @@ function failed(what: string, e: unknown) {
 }
 
 /**
- * Löscht in **einem** Aufruf je 2 000 Tasks (Core schreibt Tombstones) und bietet „Rückgängig“ an: Das legt alle
- * Tasks mit allen Feldern in einem Aufruf neu an – mit neuen IDs, an ihrer alten Stelle (alter
- * Sort-Key, ADR-021). Liefert die gelöschten Tasks bzw. `null` bei Fehler (Toast ist gezeigt,
- * nichts ist gelöscht).
+ * „Löschen“ in der UI (ADR-031): legt je 2 000 Tasks in einem Aufruf in den Papierkorb und bietet
+ * „Rückgängig“ an – das holt genau diese Tasks mit **gleichen IDs** an ihren alten Platz zurück.
+ * Liefert die geänderten Tasks bzw. `null` bei Fehler (Toast ist gezeigt, nichts ist geändert).
  */
-export async function deleteManyWithUndo(
-  client: CoreClient,
-  ids: readonly string[],
-  onRestored?: (tasks: TaskDto[]) => void,
-): Promise<TaskDto[] | null> {
-  let deleted: TaskDto[];
+export async function trashManyWithUndo(client: CoreClient, ids: readonly string[]): Promise<TaskDto[] | null> {
+  let trashed: TaskDto[];
   try {
-    deleted = await inChunks(ids, (chunk) => client.deleteTasks(chunk));
+    trashed = await inChunks(ids, (chunk) => client.trashTasks(chunk));
   } catch (e) {
     failed("Nicht gelöscht", e);
     return null;
   }
-  if (deleted.length === 0) return deleted;
+  if (trashed.length === 0) return trashed;
   toasts.show({
-    message: `${subject(deleted)} gelöscht`,
+    // Eine Serie geht als Ganzes (der Verlauf bleibt).
+    message: `${trashed.length === 1 && trashed[0].recurrence ? `Serie „${short(trashed[0].title)}“` : subject(trashed)} in den Papierkorb gelegt`,
     actionLabel: "Rückgängig",
     timeoutMs: 6000,
     onAction: () =>
-      void inChunks(deleted, (chunk) => client.restoreTasks(chunk)).then(
-        (restored) => onRestored?.(restored),
-        (e: unknown) => failed("Wiederherstellen fehlgeschlagen", e),
-      ),
+      void untrashMany(client, trashed.map((t) => t.id)),
   });
-  return deleted;
+  return trashed;
+}
+
+/** Aus dem Papierkorb zurückholen (Rückgängig, „Wiederherstellen“); Fehler als Toast. */
+export async function untrashMany(client: CoreClient, ids: readonly string[]): Promise<TaskDto[] | null> {
+  try {
+    return await inChunks(ids, (chunk) => client.untrashTasks(chunk));
+  } catch (e) {
+    failed("Wiederherstellen fehlgeschlagen", e);
+    return null;
+  }
+}
+
+/** „Wiederherstellen“ im Papierkorb mit Bestätigung im Toast. */
+export async function untrashWithToast(client: CoreClient, ids: readonly string[]): Promise<TaskDto[] | null> {
+  const restored = await untrashMany(client, ids);
+  if (restored && restored.length > 0) toasts.show({ message: `${subject(restored)} wiederhergestellt` });
+  return restored;
+}
+
+/** Endgültig löschen (nur aus dem Papierkorb, nach Bestätigung); Fehler als Toast. */
+export async function purgeMany(client: CoreClient, tasks: readonly { id: string; title: string }[]): Promise<number | null> {
+  let n = 0;
+  try {
+    for (const chunk of chunks(tasks)) n += await client.purgeTasks(chunk.map((t) => t.id));
+  } catch (e) {
+    failed("Nicht gelöscht", e);
+    return null;
+  }
+  if (n > 0) toasts.show({ message: `${n === 1 && tasks.length === 1 ? subject(tasks) : `${n} ${n === 1 ? "Task" : "Tasks"}`} endgültig gelöscht` });
+  return n;
+}
+
+const NEXT = new Intl.DateTimeFormat("de-DE", { weekday: "short", day: "numeric", month: "short" });
+
+/** „Fr, 31. Okt.“ für den Toast nach dem Abhaken einer Serie. */
+export function nextTimeLabel(due: DueDto): string {
+  const day = due.kind === "date" ? parseIsoDate(due.date) : new Date(due.at);
+  return NEXT.format(day).replace(/^(\p{L}+)\./u, "$1");
 }
 
 /**
- * Hakt ab bzw. öffnet wieder – ein Aufruf – und bietet „Rückgängig“ für genau die geänderten Tasks.
- * Liefert sie bzw. `null` bei Fehler (Toast ist gezeigt).
+ * Hakt ab bzw. öffnet wieder – ein Aufruf je 2 000 – und bietet „Rückgängig“ für genau die geänderten
+ * Tasks. Serien (ADR-028) rücken vor und bekommen einen Verlaufseintrag; „Rückgängig“ nimmt beides
+ * zurück (`undoOccurrence`). Ein Toast für alles. Liefert die geänderten Tasks (ohne Verlaufseinträge)
+ * bzw. `null` bei Fehler (Toast ist gezeigt).
  */
 export async function completeManyWithUndo(
   client: CoreClient,
   ids: readonly string[],
   done: boolean,
 ): Promise<TaskDto[] | null> {
-  let changed: TaskDto[];
+  const result: CompleteResultDto = { tasks: [], occurrences: [] };
   try {
-    changed = await inChunks(ids, (chunk) => client.completeTasks(chunk, done));
+    const today = localDay();
+    for (const chunk of chunks(ids)) {
+      const r = await client.completeTasks(chunk, done, today);
+      result.tasks.push(...r.tasks);
+      result.occurrences.push(...r.occurrences);
+    }
   } catch (e) {
     failed("Nicht gespeichert", e);
     return null;
   }
+  const entries = new Set(result.occurrences.map((o) => o.occurrenceId));
+  const changed = result.tasks.filter((t) => !entries.has(t.id));
   if (changed.length === 0) return changed;
+  const series = new Set(result.occurrences.map((o) => o.seriesId));
+  const plain = changed.filter((t) => !series.has(t.id)).map((t) => t.id);
   toasts.show({
-    message: `${subject(changed)} ${done ? "erledigt" : "wieder geöffnet"}`,
+    message: completedMessage(changed, result.occurrences, done),
     actionLabel: "Rückgängig",
-    onAction: () =>
-      void inChunks(
-        changed.map((t) => t.id),
-        (chunk) => client.completeTasks(chunk, !done),
-      ).catch((e: unknown) => failed("Rückgängig fehlgeschlagen", e)),
+    onAction: () => void undoComplete(client, plain, result.occurrences, done),
   });
   return changed;
+}
+
+function completedMessage(changed: readonly TaskDto[], occurrences: readonly OccurrenceDto[], done: boolean): string {
+  if (!done) return `${subject(changed)} wieder geöffnet`;
+  const [only] = changed;
+  if (changed.length === 1 && occurrences.length === 1) {
+    if (!occurrences[0].occurrenceId) return `„${short(only.title)}“ erledigt – Serie beendet`;
+    if (only.due) return `„${short(only.title)}“ erledigt – nächstes Mal ${nextTimeLabel(only.due)}`;
+  }
+  return `${subject(changed)} erledigt`;
+}
+
+async function undoComplete(client: CoreClient, plain: string[], occurrences: readonly OccurrenceDto[], done: boolean) {
+  try {
+    for (const chunk of chunks(plain)) await client.completeTasks(chunk, !done);
+    for (const o of occurrences) await client.undoOccurrence(o);
+  } catch (e) {
+    failed("Rückgängig fehlgeschlagen", e);
+  }
+}
+
+/** „Dieses Mal überspringen“ (ADR-028) mit Toast; Fehler als Toast. */
+export async function skipWithToast(client: CoreClient, task: { id: string; title: string }): Promise<TaskDto | null> {
+  try {
+    const next = await client.skipOccurrence(task.id, localDay());
+    toasts.show({
+      message:
+        next.status === "done"
+          ? `„${short(task.title)}“ übersprungen – Serie beendet`
+          : `„${short(task.title)}“ übersprungen – nächstes Mal ${next.due ? nextTimeLabel(next.due) : "–"}`,
+    });
+    return next;
+  } catch (e) {
+    failed("Nicht übersprungen", e);
+    return null;
+  }
 }
 
 /**

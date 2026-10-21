@@ -3,6 +3,22 @@
  * Abweichungen von den Richtlinien-Werten nur für Kontrast (≥ 4.5:1 Text, ≥ 3:1 Bedienelemente),
  * geprüft in tokens.test.ts.
  */
+
+/*
+ * Schrift (P5-01, ADR-030): Inter Variable, nur Latin-Subset und Achse `wght` (48 KB WOFF2, OFL – siehe
+ * assets/fonts/OFL.txt), im Bundle für offline. Zeichen außerhalb des Bereichs kommen aus der Systemschrift.
+ */
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("../assets/fonts/inter-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
+    U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
   /* Basis-Palette (eigene Werte, Proton-ähnliche Anmutung) */
   --violet-100: #ede8ff;
@@ -60,17 +76,22 @@
   --radius-lg: 12px;
   --radius-full: 999px;
   --row-height: 36px;
+  /* Lesespalte (P5-02): Kopfzeile und Liste teilen diese Breite, zentriert im Hauptbereich. `--content-inset`
+     ist der Rand links/rechts; `100%` gilt dort, wo die Variable benutzt wird (Breite des umgebenden Blocks). */
+  --content-max: 820px;
+  --content-inset: max(0px, (100% - var(--content-max)) / 2);
   --control-height: 32px;
   --control-height-lg: 36px;
 
   /* Typografie */
-  --font-sans: system-ui, "Inter", "Cantarell", "Segoe UI", Roboto, sans-serif;
+  --font-sans: "Inter Variable", system-ui, "Cantarell", "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "JetBrains Mono", monospace;
   --text-xs: 12px;
   --text-sm: 13px;
   --text-md: 14px;
   --text-lg: 16px;
   --text-xl: 20px;
+  --text-2xl: 24px; /* Ansichtstitel */
   --weight-regular: 400;
   --weight-medium: 500;
   --weight-semibold: 600;
@@ -148,6 +169,13 @@ body {
 
 ::selection {
   background: color-mix(in srgb, var(--violet-500) 28%, transparent);
+}
+
+/* Touch oder schmales Fenster: komfortable Zeilen (P5-09; gleiche Query wie `lib/density.svelte.ts`). */
+@media (pointer: coarse), (max-width: 699px) {
+  :root {
+    --row-height: 44px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

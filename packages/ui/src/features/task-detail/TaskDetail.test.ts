@@ -1,5 +1,5 @@
 import { FakeCoreClient } from "@tasks/core-client";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import App from "../../App.svelte";
@@ -96,7 +96,8 @@ describe("TaskDetail", () => {
   it("sets due, priority and moves to another list", async () => {
     const { client, task, work, user } = await setup();
     await user.click(screen.getByRole("option", { name: /^Bericht/ }));
-    await user.click(await screen.findByRole("button", { name: "Morgen" }));
+    await user.click(await screen.findByRole("button", { name: "Fällig: kein Datum" }));
+    await user.click(within(await screen.findByRole("dialog", { name: "Fälligkeit wählen" })).getByRole("button", { name: "Morgen" }));
     await user.click(screen.getByRole("radio", { name: "Hoch" }));
     const detail = screen.getByRole("region", { name: "Task-Details" });
     await user.click(within(detail).getByRole("button", { name: "Liste: Eingang" }));
@@ -111,37 +112,75 @@ describe("TaskDetail", () => {
     await waitFor(() => expect(screen.queryByRole("option", { name: /^Bericht/ })).toBeNull());
   });
 
-  it("sets a time, keeps it when the day changes and clears it to all-day", async () => {
+  it("sets a time, keeps it when the day changes and clears it to all-day (P5-08)", async () => {
     const { client, task, user } = await setup();
     await user.click(screen.getByRole("option", { name: /^Bericht/ }));
     const detail = await screen.findByRole("region", { name: "Task-Details" });
-    const time = within(detail).getByLabelText("Uhrzeit") as HTMLInputElement;
-    const day = within(detail).getByLabelText("Fällig") as HTMLInputElement;
+    const field = () => detail.querySelector<HTMLButtonElement>("#detail-due")!;
+    const picker = async () => {
+      await user.click(field());
+      return within(await screen.findByRole("dialog", { name: "Fälligkeit wählen" }));
+    };
+    const due = async () => (await client.getTask(task.id)).due;
     const today = isoDate(new Date());
     const tomorrow = isoDate(addDays(new Date(), 1));
 
-    // Uhrzeit ohne Datum → heute um diese Uhrzeit.
-    await fireEvent.change(time, { target: { value: "14:00" } });
+    // Uhrzeit ohne Datum → heute um diese Uhrzeit; das Popover schließt.
+    await user.type((await picker()).getByRole("textbox", { name: "Uhrzeit" }), "14:00{Enter}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Fälligkeit wählen" })).toBeNull());
     await waitFor(async () => {
-      const t = await client.getTask(task.id);
-      expect(t.due?.kind).toBe("dateTime");
-      expect(dueToInputDate(t.due)).toBe(today);
-      expect(dueToInputTime(t.due)).toBe("14:00");
+      const d = await due();
+      expect(d?.kind).toBe("dateTime");
+      expect(dueToInputDate(d)).toBe(today);
+      expect(dueToInputTime(d)).toBe("14:00");
     });
+    expect(document.activeElement).toBe(field());
 
-    // Schnellwahl und Datumsfeld behalten die Uhrzeit.
-    await user.click(within(detail).getByRole("button", { name: "Morgen" }));
-    await waitFor(async () => expect(dueToInputDate((await client.getTask(task.id)).due)).toBe(tomorrow));
-    expect(dueToInputTime((await client.getTask(task.id)).due)).toBe("14:00");
-    await waitFor(() => expect(day.value).toBe(tomorrow));
-    await fireEvent.change(day, { target: { value: "2030-01-15" } });
-    await waitFor(async () => expect(dueToInputDate((await client.getTask(task.id)).due)).toBe("2030-01-15"));
-    expect(dueToInputTime((await client.getTask(task.id)).due)).toBe("14:00");
+    // Schnellwahl und Text behalten die Uhrzeit.
+    await user.click((await picker()).getByRole("button", { name: "Morgen" }));
+    await waitFor(async () => expect(dueToInputDate(await due())).toBe(tomorrow));
+    expect(dueToInputTime(await due())).toBe("14:00");
+    await waitFor(() => expect(field().dataset.value).toBe(tomorrow));
+    await user.type((await picker()).getByRole("textbox", { name: "Fällig am" }), "15.01.2030{Enter}");
+    await waitFor(async () => expect(dueToInputDate(await due())).toBe("2030-01-15"));
+    expect(dueToInputTime(await due())).toBe("14:00");
 
-    // Uhrzeit leeren → ganztägig, Datum bleibt.
-    await waitFor(() => expect(time.value).toBe("14:00"));
-    await fireEvent.change(time, { target: { value: "" } });
-    await waitFor(async () => expect((await client.getTask(task.id)).due).toEqual({ kind: "date", date: "2030-01-15" }));
+    // Raster per Tastatur: gewählter Tag markiert, → einen Tag, Bild↓ einen Monat, Enter wählt.
+    await waitFor(() => expect(field().dataset.value).toBe("2030-01-15"));
+    const p = await picker();
+    const cell = p.getByRole("gridcell", { name: /15\. Januar 2030/ });
+    expect(cell.getAttribute("aria-selected")).toBe("true");
+    cell.focus();
+    await user.keyboard("{ArrowRight}");
+    await waitFor(() => expect(document.activeElement?.getAttribute("data-date")).toBe("2030-01-16"));
+    await user.keyboard("{PageDown}");
+    await waitFor(() => expect(document.activeElement?.getAttribute("data-date")).toBe("2030-02-16"));
+    expect(p.getByRole("grid", { name: "Februar 2030" })).toBeTruthy();
+    await user.keyboard("{Enter}");
+    await waitFor(async () => expect(dueToInputDate(await due())).toBe("2030-02-16"));
+    expect(dueToInputTime(await due())).toBe("14:00");
+
+    // Uhrzeit leeren → ganztägig, Datum bleibt; „Entfernen“ löscht die Fälligkeit.
+    await waitFor(() => expect(field().dataset.time).toBe("14:00"));
+    const time = (await picker()).getByRole("textbox", { name: "Uhrzeit" }) as HTMLInputElement;
+    expect(time.value).toBe("14:00");
+    await user.clear(time);
+    await user.keyboard("{Enter}");
+    await waitFor(async () => expect(await due()).toEqual({ kind: "date", date: "2030-02-16" }));
+    await waitFor(() => expect(field().dataset.time).toBe(""));
+    await user.click((await picker()).getByRole("button", { name: "Entfernen" }));
+    await waitFor(async () => expect(await due()).toBeNull());
+  });
+
+  it("closes the due popover with Esc and keeps the detail open", async () => {
+    const { user } = await setup();
+    await user.click(screen.getByRole("option", { name: /^Bericht/ }));
+    const detail = await screen.findByRole("region", { name: "Task-Details" });
+    await user.click(within(detail).getByRole("button", { name: "Fällig: kein Datum" }));
+    await screen.findByRole("dialog", { name: "Fälligkeit wählen" });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Fälligkeit wählen" })).toBeNull());
+    expect(screen.getByRole("region", { name: "Task-Details" })).toBeTruthy();
   });
 
   it("closes with the close button", async () => {

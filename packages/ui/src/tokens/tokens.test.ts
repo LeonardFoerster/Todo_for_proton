@@ -51,6 +51,7 @@ const TEXT: [string, string][] = [
   ["color-danger", "color-bg-subtle"],
   ["color-danger", "color-bg-selected"],
   ["color-danger", "color-bg-hover"],
+  ["color-danger", "color-danger-subtle"],
   ["color-on-accent", "color-danger-fill"],
   ["color-on-accent", "color-danger-fill-hover"],
   ["color-warning", "color-bg"],
@@ -70,6 +71,8 @@ const CONTROLS: [string, string][] = [
   ["color-focus-outline", "color-bg-raised"],
   ["color-focus-outline", "color-bg-hover"],
   ["color-focus-outline", "color-bg-selected"],
+  // Cursor-Balken auf der Auswahlfläche (Zeile, Karte – P5-04).
+  ["color-accent", "color-bg-selected"],
 ];
 
 describe.each([

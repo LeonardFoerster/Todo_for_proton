@@ -18,6 +18,8 @@ export interface Shortcut {
   when?: () => boolean;
   /** Auch aktiv, während ein modaler Zustand sperrt (z. B. Esc, ?). */
   inModal?: boolean;
+  /** Nur in diesem Bereich aktiv (z. B. Modus `tasks`/`notes`, N5); ohne = überall. */
+  scope?: string;
   /**
    * Auch als Befehl in der Befehlspalette (P4-05), mit diesem Namen („Gehe zu Heute“). Einträge
    * ohne `keys` erscheinen nur dort, nicht in der Kürzel-Übersicht.
@@ -29,9 +31,14 @@ export interface Shortcut {
 const SEQUENCE_TIMEOUT_MS = 1500;
 
 /** Normalisiert ein Ereignis zu `ctrl+alt+shift+meta+taste` (Taste klein, Leertaste = `space`). */
-export function comboOf(e: Pick<KeyboardEvent, "key" | "ctrlKey" | "altKey" | "shiftKey" | "metaKey">): string {
+export function comboOf(
+  e: Pick<KeyboardEvent, "key" | "ctrlKey" | "altKey" | "shiftKey" | "metaKey"> & { code?: string },
+): string {
   let key = e.key === " " ? "space" : e.key.toLowerCase();
   if (key === "del") key = "delete";
+  // Strg+Alt (= AltGr auf deutscher Tastatur) liefert bei Ziffern andere Zeichen („¹“): Ziffer
+  // über die Taste bestimmen (Überschriften-Kürzel, `notes.md` §6.4).
+  if (e.ctrlKey && e.altKey && e.code && /^Digit\d$/.test(e.code)) key = e.code.slice(5);
   const mods = [e.ctrlKey && "ctrl", e.altKey && "alt", e.metaKey && "meta"].filter(Boolean) as string[];
   // Shift bei Nicht-Zeichen-Tasten und Buchstaben (`shift+t`); bei Satzzeichen nicht – „?“ ist je
   // nach Layout schon „shift+ß“ o. ä.
@@ -60,10 +67,21 @@ export class ShortcutRegistry {
   private shortcuts: Shortcut[] = [];
   private pending: { first: string; at: number } | null = null;
   private modal: () => boolean = () => false;
+  private scope: () => string | undefined = () => undefined;
 
   /** Solange `isModal()` gilt (Dialog offen), laufen nur Kürzel mit `inModal`. */
   setModal(isModal: () => boolean): void {
     this.modal = isModal;
+  }
+
+  /** Aktueller Bereich: Kürzel mit anderem `scope` sind inaktiv (auch in der Palette). */
+  setScope(current: () => string | undefined): void {
+    this.scope = current;
+  }
+
+  /** Gilt das Kürzel im aktuellen Bereich? */
+  inScope(s: Shortcut): boolean {
+    return !s.scope || s.scope === this.scope();
   }
 
   /** Registriert Kürzel; gibt die Abmeldung zurück. */
@@ -91,6 +109,7 @@ export class ShortcutRegistry {
       (s) =>
         (!modal || s.inModal) &&
         (!inText || s.inInputs) &&
+        this.inScope(s) &&
         (!s.when || s.when()) &&
         !(isNativeActivation(e) && !s.inInputs),
     );

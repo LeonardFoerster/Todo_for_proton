@@ -123,3 +123,366 @@ fn op_encoding_matches_golden_file() {
     assert_eq!(encoded, golden, "Op-Binärformat hat sich geändert");
     assert_eq!(decode_ops(&golden).unwrap(), sample());
 }
+
+/// Notiz-Ops (ADR-029): neue Entity-Arten, Felder, Werte und `Revise`. Eigene Datei, damit
+/// `ops_v1.bin` unverändert bleibt (alte Segmente sind weiter lesbar).
+fn note_sample() -> Vec<Op> {
+    use todo_core::domain::{NoteFolderId, NoteId, NoteKind};
+    let device: DeviceId = id("0192f0c4-7a3b-7c2d-8e4f-0123456789ab");
+    let note = EntityRef::Note(id::<NoteId>("0192f0c4-7a3b-7c2d-8e4f-000000000011"));
+    let folder_id: NoteFolderId = id("0192f0c4-7a3b-7c2d-8e4f-000000000012");
+    let folder = EntityRef::NoteFolder(folder_id);
+    let stamp = |seq: u64, entity, kind| Op {
+        id: OpId { device, seq },
+        hlc: Hlc {
+            wall_ms: 1_760_000_000_000 + seq,
+            counter: 0,
+            device,
+        },
+        entity,
+        kind,
+    };
+    let folder_fields: FieldMap = [
+        (FieldName::ParentFolder, FieldValue::Folder(None)),
+        (FieldName::Name, FieldValue::Text("Uni".into())),
+        (FieldName::SortKey, FieldValue::SortKey(SortKey::first())),
+        (
+            FieldName::CreatedAt,
+            FieldValue::Timestamp(Timestamp::from_millis(1_760_000_000_000)),
+        ),
+        (FieldName::Trashed, FieldValue::Trashed(None)),
+    ]
+    .into_iter()
+    .collect();
+    let note_fields: FieldMap = [
+        (FieldName::ParentFolder, FieldValue::Folder(Some(folder_id))),
+        (FieldName::AutoName, FieldValue::Bool(true)),
+        (
+            FieldName::NoteKind,
+            FieldValue::NoteKind(NoteKind::Markdown),
+        ),
+        (
+            FieldName::SortKey,
+            FieldValue::SortKey(SortKey::parse("a0V").unwrap()),
+        ),
+        (
+            FieldName::CreatedAt,
+            FieldValue::Timestamp(Timestamp::from_millis(1_760_000_000_001)),
+        ),
+        (FieldName::Trashed, FieldValue::Trashed(None)),
+    ]
+    .into_iter()
+    .collect();
+    let first = OpId { device, seq: 3 };
+    vec![
+        stamp(
+            1,
+            folder,
+            OpKind::Create {
+                fields: folder_fields,
+            },
+        ),
+        stamp(
+            2,
+            note,
+            OpKind::Create {
+                fields: note_fields,
+            },
+        ),
+        stamp(
+            3,
+            note,
+            OpKind::Revise {
+                parents: Vec::new(),
+                text: "# Blatt 3\nAufgabe 1".into(),
+            },
+        ),
+        stamp(
+            4,
+            note,
+            OpKind::Revise {
+                parents: vec![first],
+                text: "# Blatt 3\nAufgabe 1\nAufgabe 2".into(),
+            },
+        ),
+        stamp(
+            5,
+            note,
+            OpKind::Set {
+                field: FieldName::NoteKind,
+                value: FieldValue::NoteKind(NoteKind::Text),
+            },
+        ),
+        stamp(
+            6,
+            folder,
+            OpKind::Set {
+                field: FieldName::Trashed,
+                value: FieldValue::Trashed(Some(Timestamp::from_millis(1_760_000_200_000))),
+            },
+        ),
+        stamp(7, note, OpKind::Delete),
+    ]
+}
+
+#[test]
+fn note_op_encoding_matches_golden_file() {
+    let encoded = encode_ops(&note_sample());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/ops_v1_notes.bin");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(&path, &encoded).unwrap();
+    }
+    let golden = std::fs::read(&path).expect("golden file missing – see module docs");
+    assert_eq!(encoded, golden, "Op-Binärformat hat sich geändert");
+    assert_eq!(decode_ops(&golden).unwrap(), note_sample());
+}
+
+/// Papierkorb für Tasks (ADR-031): `Trashed` jetzt auch an einer Task. Eigene Datei, die
+/// älteren Goldens bleiben unverändert.
+fn task_trash_sample() -> Vec<Op> {
+    let device: DeviceId = id("0192f0c4-7a3b-7c2d-8e4f-0123456789ab");
+    let task = EntityRef::Task(id::<TaskId>("0192f0c4-7a3b-7c2d-8e4f-000000000021"));
+    let stamp = |seq: u64, kind| Op {
+        id: OpId { device, seq },
+        hlc: Hlc {
+            wall_ms: 1_760_000_000_000 + seq,
+            counter: 0,
+            device,
+        },
+        entity: task,
+        kind,
+    };
+    vec![
+        stamp(
+            1,
+            OpKind::Set {
+                field: FieldName::Trashed,
+                value: FieldValue::Trashed(Some(Timestamp::from_millis(1_760_000_000_001))),
+            },
+        ),
+        stamp(
+            2,
+            OpKind::Set {
+                field: FieldName::Trashed,
+                value: FieldValue::Trashed(None),
+            },
+        ),
+    ]
+}
+
+#[test]
+fn task_trash_op_encoding_matches_golden_file() {
+    let encoded = encode_ops(&task_trash_sample());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/ops_v1_task_trash.bin");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(&path, &encoded).unwrap();
+    }
+    let golden = std::fs::read(&path).expect("golden file missing – see module docs");
+    assert_eq!(encoded, golden, "Op-Binärformat hat sich geändert");
+    assert_eq!(decode_ops(&golden).unwrap(), task_trash_sample());
+}
+
+/// Wiederkehrende Tasks (ADR-028): Feld `Recurrence` (Code 17). Eigene Datei.
+fn recurrence_sample() -> Vec<Op> {
+    let device: DeviceId = id("0192f0c4-7a3b-7c2d-8e4f-0123456789ab");
+    let task = EntityRef::Task(id::<TaskId>("0192f0c4-7a3b-7c2d-8e4f-000000000031"));
+    let stamp = |seq: u64, value| Op {
+        id: OpId { device, seq },
+        hlc: Hlc {
+            wall_ms: 1_760_000_000_000 + seq,
+            counter: 0,
+            device,
+        },
+        entity: task,
+        kind: OpKind::Set {
+            field: FieldName::Recurrence,
+            value,
+        },
+    };
+    vec![
+        stamp(
+            1,
+            FieldValue::Recurrence(Some(
+                "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TH;ANCHOR=COMPLETION;UNTIL=2026-12-20"
+                    .parse()
+                    .unwrap(),
+            )),
+        ),
+        stamp(
+            2,
+            FieldValue::Recurrence(Some("FREQ=MONTHLY;BYMONTHDAY=31".parse().unwrap())),
+        ),
+        stamp(3, FieldValue::Recurrence(None)),
+    ]
+}
+
+#[test]
+fn recurrence_op_encoding_matches_golden_file() {
+    let encoded = encode_ops(&recurrence_sample());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/ops_v1_recurrence.bin");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(&path, &encoded).unwrap();
+    }
+    let golden = std::fs::read(&path).expect("golden file missing – see module docs");
+    assert_eq!(encoded, golden, "Op-Binärformat hat sich geändert");
+    assert_eq!(decode_ops(&golden).unwrap(), recurrence_sample());
+}
+
+/// Checkliste (ADR-034): Feld `Checklist` (Code 18). Eigene Datei.
+fn checklist_sample() -> Vec<Op> {
+    use todo_core::domain::{ChecklistItem, ChecklistItemId};
+    let device: DeviceId = id("0192f0c4-7a3b-7c2d-8e4f-0123456789ab");
+    let task = EntityRef::Task(id::<TaskId>("0192f0c4-7a3b-7c2d-8e4f-000000000041"));
+    let item = |n: u8, text: &str, done: bool| {
+        let item_id: ChecklistItemId = id(&format!("0192f0c4-7a3b-7c2d-8e4f-0000000001{n:02}"));
+        ChecklistItem::new(item_id, text, done).unwrap()
+    };
+    let stamp = |seq: u64, value| Op {
+        id: OpId { device, seq },
+        hlc: Hlc {
+            wall_ms: 1_760_000_000_000 + seq,
+            counter: 0,
+            device,
+        },
+        entity: task,
+        kind: OpKind::Set {
+            field: FieldName::Checklist,
+            value,
+        },
+    };
+    vec![
+        stamp(
+            1,
+            FieldValue::Checklist(vec![
+                item(1, "Brot", true),
+                item(2, "Äpfel – 6 Stück", false),
+            ]),
+        ),
+        stamp(2, FieldValue::Checklist(Vec::new())),
+    ]
+}
+
+#[test]
+fn checklist_op_encoding_matches_golden_file() {
+    let encoded = encode_ops(&checklist_sample());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/ops_v1_checklist.bin");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(&path, &encoded).unwrap();
+    }
+    let golden = std::fs::read(&path).expect("golden file missing – see module docs");
+    assert_eq!(encoded, golden, "Op-Binärformat hat sich geändert");
+    assert_eq!(decode_ops(&golden).unwrap(), checklist_sample());
+}
+
+/// Tags (ADR-035): `EntityRef::Tag` (angehängt) mit Name und Anlagezeit; Löschen als Tombstone.
+fn tag_sample() -> Vec<Op> {
+    let device: DeviceId = id("0192f0c4-7a3b-7c2d-8e4f-0123456789ab");
+    let tag = EntityRef::Tag(id::<TagId>("0192f0c4-7a3b-7c2d-8e4f-000000000051"));
+    let stamp = |seq: u64, kind| Op {
+        id: OpId { device, seq },
+        hlc: Hlc {
+            wall_ms: 1_760_000_000_000 + seq,
+            counter: 0,
+            device,
+        },
+        entity: tag,
+        kind,
+    };
+    vec![
+        stamp(
+            1,
+            OpKind::Create {
+                fields: FieldMap::from([
+                    (FieldName::Name, FieldValue::Text("uni".into())),
+                    (
+                        FieldName::CreatedAt,
+                        FieldValue::Timestamp(Timestamp::from_millis(7)),
+                    ),
+                ]),
+            },
+        ),
+        stamp(
+            2,
+            OpKind::Set {
+                field: FieldName::Name,
+                value: FieldValue::Text("studium".into()),
+            },
+        ),
+        stamp(3, OpKind::Delete),
+    ]
+}
+
+#[test]
+fn tag_op_encoding_matches_golden_file() {
+    let encoded = encode_ops(&tag_sample());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/ops_v1_tags.bin");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(&path, &encoded).unwrap();
+    }
+    let golden = std::fs::read(&path).expect("golden file missing – see module docs");
+    assert_eq!(encoded, golden, "Op-Binärformat hat sich geändert");
+    assert_eq!(decode_ops(&golden).unwrap(), tag_sample());
+}
+
+/// Verknüpfungen (ADR-036): `EntityRef::Link` (angehängt), Felder `LinkTask`/`LinkNote` (19/20).
+fn link_sample() -> Vec<Op> {
+    use todo_core::domain::{LinkId, NoteId};
+    let device: DeviceId = id("0192f0c4-7a3b-7c2d-8e4f-0123456789ab");
+    let link = EntityRef::Link(id::<LinkId>("0192f0c4-7a3b-7c2d-8e4f-000000000061"));
+    let stamp = |seq: u64, kind| Op {
+        id: OpId { device, seq },
+        hlc: Hlc {
+            wall_ms: 1_760_000_000_000 + seq,
+            counter: 0,
+            device,
+        },
+        entity: link,
+        kind,
+    };
+    vec![
+        stamp(
+            1,
+            OpKind::Create {
+                fields: FieldMap::from([
+                    (
+                        FieldName::LinkTask,
+                        FieldValue::TaskRef(id("0192f0c4-7a3b-7c2d-8e4f-000000000062")),
+                    ),
+                    (
+                        FieldName::LinkNote,
+                        FieldValue::NoteRef(id::<NoteId>("0192f0c4-7a3b-7c2d-8e4f-000000000063")),
+                    ),
+                    (
+                        FieldName::CreatedAt,
+                        FieldValue::Timestamp(Timestamp::from_millis(9)),
+                    ),
+                ]),
+            },
+        ),
+        stamp(2, OpKind::Delete),
+    ]
+}
+
+#[test]
+fn link_op_encoding_matches_golden_file() {
+    let encoded = encode_ops(&link_sample());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/ops_v1_links.bin");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(&path, &encoded).unwrap();
+    }
+    let golden = std::fs::read(&path).expect("golden file missing – see module docs");
+    assert_eq!(encoded, golden, "Op-Binärformat hat sich geändert");
+    assert_eq!(decode_ops(&golden).unwrap(), link_sample());
+}
+
+/// Eine App ohne Notizen kennt die neuen Varianten nicht: Dekodieren scheitert sauber (das
+/// Segment wird übersprungen), es gibt keinen Absturz. Nachgestellt durch eine Variante, die
+/// auch diese Version nicht kennt.
+#[test]
+fn unknown_variants_are_rejected_without_panic() {
+    let mut bytes = encode_ops(&note_sample()[..1]);
+    // Vec-Länge (1) + OpId (18) + HLC (29) → Varianten-Byte der Entity (NoteFolder = 3).
+    assert_eq!(bytes[48], 3);
+    bytes[48] = 200;
+    assert!(decode_ops(&bytes).is_err());
+}

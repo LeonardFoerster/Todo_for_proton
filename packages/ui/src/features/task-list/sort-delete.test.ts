@@ -61,7 +61,7 @@ describe("deleting", () => {
     await waitFor(async () => expect(await stored(client)).toEqual(["A", "B", "D"]));
     expect(shown()).toEqual(["A", "B", "D"]);
     const toast = await screen.findByRole("status");
-    expect(toast.textContent).toContain("„C“ gelöscht");
+    expect(toast.textContent).toContain("„C“ in den Papierkorb gelegt");
     await user.click(within(toast).getByRole("button", { name: "Rückgängig" }));
     await waitFor(async () => expect(await stored(client)).toEqual(["A", "B", "C", "D"]));
     await waitFor(() => expect(shown()).toEqual(["A", "B", "C", "D"]));

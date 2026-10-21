@@ -5,15 +5,29 @@
   import Menu, { type MenuItem } from "../../components/Menu.svelte";
   import { toasts } from "../../components/toasts.svelte";
   import VirtualList from "../../components/VirtualList.svelte";
-  import { ArrowDown, ArrowUp, CalendarDays, CircleCheck, FolderInput, Hash, Inbox, PanelRight, Plus, Trash, Undo } from "../../icons";
+  import { ArrowDown, ArrowUp, CalendarDays, CircleCheck, FolderInput, Hash, Inbox, PanelRight, Plus, Redo, Trash, Undo } from "../../icons";
   import { useCoreClient } from "../../lib/context";
+  import { density } from "../../lib/density.svelte";
   import type { ListsState } from "../../lib/lists.svelte";
   import { localDay } from "../../lib/local-day";
   import type { Route } from "../../lib/router.svelte";
   import { keepTime, todayPlus } from "../../lib/format-date";
   import { groupEntries, isOverdue, type Entry } from "../../lib/groups";
-  import { completeManyWithUndo, deleteManyWithUndo, moveManyWithUndo, setDuesWithUndo } from "../../lib/task-actions";
-  import { listName, routeIcon, SMART_VIEWS } from "../../lib/views";
+  import {
+    completeManyWithUndo,
+    moveManyWithUndo,
+    purgeMany,
+    setDuesWithUndo,
+    skipWithToast,
+    trashManyWithUndo,
+    untrashWithToast,
+  } from "../../lib/task-actions";
+  import { listName, routeIcon, viewMeta } from "../../lib/views";
+  import { DEFAULT_OPTIONS, isDefault, type ViewOptions } from "../../lib/view-options";
+  import { sortedByDue } from "./view-match";
+  import { readFlag, writeFlag } from "../../lib/preferences";
+  import Welcome from "../onboarding/Welcome.svelte";
+  import PurgeDialog from "./PurgeDialog.svelte";
   import { SelectionState } from "./selection.svelte";
   import { TaskListState, toSummary } from "./task-list-state.svelte";
   import GroupHeading from "./GroupHeading.svelte";
@@ -30,24 +44,55 @@
     onnewtask?: () => void;
     /** Kontextmenü „Fälligkeit…“ für diese Tasks an Position (P4-04). */
     ondue?: (tasks: TaskSummaryDto[], x: number, y: number) => void;
+    /** Sortierung/Filter der Ansicht (N10-01); fest je Instanz (App rendert per `{#key}`). */
+    options?: ViewOptions;
+    /** Erste Schritte (N10-04): „Anmelden…“ öffnet die Einstellungen. */
+    onsettings?: () => void;
   }
 
-  let { route, lists, selectedId = $bindable(null), onopen, onready, onnewtask, ondue }: Props = $props();
+  let {
+    route,
+    lists,
+    selectedId = $bindable(null),
+    onopen,
+    onready,
+    onnewtask,
+    ondue,
+    options = DEFAULT_OPTIONS,
+    onsettings,
+  }: Props = $props();
 
-  const ROW = 36;
+
+  /** Zeilenhöhe: 36 px, bei Touch/schmal 44 px (P5-09). */
+  const ROW = $derived(density.rowHeight);
   const client = useCoreClient();
   // Pro Ansicht eine Instanz (App rendert TaskList per {#key}); Route ist hier fest.
   // svelte-ignore state_referenced_locally
   const view = route;
-  const rows = new TaskListState(client, () => ({ route: view, inboxId: lists.inbox?.id, day: localDay() }));
+  const WELCOME_KEY = "tasks.welcome-dismissed";
+  /** Erste Schritte im leeren Eingang, bis sie ausgeblendet werden (N10-04). */
+  let showWelcome = $state(view.view === "inbox" && !readFlag(WELCOME_KEY));
+  // svelte-ignore state_referenced_locally
+  const opts = options;
+  const rows = new TaskListState(client, () => ({ route: view, inboxId: lists.inbox?.id, day: localDay(), options: opts }));
 
-  /** Reihenfolge ist nur in einer einzelnen Liste änderbar (Sammelansichten mischen Listen). */
-  const sortable = view.view === "inbox" || view.view === "list";
+  /**
+   * Reihenfolge ist nur in einer einzelnen Liste änderbar (Sammelansichten mischen Listen) – und nur
+   * in der eigenen Reihenfolge ohne Filter (N10-01).
+   */
+  const sortable = (view.view === "inbox" || view.view === "list") && isDefault(opts);
   const showListNames = view.view !== "list" && view.view !== "inbox";
   const names = $derived(new Map(lists.lists.map((l) => [l.id, listName(l)])));
   const EmptyIcon = routeIcon(view);
   const emptyText =
-    view.view === "list" ? "Diese Liste ist leer." : (SMART_VIEWS.find((v) => v.kind === view.view)?.empty ?? "");
+    view.view === "list"
+      ? "Diese Liste ist leer."
+      : view.view === "tag"
+        ? "Keine offenen Tasks mit diesem Tag."
+        : viewMeta(view.view).empty;
+  /** Papierkorb (ADR-031): kein Abhaken, kein Detail; Löschen ist endgültig (mit Bestätigung). */
+  const inTrash = view.view === "trash";
+  let purgeConfirm = $state<TaskSummaryDto[] | null>(null);
 
   /** Mehrfachauswahl dieser Ansicht (P0); endet mit der Ansicht. */
   export const selection = new SelectionState();
@@ -57,7 +102,11 @@
   // --- Abschnitte (P4: Heute = Überfällig/Heute, Geplant = nach Tagen) ------------------------
 
   /** Angezeigte Einträge: Tasks, in Heute/Geplant mit Abschnittsüberschriften dazwischen. */
-  const entries = $derived<Entry<TaskSummaryDto>[]>(groupEntries(rows.items, view) ?? rows.items.map(flatEntry));
+  // Abschnitte (Heute/Geplant nach Tagen, Erledigt) nur in der Reihenfolge der Ansicht.
+  const grouped = view.view === "completed" || sortedByDue(view, opts.sort);
+  const entries = $derived<Entry<TaskSummaryDto>[]>(
+    (grouped ? groupEntries(rows.items, view) : null) ?? rows.items.map(flatEntry),
+  );
   /** Flache Ansichten: ein Eintrag je Task-Objekt, über Änderungen hinweg dasselbe (keine Neuanlage je Zeile). */
   const flat = new WeakMap<TaskSummaryDto, Entry<TaskSummaryDto>>();
   function flatEntry(task: TaskSummaryDto): Entry<TaskSummaryDto> {
@@ -65,7 +114,6 @@
     if (!entry) flat.set(task, (entry = { kind: "task", task, dueMode: "full" }));
     return entry;
   }
-  const grouped = view.view === "today" || view.view === "upcoming" || view.view === "completed";
   /** Eintrags-Index je Task-ID, gebaut je `entries`-Array (nicht je Tastendruck). */
   let entryIndex = new Map<string, number>();
   let entryIndexOf: Entry<TaskSummaryDto>[] | null = null;
@@ -131,6 +179,9 @@
   const completedLeave = view.view !== "completed";
 
   async function toggle(task: TaskSummaryDto, done: boolean) {
+    if (inTrash) return;
+    // Serie (ADR-028): Zeile bleibt, Fälligkeit rückt vor; Toast mit „nächstes Mal“ und Rückgängig.
+    if (done && task.recurring) return void (await completeManyWithUndo(client, [task.id], true));
     if (done && completedLeave) moveCursorAway(new Set([task.id]));
     const before = rows.setDone(task.id, done);
     if (done && completedLeave) revealCursor();
@@ -152,7 +203,7 @@
 
   function open(task: TaskSummaryDto) {
     selectedId = task.id;
-    onopen?.(task.id);
+    if (!inTrash) onopen?.(task.id);
   }
 
   // --- Mehrfachauswahl -------------------------------------------------------------------------
@@ -386,15 +437,22 @@
     void focusSelected();
   }
 
-  /** Optimistisch ausblenden, löschen; bei Fehler wieder einblenden (FIX-08). */
+  /** Optimistisch ausblenden, in den Papierkorb legen; bei Fehler wieder einblenden (FIX-08). Im Papierkorb:
+   *  erst bestätigen, dann endgültig löschen. */
   async function deleteMany(targets: readonly TaskSummaryDto[]) {
     if (targets.length === 0) return;
+    if (inTrash) {
+      purgeConfirm = [...targets];
+      return;
+    }
     const ids = targets.map((t) => t.id);
     moveCursorAway(new Set(ids));
     rows.hide(ids);
     revealCursor();
-    if (await deleteManyWithUndo(client, ids)) selection.clear();
-    else await rows.unhide(ids);
+    if (await trashManyWithUndo(client, ids)) {
+      rows.release(ids);
+      selection.clear();
+    } else await rows.unhide(ids);
   }
 
   export async function deleteTask(task: TaskSummaryDto | undefined = rows.items.find((t) => t.id === selectedId)) {
@@ -403,6 +461,40 @@
 
   export async function deleteSelected() {
     await deleteMany(selectedRows());
+  }
+
+  /** Bestätigt: endgültig löschen (optimistisch ausgeblendet, bei Fehler zurück). */
+  async function purge(targets: readonly TaskSummaryDto[]) {
+    const ids = targets.map((t) => t.id);
+    moveCursorAway(new Set(ids));
+    rows.hide(ids);
+    revealCursor();
+    if ((await purgeMany(client, targets)) !== null) {
+      rows.release(ids);
+      selection.clear();
+    } else await rows.unhide(ids);
+  }
+
+  /** „Wiederherstellen“ (Papierkorb): Zeilen verlassen die Ansicht, kommen in ihrer Liste zurück. */
+  async function restore(targets: readonly TaskSummaryDto[]) {
+    if (targets.length === 0) return;
+    const ids = targets.map((t) => t.id);
+    moveCursorAway(new Set(ids));
+    rows.hide(ids);
+    revealCursor();
+    if (await untrashWithToast(client, ids)) {
+      rows.release(ids);
+      selection.clear();
+    } else await rows.unhide(ids);
+  }
+
+  /** Bestätigung „Endgültig löschen“ offen? (App sperrt dann die Kürzel.) */
+  export function dialogOpen(): boolean {
+    return purgeConfirm !== null;
+  }
+
+  export async function restoreSelected() {
+    await restore(selection.active ? selectedRows() : rows.items.filter((t) => t.id === selectedId));
   }
 
   /** Alle ausgewählten abhaken (`done`) bzw. wieder öffnen. */
@@ -462,6 +554,12 @@
 
   function bulkMenuItems(at: { x: number; y: number }): MenuItem[] {
     const n = tasks(selection.count);
+    if (inTrash) {
+      return [
+        { label: `${n} wiederherstellen`, icon: Undo, action: () => void restoreSelected() },
+        { label: `${n} endgültig löschen…`, icon: Trash, shortcut: "Entf", danger: true, action: () => void deleteSelected() },
+      ];
+    }
     const items: MenuItem[] = [];
     if (flags.hasOpen) {
       items.push({ label: `${n} erledigen`, icon: CircleCheck, shortcut: "E", action: () => void completeSelected(true) });
@@ -501,6 +599,12 @@
 
   function menuItems(task: TaskSummaryDto, at: { x: number; y: number }): MenuItem[] {
     if (selection.active && selection.has(task.id)) return bulkMenuItems(at);
+    if (inTrash) {
+      return [
+        { label: "Wiederherstellen", icon: Undo, action: () => void restore([task]) },
+        { label: "Endgültig löschen…", icon: Trash, shortcut: "Entf", danger: true, action: () => void deleteTask(task) },
+      ];
+    }
     const i = rows.items.findIndex((t) => t.id === task.id);
     const done = task.status === "done";
     return [
@@ -512,6 +616,9 @@
         action: () => void toggle(task, !done),
       },
       { label: "Fälligkeit…", icon: CalendarDays, shortcut: "D", action: () => ondue?.([task], at.x, at.y) },
+      ...(task.recurring && !done
+        ? [{ label: "Dieses Mal überspringen", icon: Redo, action: () => void skipWithToast(client, task) }]
+        : []),
       {
         label: "Nach oben",
         icon: ArrowUp,
@@ -560,11 +667,22 @@
 </script>
 
 <div class="task-list" class:dragging={drag !== null}>
-  {#if rows.loaded && rows.items.length === 0}
+  {#if rows.loaded && rows.items.length === 0 && showWelcome}
+    <div class="empty">
+      <Welcome
+        {onnewtask}
+        {onsettings}
+        ondismiss={() => {
+          showWelcome = false;
+          writeFlag(WELCOME_KEY, true);
+        }}
+      />
+    </div>
+  {:else if rows.loaded && rows.items.length === 0}
     <div class="empty">
       <span class="empty-icon"><EmptyIcon size={28} strokeWidth={1.5} aria-hidden="true" /></span>
       <p>{emptyText}</p>
-      {#if onnewtask && view.view !== "completed"}
+      {#if onnewtask && view.view !== "completed" && !inTrash}
         <Button icon={Plus} onclick={onnewtask} title="Neue Task (N)">Neue Task</Button>
       {/if}
     </div>
@@ -592,6 +710,7 @@
           <TaskRow
             {task}
             listName={showListNames ? names.get(task.listId) : undefined}
+            tagNames={lists.tagNames(task.tags)}
             selected={task.id === selectedId}
             selectable={selection.active}
             checked={selection.active && selection.has(task.id)}
@@ -600,12 +719,17 @@
             ontoggle={toggle}
             onopen={rowClick}
             ondelete={(t) => void deleteTask(t)}
+            onrestore={inTrash ? (t) => void restore([t]) : undefined}
             ondragstart={sortable ? startDrag : undefined}
           />
         {/if}
       {/snippet}
       {#snippet overlay()}
         {#if dropLine !== null}<div class="drop-line" style:top="{dropLine - 1}px"></div>{/if}
+      {/snippet}
+      {#snippet footer()}
+        <!-- Schmal: Platz unter der letzten Zeile für den runden Button „Neue Task“ (P5-09). -->
+        {#if density.narrow}<div class="fab-space"></div>{/if}
       {/snippet}
     </VirtualList>
   {/if}
@@ -623,6 +747,16 @@
     onclose={() => (menu = null)}
   />
 {/if}
+{#if purgeConfirm}
+  <PurgeDialog
+    subject={purgeConfirm.length === 1 ? `„${shortTitle(purgeConfirm[0].title)}“` : tasks(purgeConfirm.length)}
+    onconfirm={() => {
+      const targets = purgeConfirm;
+      if (targets) void purge(targets);
+    }}
+    onclose={() => (purgeConfirm = null)}
+  />
+{/if}
 {#if moveMenu}
   <Menu label="Verschieben nach" items={moveItems()} x={moveMenu.x} y={moveMenu.y} onclose={() => (moveMenu = null)} />
 {/if}
@@ -630,7 +764,9 @@
 <style>
   .task-list {
     height: 100%;
-    border-top: 1px solid var(--color-border);
+  }
+  .fab-space {
+    height: 80px;
   }
   .task-list.dragging {
     cursor: grabbing;
@@ -653,8 +789,8 @@
   }
   .drop-line {
     position: absolute;
-    left: var(--space-4);
-    right: var(--space-4);
+    left: calc(var(--content-inset) + var(--space-4));
+    right: calc(var(--content-inset) + var(--space-4));
     height: 2px;
     border-radius: 1px;
     background: var(--color-accent);

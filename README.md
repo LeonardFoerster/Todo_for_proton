@@ -36,6 +36,14 @@ iOS folgen (siehe [Plattformen](#plattformen) und [Roadmap](#roadmap)).
 - Fenster „Neue Task" (`N`) mit natürlicher Eingabe: „Übungsblatt 3 **bis Fr 14:00 !1 @uni**" erkennt Tag
   (`morgen`, `Fr`, `24.10.`), Uhrzeit, Priorität (`!1`–`!3`) und Liste; dazu Chips zum Nachjustieren, optionale Notiz
   und „Weitere anlegen" für mehrere Tasks am Stück.
+- **Task ↔ Notiz:** Notizen an eine Task hängen (Suche oder „Neue Notiz zu dieser Task") und aus einer Notiz heraus
+  Tasks anlegen; beide Seiten zeigen die Verknüpfung.
+- **Tags und Checklisten:** „Blatt 3 **#uni #analysis**" vergibt Tags (eigene Ansicht je Tag in der Seitenleiste,
+  Umbenennen, Löschen); im Detail eine Checkliste mit Punkten zum Abhaken („2/5" in der Zeile).
+- **Wiederkehrende Tasks:** „Blatt **jeden Fr**", „Gießen **alle 3 Tage nach Erledigung**", „Miete **jeden 1.**",
+  „Standup **werktags**", optional „bis 20.12.". Abhaken legt einen Eintrag unter „Erledigt" an und schiebt die Task
+  auf das nächste Vorkommen (verpasste werden übersprungen); „Dieses Mal überspringen" und Rückgängig gibt es auch.
+  Hinweis: Serien brauchen auf **allen** Geräten diese Version – ältere Apps überspringen die neuen Änderungen.
 - Ansichten: **Eingang, Heute, Geplant, Alle Tasks, Erledigt** – plus eigene Listen. Abgehakte Tasks verlassen die
   offenen Ansichten und stehen unter „Erledigt"; jede Aktion lässt sich im Hinweis unten links **rückgängig** machen.
 - Manuelle Reihenfolge per Drag & Drop oder `Alt+↑/↓`.
@@ -53,6 +61,16 @@ iOS folgen (siehe [Plattformen](#plattformen) und [Roadmap](#roadmap)).
 - Auswahlmodus mit `Strg`/`Umschalt`+Klick, `Umschalt+↑/↓` oder `Strg+A` (ganze Ansicht).
 - Sammelaktionen für die Auswahl: erledigen, verschieben, löschen, als Block umsortieren – jeweils als **ein**
   Vorgang mit Rückgängig.
+
+**Notes**
+- Zweiter Modus neben den Tasks (`Strg+1` / `Strg+2` oder der Umschalter oben in der Seitenleiste): Notizen als
+  `.md` oder `.txt` in einem Ordnerbaum, beliebig tief, mit Drag & Drop, Papierkorb (30 Tage) und Rückgängig.
+- Editor mit Autosave, Markdown-Hilfen (Listen fortsetzen, Einrücken, `Strg+B/I/L`, Überschriften, Checkboxen),
+  Vorschau (`Strg+E`) mit anklickbaren Checklisten, Zen-Modus und Wort-/Zeichenzählung.
+- Die Befehlspalette (`Strg+K`) durchsucht Tasks und Notizen (Namen und Inhalt) gemeinsam.
+- Gleichzeitige Bearbeitung auf mehreren Geräten wird zeilenweise zusammengeführt; ändern zwei Geräte dieselbe
+  Stelle, bleibt die andere Fassung als Kopie „… (Konflikt TT.MM.JJJJ)" erhalten – nichts geht verloren.
+- Desktop: „Ordner importieren…" übernimmt einen vorhandenen Notizordner (z. B. ein Obsidian-Vault) als Kopie.
 
 **Allgemein**
 - Komplett per Tastatur bedienbar (Übersicht mit `?`), Fokus immer sichtbar, Screenreader-Beschriftungen.
@@ -82,6 +100,11 @@ gebaut.
   Drive; die Geräte führen die Änderungen feldweise zusammen (Hybrid Logical Clocks, „letzte Änderung je Feld gewinnt",
   Löschen gewinnt gegen Bearbeiten, Reihenfolge per Fractional Index). Zwei Geräte, die offline unterschiedliche
   Felder derselben Task ändern, behalten beide Änderungen. Snapshots halten das Protokoll klein.
+- **Notizen** synchronisieren als Folge unveränderlicher Revisionen; parallele Änderungen werden zeilenweise
+  zusammengeführt (diff3), Überschneidungen landen in einer Konfliktkopie.
+- **Alle Geräte gleichzeitig aktualisieren:** Neue Versionen können neue Arten von Änderungen schreiben (z. B. die
+  Notizen ab N5), die ältere Versionen nicht lesen können. Ein Gerät mit alter Version stockt dann beim Sync, bis
+  es aktualisiert ist – lokale Daten bleiben erhalten.
 - **Zeitnah:** Nach einer Änderung wird nach ~1,5 s hochgeladen, bei vielen Änderungen hintereinander spätestens nach
   5 s; andere Geräte holen beim Fokuswechsel und periodisch ab. Keine Timer im Leerlauf, Backoff bei Fehlern.
 - **Ende-zu-Ende-verschlüsselt:** Zusätzlich zu Protons eigener Verschlüsselung sind alle Sync-Daten mit
@@ -136,6 +159,12 @@ cd Todo_for_proton
 `install.sh` installiert fehlende Systempakete per `pacman` (fragt nach dem sudo-Passwort), die Rust-Toolchain aus
 `rust-toolchain.toml` und die JavaScript-Abhängigkeiten, baut die App und installiert sie wie `just desktop-install`.
 Erneut ausführen ist unschädlich und aktualisiert die App; `--noconfirm` reicht an `pacman` durch.
+
+### Als Paket (Arch Linux, AUR-Entwurf)
+
+`packaging/aur/PKGBUILD` baut `tasks-app-git` aus dem Git-Stand (`makepkg -si` in diesem Ordner). Es installiert
+`/usr/bin/tasks-app`, den Starter und die Icons; Daten bleiben in `~/.local/share/dev.tasks.app`. Im AUR ist es noch
+nicht veröffentlicht (Lizenz steht noch aus).
 
 ### Voraussetzungen
 
@@ -203,7 +232,7 @@ Planungs- und Entscheidungsdokumente (ADRs, Roadmap) stehen in `development/`.
 | Aktion | Kürzel |
 |---|---|
 | Neue Task | `N`, `Strg+N` |
-| Im Fenster „Neue Task": Fälligkeit / Priorität / Liste / Notiz | `Alt+D` / `Alt+P` / `Alt+L` / `Alt+N` |
+| Im Fenster „Neue Task": Fälligkeit / Wiederholung / Priorität / Tags / Liste / Notiz | `Alt+D` / `Alt+W` / `Alt+P` / `Alt+T` / `Alt+L` / `Alt+N` |
 | Navigieren / Öffnen | `↑/↓` bzw. `J/K` / `Enter` |
 | Erledigt umschalten / Löschen | `Leertaste` bzw. `E` / `Entf` |
 | Umsortieren | `Alt+↑/↓` |
@@ -211,6 +240,10 @@ Planungs- und Entscheidungsdokumente (ADRs, Roadmap) stehen in `development/`.
 | Board: Spalte wechseln / Karte in Nachbarspalte | `←/→` bzw. `H/L` / `Alt+←/→` |
 | Auswahl: alle / erweitern / umschalten | `Strg+A` / `Umschalt+↑/↓` / `X` |
 | Ansichten | `G` dann `I` (Eingang), `T` (Heute), `U` (Geplant) |
+| Modus Tasks / Notes | `Strg+1` / `Strg+2` |
+| Befehlspalette und Suche (Tasks + Notizen) | `Strg+K` |
+| Notes: neue Notiz / Umbenennen / Verschieben | `N` bzw. `Strg+N` / `F2` / `M` |
+| Notes: Bearbeiten ↔ Vorschau / Zen | `Strg+E` / `Strg+Umschalt+F` |
 | Alle Kürzel | `?` |
 
 ## Performance
@@ -225,13 +258,15 @@ Budgets (Release-Build, Mittelklasse-Laptop) und gemessene Werte:
 | Abhaken bis Neuzeichnen | < 16 ms | nächster Frame |
 | Kanban mit 10 Listen à 200 Tasks zeichnen | – | ~75 ms (Debug-Build) |
 | 1 000 Tasks löschen bzw. verschieben (eine Aktion) | < 50 ms | 17–28 ms |
+| Start im Modus Notes / Mehrspeicher | < 400 ms | 355 ms / +2 MB |
+| Notes: Tippen bis Neuzeichnen | < 16 ms | nächster Frame (1 ms Arbeit) |
 
 Listen sind virtualisiert, der Austausch zwischen Oberfläche und Kern ist grob-granular (Seiten statt einzelner Tasks,
 eine Sammelaktion = ein Aufruf), und im Leerlauf läuft nichts.
 
 ## Roadmap
 
-1. **Linux-Desktop** – ✅ Prototyp fertig (lokal, Sync, Listen, Kanban, Mehrfachauswahl).
+1. **Linux-Desktop** – ✅ Prototyp fertig (lokal, Sync, Listen, Kanban, Mehrfachauswahl); ✅ Modus Notes.
 2. **Abschluss Prototyp** – Live-Abnahme über Proton Drive, kleinere Nachträge.
 3. **Web-App** – Kern als WebAssembly im Web Worker, Speicher im Browser, Sync aus dem Browser.
 4. **Windows** – Tauri 2 mit WebView2, Installer, Schlüsselablage im Windows-Anmeldeinformationsspeicher.

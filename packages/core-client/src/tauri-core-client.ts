@@ -3,7 +3,7 @@ import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { CoreClient } from "./core-client";
 import { CoreClientError } from "./errors";
-import type { ChangedEventDto, SyncStatusDto } from "./types";
+import type { ChangedEventDto, NoteConflictDto, SyncStatusDto } from "./types";
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   try {
@@ -38,22 +38,76 @@ export class TauriCoreClient implements CoreClient {
   createTask: CoreClient["createTask"] = (input) => invoke("create_task", { input });
   getTask: CoreClient["getTask"] = (id) => invoke("get_task", { id });
   updateTask: CoreClient["updateTask"] = (id, patch) => invoke("update_task", { id, patch });
+  linkTaskNote: CoreClient["linkTaskNote"] = (task, note) => invoke("link_task_note", { task, note });
+  unlink: CoreClient["unlink"] = (id) => invoke("unlink", { id });
+  taskLinks: CoreClient["taskLinks"] = (task) => invoke("task_links", { task });
+  noteLinks: CoreClient["noteLinks"] = (note) => invoke("note_links", { note });
+  countTasks: CoreClient["countTasks"] = (query) => invoke("count_tasks", { query });
+  mergeTaskLists: CoreClient["mergeTaskLists"] = (source, target) => invoke("merge_task_lists", { source, target });
+  listTags: CoreClient["listTags"] = () => invoke("list_tags");
+  ensureTag: CoreClient["ensureTag"] = (name) => invoke("ensure_tag", { name });
+  renameTag: CoreClient["renameTag"] = (id, name) => invoke("rename_tag", { id, name });
+  deleteTag: CoreClient["deleteTag"] = (id) => invoke("delete_tag", { id });
   completeTask: CoreClient["completeTask"] = (id, done) => invoke("complete_task", { id, done });
   moveTask: CoreClient["moveTask"] = (id, target) => invoke("move_task", { id, target });
   deleteTask: CoreClient["deleteTask"] = (id) => invoke("delete_task", { id });
   listTasks: CoreClient["listTasks"] = (query, page) => invoke("list_tasks", { query, page });
   searchTasks: CoreClient["searchTasks"] = (text, limit) => invoke("search_tasks", { text, limit });
-  completeTasks: CoreClient["completeTasks"] = (ids, done) => invoke("complete_tasks", { ids, done });
+  completeTasks: CoreClient["completeTasks"] = (ids, done, today) => invoke("complete_tasks", { ids, done, today: today ?? null });
+  skipOccurrence: CoreClient["skipOccurrence"] = (id, today) => invoke("skip_occurrence", { id, today: today ?? null });
+  undoOccurrence: CoreClient["undoOccurrence"] = (occurrence) => invoke("undo_occurrence", { occurrence });
   setDues: CoreClient["setDues"] = (dues) => invoke("set_dues", { dues });
   deleteTasks: CoreClient["deleteTasks"] = (ids) => invoke("delete_tasks", { ids });
   moveTasks: CoreClient["moveTasks"] = (ids, target) => invoke("move_tasks", { ids, target });
   restoreTasks: CoreClient["restoreTasks"] = (tasks) => invoke("restore_tasks", { tasks });
+  background: CoreClient["background"] = {
+    get: () => invoke("background_settings"),
+    set: (settings) => invoke("set_background_settings", { settings }),
+    onShellAction: (cb) => {
+      const offOpen = subscribe<string>("app://open-task", (taskId) => cb({ kind: "openTask", taskId }));
+      const offNew = subscribe<null>("app://new-task", () => cb({ kind: "newTask" }));
+      return () => {
+        offOpen();
+        offNew();
+      };
+    },
+  };
+  data: CoreClient["data"] = {
+    exportAll: (today) => invoke("export_data", { today }),
+    importFile: () => invoke("import_data"),
+  };
+  trashTasks: CoreClient["trashTasks"] = (ids) => invoke("trash_tasks", { ids });
+  untrashTasks: CoreClient["untrashTasks"] = (ids) => invoke("untrash_tasks", { ids });
+  purgeTasks: CoreClient["purgeTasks"] = (ids) => invoke("purge_tasks", { ids });
+  emptyTaskTrash: CoreClient["emptyTaskTrash"] = () => invoke("empty_task_trash");
+
+  notes: CoreClient["notes"] = {
+    listFolders: () => invoke("list_note_folders"),
+    listItems: (folderId, page) => invoke("list_note_items", { folderId, page }),
+    get: (id) => invoke("get_note", { id }),
+    create: (folderId, kind) => invoke("create_note", { folderId, kind }),
+    updateBody: (id, text, baseRev) => invoke("update_note_body", { id, text, baseRev }),
+    discardIfEmpty: (id) => invoke("discard_empty_note", { id }),
+    rename: (id, name) => invoke("rename_note", { id, name }),
+    setKind: (id, kind) => invoke("set_note_kind", { id, kind }),
+    move: (id, target) => invoke("move_note", { id, target }),
+    createFolder: (parentId, name) => invoke("create_note_folder", { parentId, name }),
+    renameFolder: (id, name) => invoke("rename_note_folder", { id, name }),
+    moveFolder: (id, target) => invoke("move_note_folder", { id, target }),
+    trash: (items) => invoke("trash_note_items", { items }),
+    restore: (items) => invoke("restore_note_items", { items }),
+    purge: (items) => invoke("purge_note_items", { items }),
+    emptyTrash: () => invoke("empty_note_trash"),
+    listTrash: () => invoke("list_note_trash"),
+    search: (text, limit) => invoke("search_notes", { text, limit }),
+    onConflict: (cb) => subscribe<NoteConflictDto[]>("core://note-conflicts", cb),
+    importFolder: () => invoke("import_notes_folder"),
+  };
 
   auth: CoreClient["auth"] = {
     info: () => invoke("auth_info"),
     current: () => invoke("auth_current"),
     beginLogin: () => invoke("auth_begin_login"),
-    openBrowser: (flow) => invoke("auth_open_browser", { flow }),
     pollLogin: (flow) => invoke("auth_poll_login", { flow }),
     cancelLogin: (flow) => invoke("auth_cancel_login", { flow }),
     logout: () => invoke("auth_logout"),
@@ -62,12 +116,22 @@ export class TauriCoreClient implements CoreClient {
   sync: CoreClient["sync"] = {
     status: () => invoke("sync_status"),
     now: () => invoke("sync_now"),
+    flush: () => invoke("sync_flush"),
   };
 
   ready: CoreClient["ready"] = () => invoke("app_ready");
 
   /** Nur Desktop-Shell: Netzwerkwechsel der WebView an den Sync-Scheduler. */
   setOnline = (online: boolean): Promise<void> => invoke("set_online", { online });
+
+  openExternal = (url: string): Promise<void> => invoke("open_external", { url });
+
+  onCloseRequested = (cb: () => Promise<void>) =>
+    subscribe("app://close-requested", () => {
+      void cb()
+        .catch(() => undefined)
+        .finally(() => void invoke("close_ready").catch(() => undefined));
+    });
 
   onChange = (cb: (e: ChangedEventDto) => void) => subscribe("core://changed", cb);
   onSyncStatus = (cb: (s: SyncStatusDto) => void) => subscribe("core://sync-status", cb);
@@ -79,4 +143,8 @@ export const devSelftest = {
   suites: (): Promise<string | null> => invoke("dev_selftest"),
   /** Zeile auf stdout der App; `exit` beendet sie danach. */
   report: (line: string, exit = false): Promise<void> => invoke("dev_selftest_report", { line, exit }),
+  /** Bisher gemeldete Erinnerungen (ADR-033). */
+  remindersFired: (): Promise<{ taskId: string; title: string; at: number }[]> => invoke("dev_reminders_fired"),
+  /** Fenster schließen wie mit dem X (Hintergrundbetrieb prüfen). */
+  closeWindow: (): Promise<void> => invoke("dev_close_window"),
 };

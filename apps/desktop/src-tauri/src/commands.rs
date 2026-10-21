@@ -8,14 +8,32 @@
 //!   (abhaken/öffnen), `move_task` (Liste/Reihenfolge), `delete_task`
 //! - Sammelaktionen (ein Aufruf = eine Meldung): `complete_tasks`, `delete_tasks`, `move_tasks`,
 //!   `restore_tasks`, `set_dues`
+//! - Serien (ADR-028): `skip_occurrence`, `undo_occurrence`
+//! - Papierkorb der Tasks (ADR-031): `trash_tasks`, `untrash_tasks`, `purge_tasks`, `empty_task_trash`
+//! - Notizen (ADR-029): `create_note`, `discard_empty_note` (nur wenn verworfen), `rename_note`,
+//!   `set_note_kind`, `move_note`, `create_note_folder`, `rename_note_folder`, `move_note_folder`,
+//!   `trash_note_items`, `restore_note_items`, `purge_note_items`, `empty_note_trash`
+//! - Daten (ADR-032): `import_data` (nur wenn eingespielt; `export_data` liest nur)
+//! - **Inhalt:** `update_note_body` meldet `state.sync.content_change()` statt `local_change()`
+//!   (Debounce 3 s, höchstens 30 s, damit Tippen nicht alle paar Sekunden den ganzen Text lädt).
+//!   `sync_flush` lädt sofort hoch, wenn etwas wartet (Notiz- oder Moduswechsel in der UI).
 //!
-//! Lesende Commands (`list_*`, `get_task`, `search_tasks`, `ensure_inbox`, `auth_*`, `sync_*`,
-//! `app_ready`) melden nichts. Nachweis: `tests/commands.rs` (`only_writing_commands_trigger_a_sync`).
+//! Lesende Commands (`list_*`, `get_*`, `search_*`, `ensure_inbox`, `auth_*`, `sync_status`,
+//! `sync_now`, `app_ready`, `export_data`) und die gerätelokalen Einstellungen (`background_settings`,
+//! `set_background_settings`, ADR-033) melden nichts. Nachweis: `tests/commands.rs`
+//! (`only_writing_commands_trigger_a_sync`).
 
 use tauri::State;
-use todo_core::api::dto::{
-    CreateTaskDto, MoveListTargetDto, MoveTargetDto, PageDto, PageRequestDto, TaskDto, TaskDueDto,
-    TaskListDto, TaskPatchDto, TaskQueryDto, TaskSummaryDto,
+use todo_core::api::{
+    dto::{
+        CompleteResultDto, CreateTaskDto, LocalDayDto, MoveListTargetDto, MoveTargetDto,
+        OccurrenceDto, PageDto, PageRequestDto, TagDto, TaskDto, TaskDueDto, TaskListDto,
+        TaskPatchDto, TaskQueryDto, TaskSummaryDto,
+    },
+    note_dto::{
+        ImportReportDto, LinkDto, LinkedNoteDto, LinkedTaskDto, NoteDto, NoteFolderDto, NoteHitDto,
+        NoteItemDto, NoteKindDto, NoteTargetDto, NoteTrashEntryDto, NoteTreeItemDto,
+    },
 };
 use todo_sync::SchedulerEvent;
 
@@ -57,6 +75,66 @@ pub async fn rename_task_list(
     Ok(list)
 }
 
+// --- Verknüpfungen Task ↔ Notiz (ADR-036) ----------------------------------------------------
+
+#[tauri::command]
+pub async fn link_task_note(
+    state: State<'_, AppState>,
+    task: String,
+    note: String,
+) -> Result<LinkDto> {
+    let link = state.api.link_task_note(task, note).await?;
+    state.sync.local_change();
+    Ok(link)
+}
+
+#[tauri::command]
+pub async fn unlink(state: State<'_, AppState>, id: String) -> Result<()> {
+    state.api.unlink(id).await?;
+    state.sync.local_change();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn task_links(state: State<'_, AppState>, task: String) -> Result<Vec<LinkedNoteDto>> {
+    Ok(state.api.task_links(task).await?)
+}
+
+#[tauri::command]
+pub async fn note_links(state: State<'_, AppState>, note: String) -> Result<Vec<LinkedTaskDto>> {
+    Ok(state.api.note_links(note).await?)
+}
+
+// --- Tags (ADR-035) ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn list_tags(state: State<'_, AppState>) -> Result<Vec<TagDto>> {
+    Ok(state.api.list_tags().await?)
+}
+
+/// Findet oder legt an (`#` vorn fällt weg).
+#[tauri::command]
+pub async fn ensure_tag(state: State<'_, AppState>, name: String) -> Result<TagDto> {
+    let tag = state.api.ensure_tag(name).await?;
+    state.sync.local_change();
+    Ok(tag)
+}
+
+#[tauri::command]
+pub async fn rename_tag(state: State<'_, AppState>, id: String, name: String) -> Result<TagDto> {
+    let tag = state.api.rename_tag(id, name).await?;
+    state.sync.local_change();
+    Ok(tag)
+}
+
+/// Liefert die Zahl der Tasks, die ihn trugen.
+#[tauri::command]
+pub async fn delete_tag(state: State<'_, AppState>, id: String) -> Result<u32> {
+    let n = state.api.delete_tag(id).await?;
+    state.sync.local_change();
+    Ok(n)
+}
+
 #[tauri::command]
 pub async fn move_task_list(
     state: State<'_, AppState>,
@@ -71,6 +149,18 @@ pub async fn move_task_list(
 #[tauri::command]
 pub async fn delete_task_list(state: State<'_, AppState>, id: String) -> Result<u32> {
     let moved = state.api.delete_task_list(id).await?;
+    state.sync.local_change();
+    Ok(moved)
+}
+
+/// Gleichnamige Listen zusammenführen (ADR-020).
+#[tauri::command]
+pub async fn merge_task_lists(
+    state: State<'_, AppState>,
+    source: String,
+    target: String,
+) -> Result<u32> {
+    let moved = state.api.merge_task_lists(source, target).await?;
     state.sync.local_change();
     Ok(moved)
 }
@@ -132,10 +222,34 @@ pub async fn complete_tasks(
     state: State<'_, AppState>,
     ids: Vec<String>,
     done: bool,
-) -> Result<Vec<TaskDto>> {
-    let tasks = state.api.complete_tasks(ids, done).await?;
+    today: Option<LocalDayDto>,
+) -> Result<CompleteResultDto> {
+    let result = state.api.complete_tasks(ids, done, today).await?;
     state.sync.local_change();
-    Ok(tasks)
+    Ok(result)
+}
+
+/// „Dieses Mal überspringen“ (Serie, ADR-028).
+#[tauri::command]
+pub async fn skip_occurrence(
+    state: State<'_, AppState>,
+    id: String,
+    today: Option<LocalDayDto>,
+) -> Result<TaskDto> {
+    let task = state.api.skip_occurrence(id, today).await?;
+    state.sync.local_change();
+    Ok(task)
+}
+
+/// Rückgängig nach dem Abhaken einer Serie.
+#[tauri::command]
+pub async fn undo_occurrence(
+    state: State<'_, AppState>,
+    occurrence: OccurrenceDto,
+) -> Result<TaskDto> {
+    let task = state.api.undo_occurrence(occurrence).await?;
+    state.sync.local_change();
+    Ok(task)
 }
 
 #[tauri::command]
@@ -143,6 +257,34 @@ pub async fn delete_tasks(state: State<'_, AppState>, ids: Vec<String>) -> Resul
     let tasks = state.api.delete_tasks(ids).await?;
     state.sync.local_change();
     Ok(tasks)
+}
+
+#[tauri::command]
+pub async fn trash_tasks(state: State<'_, AppState>, ids: Vec<String>) -> Result<Vec<TaskDto>> {
+    let tasks = state.api.trash_tasks(ids).await?;
+    state.sync.local_change();
+    Ok(tasks)
+}
+
+#[tauri::command]
+pub async fn untrash_tasks(state: State<'_, AppState>, ids: Vec<String>) -> Result<Vec<TaskDto>> {
+    let tasks = state.api.untrash_tasks(ids).await?;
+    state.sync.local_change();
+    Ok(tasks)
+}
+
+#[tauri::command]
+pub async fn purge_tasks(state: State<'_, AppState>, ids: Vec<String>) -> Result<u32> {
+    let n = state.api.purge_tasks(ids).await?;
+    state.sync.local_change();
+    Ok(n)
+}
+
+#[tauri::command]
+pub async fn empty_task_trash(state: State<'_, AppState>) -> Result<u32> {
+    let n = state.api.empty_task_trash().await?;
+    state.sync.local_change();
+    Ok(n)
 }
 
 #[tauri::command]
@@ -182,6 +324,12 @@ pub async fn list_tasks(
     Ok(state.api.list_tasks(query, page).await?)
 }
 
+/// Anzahl der Tasks einer Abfrage (Zähler, FIX-04).
+#[tauri::command]
+pub async fn count_tasks(state: State<'_, AppState>, query: TaskQueryDto) -> Result<u32> {
+    Ok(state.api.count_tasks(query).await?)
+}
+
 #[tauri::command]
 pub async fn search_tasks(
     state: State<'_, AppState>,
@@ -189,6 +337,169 @@ pub async fn search_tasks(
     limit: u32,
 ) -> Result<Vec<TaskSummaryDto>> {
     Ok(state.api.search_tasks(text, limit).await?)
+}
+
+// --- Notizen (ADR-029) --------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn list_note_folders(state: State<'_, AppState>) -> Result<Vec<NoteFolderDto>> {
+    Ok(state.api.list_note_folders().await?)
+}
+
+#[tauri::command]
+pub async fn list_note_items(
+    state: State<'_, AppState>,
+    folder_id: Option<String>,
+    page: PageRequestDto,
+) -> Result<PageDto<NoteTreeItemDto>> {
+    Ok(state.api.list_note_items(folder_id, page).await?)
+}
+
+#[tauri::command]
+pub async fn get_note(state: State<'_, AppState>, id: String) -> Result<NoteDto> {
+    Ok(state.api.get_note(id).await?)
+}
+
+#[tauri::command]
+pub async fn create_note(
+    state: State<'_, AppState>,
+    folder_id: Option<String>,
+    kind: NoteKindDto,
+) -> Result<NoteDto> {
+    let note = state.api.create_note(folder_id, kind).await?;
+    state.sync.local_change();
+    Ok(note)
+}
+
+#[tauri::command]
+pub async fn update_note_body(
+    state: State<'_, AppState>,
+    id: String,
+    text: String,
+    base_rev: Option<String>,
+) -> Result<NoteDto> {
+    let note = state.api.update_note_body(id, text, base_rev).await?;
+    state.sync.content_change();
+    Ok(note)
+}
+
+#[tauri::command]
+pub async fn discard_empty_note(state: State<'_, AppState>, id: String) -> Result<bool> {
+    let discarded = state.api.discard_empty_note(id).await?;
+    if discarded {
+        state.sync.local_change();
+    }
+    Ok(discarded)
+}
+
+#[tauri::command]
+pub async fn rename_note(state: State<'_, AppState>, id: String, name: String) -> Result<NoteDto> {
+    let note = state.api.rename_note(id, name).await?;
+    state.sync.local_change();
+    Ok(note)
+}
+
+#[tauri::command]
+pub async fn set_note_kind(
+    state: State<'_, AppState>,
+    id: String,
+    kind: NoteKindDto,
+) -> Result<NoteDto> {
+    let note = state.api.set_note_kind(id, kind).await?;
+    state.sync.local_change();
+    Ok(note)
+}
+
+#[tauri::command]
+pub async fn move_note(
+    state: State<'_, AppState>,
+    id: String,
+    target: NoteTargetDto,
+) -> Result<NoteDto> {
+    let note = state.api.move_note(id, target).await?;
+    state.sync.local_change();
+    Ok(note)
+}
+
+#[tauri::command]
+pub async fn create_note_folder(
+    state: State<'_, AppState>,
+    parent_id: Option<String>,
+    name: String,
+) -> Result<NoteFolderDto> {
+    let folder = state.api.create_note_folder(parent_id, name).await?;
+    state.sync.local_change();
+    Ok(folder)
+}
+
+#[tauri::command]
+pub async fn rename_note_folder(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+) -> Result<NoteFolderDto> {
+    let folder = state.api.rename_note_folder(id, name).await?;
+    state.sync.local_change();
+    Ok(folder)
+}
+
+#[tauri::command]
+pub async fn move_note_folder(
+    state: State<'_, AppState>,
+    id: String,
+    target: NoteTargetDto,
+) -> Result<NoteFolderDto> {
+    let folder = state.api.move_note_folder(id, target).await?;
+    state.sync.local_change();
+    Ok(folder)
+}
+
+#[tauri::command]
+pub async fn trash_note_items(
+    state: State<'_, AppState>,
+    items: Vec<NoteItemDto>,
+) -> Result<Vec<NoteItemDto>> {
+    let changed = state.api.trash_note_items(items).await?;
+    state.sync.local_change();
+    Ok(changed)
+}
+
+#[tauri::command]
+pub async fn restore_note_items(
+    state: State<'_, AppState>,
+    items: Vec<NoteItemDto>,
+) -> Result<Vec<NoteItemDto>> {
+    let changed = state.api.restore_note_items(items).await?;
+    state.sync.local_change();
+    Ok(changed)
+}
+
+#[tauri::command]
+pub async fn purge_note_items(state: State<'_, AppState>, items: Vec<NoteItemDto>) -> Result<u32> {
+    let n = state.api.purge_note_items(items).await?;
+    state.sync.local_change();
+    Ok(n)
+}
+
+#[tauri::command]
+pub async fn empty_note_trash(state: State<'_, AppState>) -> Result<u32> {
+    let n = state.api.empty_note_trash().await?;
+    state.sync.local_change();
+    Ok(n)
+}
+
+#[tauri::command]
+pub async fn list_note_trash(state: State<'_, AppState>) -> Result<Vec<NoteTrashEntryDto>> {
+    Ok(state.api.list_note_trash().await?)
+}
+
+#[tauri::command]
+pub async fn search_notes(
+    state: State<'_, AppState>,
+    text: String,
+    limit: u32,
+) -> Result<Vec<NoteHitDto>> {
+    Ok(state.api.search_notes(text, limit).await?)
 }
 
 // --- Anmeldung ---------------------------------------------------------------------------------
@@ -210,11 +521,6 @@ pub async fn auth_current(state: State<'_, AppState>) -> Result<Option<SessionDt
 #[tauri::command]
 pub async fn auth_begin_login(state: State<'_, AppState>) -> Result<AuthStepDto> {
     state.account.begin_login().await
-}
-
-#[tauri::command]
-pub async fn auth_open_browser(state: State<'_, AppState>, flow: String) -> Result<()> {
-    state.account.reopen_browser(&flow)
 }
 
 #[tauri::command]
@@ -248,6 +554,134 @@ pub async fn sync_now(state: State<'_, AppState>) -> Result<()> {
     Ok(())
 }
 
+/// Link aus der Markdown-Vorschau im Standardbrowser öffnen – nie in der WebView. Nur `http:`,
+/// `https:` und `mailto:` (`notes.md` §6.5).
+#[tauri::command]
+pub async fn open_external(url: String) -> Result<()> {
+    if !is_external_url(&url) {
+        return Err(ErrorDto::from(todo_core::CoreError::Validation(
+            "only http, https and mailto links can be opened".into(),
+        )));
+    }
+    match std::process::Command::new("xdg-open").arg(&url).spawn() {
+        // Abwarten im Hintergrund, damit kein Zombie-Prozess bleibt.
+        Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
+        Err(err) => tracing::warn!(error = %err, "xdg-open failed"),
+    }
+    Ok(())
+}
+
+/// Zulässige externe Adresse: Schema `http`/`https`/`mailto`, keine Leer- oder Steuerzeichen.
+#[must_use]
+pub fn is_external_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    (lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:"))
+        && url.len() <= 2048
+        && !url.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+
+/// „Ordner importieren…" (`notes.md` §8): Ordner im Portal wählen, einlesen, importieren.
+/// `None`, wenn die Auswahl abgebrochen wurde.
+#[tauri::command]
+pub async fn import_notes_folder(state: State<'_, AppState>) -> Result<Option<ImportReportDto>> {
+    let Some(root) = crate::import::pick_folder("Ordner importieren", "Importieren")
+        .await
+        .map_err(ErrorDto::unavailable)?
+    else {
+        return Ok(None);
+    };
+    let report = crate::import::import_path(&state.api, root).await?;
+    state.sync.local_change();
+    Ok(Some(report))
+}
+
+/// Export (ADR-032): Zielordner per Portal wählen, darin `Tasks-Export-<today>/` anlegen.
+/// `today` = lokales Datum `JJJJ-MM-TT` der UI. `None`, wenn die Auswahl abgebrochen wurde. Liest nur.
+#[tauri::command]
+pub async fn export_data(
+    state: State<'_, AppState>,
+    today: String,
+) -> Result<Option<crate::export::ExportResultDto>> {
+    let Some(parent) = crate::import::pick_folder("Export speichern in", "Exportieren")
+        .await
+        .map_err(ErrorDto::unavailable)?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(
+        crate::export::write_export(&state.api, &parent, &today).await?,
+    ))
+}
+
+/// Import (ADR-032): `tasks.json` per Portal wählen und einspielen. `None` = abgebrochen.
+#[tauri::command]
+pub async fn import_data(
+    state: State<'_, AppState>,
+) -> Result<Option<todo_core::api::export_dto::ImportDataReportDto>> {
+    let Some(file) = crate::export::pick_export_file()
+        .await
+        .map_err(ErrorDto::unavailable)?
+    else {
+        return Ok(None);
+    };
+    let report = crate::export::import_file(&state.api, &file).await?;
+    state.sync.local_change();
+    Ok(Some(report))
+}
+
+/// Die UI hat vor dem Schließen gespeichert (Antwort auf `app://close-requested`).
+#[tauri::command]
+pub async fn close_ready<R: tauri::Runtime>(window: tauri::Window<R>) -> Result<()> {
+    crate::finish_close(&window);
+    Ok(())
+}
+
+/// Erinnerungen und Hintergrundbetrieb dieses Geräts (ADR-033). Liest nur.
+#[tauri::command]
+pub async fn background_settings(
+    state: State<'_, AppState>,
+) -> Result<crate::reminders::settings::BackgroundSettingsDto> {
+    Ok(state.settings())
+}
+
+/// Speichert und wendet an: Planer, Tray, Autostart-Eintrag. Kein Sync-Auslöser (nur lokal).
+#[tauri::command]
+pub async fn set_background_settings<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    settings: crate::reminders::settings::BackgroundSettingsDto,
+) -> Result<crate::reminders::settings::BackgroundSettingsDto> {
+    settings.validate().map_err(ErrorDto::validation)?;
+    crate::reminders::settings::save(&state.data_dir, &settings).map_err(ErrorDto::internal)?;
+    let exe = std::env::current_exe().map_err(|e| ErrorDto::internal(e.to_string()))?;
+    if let Err(err) = crate::reminders::settings::set_autostart(
+        "dev.tasks.app",
+        settings.autostart,
+        &exe,
+        state.profile.as_deref(),
+    ) {
+        tracing::warn!(error = %err, "autostart entry not written");
+    }
+    if settings.background {
+        crate::tray::create(&app);
+    } else {
+        crate::tray::remove(&app);
+    }
+    state.reminders.set_settings(settings.clone());
+    *state
+        .settings
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = settings.clone();
+    Ok(settings)
+}
+
+/// Jetzt hochladen, falls etwas wartet (Notiz- oder Moduswechsel, `notes.md` §4.6).
+#[tauri::command]
+pub async fn sync_flush(state: State<'_, AppState>) -> Result<()> {
+    state.sync.event(SchedulerEvent::Flush);
+    Ok(())
+}
+
 /// `online`/`offline`-Ereignisse der WebView (die Shell hat keinen eigenen Netzwerk-Monitor).
 #[tauri::command]
 pub async fn set_online(state: State<'_, AppState>, online: bool) -> Result<()> {
@@ -264,6 +698,7 @@ pub async fn set_online(state: State<'_, AppState>, online: bool) -> Result<()> 
 pub async fn app_ready(state: State<'_, AppState>) -> Result<()> {
     crate::report_startup(STARTED.get().copied());
     state.sync.event(SchedulerEvent::AppStarted);
+    state.purge_expired_notes_daily();
     Ok(())
 }
 
@@ -274,6 +709,23 @@ pub async fn app_ready(state: State<'_, AppState>) -> Result<()> {
 #[tauri::command]
 pub async fn dev_selftest() -> Result<Option<String>> {
     Ok(crate::dev::selftest_suites())
+}
+
+/// Fenster schließen wie mit dem X (Selbsttest des Hintergrundbetriebs, nur Debug-Build).
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub async fn dev_close_window<R: tauri::Runtime>(window: tauri::Window<R>) -> Result<()> {
+    let _ = window.close();
+    Ok(())
+}
+
+/// Bisher gemeldete Erinnerungen (Selbsttest, nur Debug-Build).
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub async fn dev_reminders_fired(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::reminders::FiredDto>> {
+    Ok(state.reminders.fired())
 }
 
 /// Berichtszeilen des Selbsttests auf stdout; `exit` beendet danach die App (nur Debug-Build).
@@ -289,4 +741,26 @@ pub async fn dev_selftest_report<R: tauri::Runtime>(
         app.exit(0);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_external_url;
+
+    #[test]
+    fn external_links_are_limited_to_web_and_mail() {
+        assert!(is_external_url("https://example.org/a?b=c#d"));
+        assert!(is_external_url("HTTP://example.org"));
+        assert!(is_external_url("mailto:a@example.org"));
+        for bad in [
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "data:text/html,x",
+            "https://a b",
+            "-x",
+            "https://\u{0}x",
+        ] {
+            assert!(!is_external_url(bad), "{bad}");
+        }
+    }
 }

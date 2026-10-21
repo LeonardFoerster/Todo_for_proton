@@ -38,8 +38,21 @@ ohne Protons Code, Assets oder Marke zu übernehmen.
 
 - Breakpoints: ≥ 1100 px drei Spalten · 700–1100 px Detail als Overlay-Panel · < 700 px Ein-Spalten-Navigation
   (vorbereitet für Android).
-- Zeilenhöhe Listen: **36 px kompakt** (Standard Desktop), 44 px komfortabel (Option; Standard auf Touch).
+- Zeilenhöhe Listen: **36 px kompakt** (Standard Desktop), **44 px komfortabel** bei Touch oder Fenster < 700 px
+  (P5-09: `@media (pointer: coarse), (max-width: 699px)` in `tokens.css`, dieselbe Query in `lib/density.svelte.ts`
+  für die virtuelle Liste).
 - Sidebar einklappbar (Icon-only, 56 px).
+- **Lesespalte (P5-02):** Kopfzeile und Liste teilen eine zentrierte Spalte von höchstens `--content-max` (820 px);
+  Zeilen ohne Trennlinien, Hover/Auswahl/Cursor als gerundete Fläche mit 8 px Einzug, Akzentbalken innerhalb der
+  Rundung. Das Board bleibt bei voller Breite.
+- **Kopfzeile (P5-05):** Titel 24 px (`--text-2xl`) mit gedämpfter Unterzeile – „Heute": „Mittwoch, 21. Oktober ·
+  3 offen · 1 überfällig", Eingang „4 offen", sonst leer (Zählen ohne neuen Core-Aufruf; im Board keine). Rechts nur
+  Darstellung, Auswählen und Listen-/Erledigt-Aktionen; Einstellungen in der Sync-Fußzeile (beide Modi),
+  Tastaturkürzel über `?` und Palette.
+- **Suche (P5-05):** Feld „Suchen … Strg K" unter der Brand-Zeile der Seitenleiste (beide Modi; eingeklappt Icon),
+  öffnet die Befehlspalette.
+- **Schmal < 700 px (P5-09):** runder Button „Neue Task" (56 px) unten rechts, Toasts darüber; die Kopfzeilen-Icons
+  wandern in ein Menü „Ansicht und Aktionen" (`⋯`); unter der letzten Zeile 80 px Platz für den Button.
 - **Kanban-Board (P2):** Umschalter „Liste | Kanban" in der Kopfzeile links neben „Auswählen" (nur Eingang, Listen,
   „Alle Tasks"; gemerkt pro Gerät in `localStorage` `tasks.layout`). Das Board zeigt **alle** Listen als Spalten
   nebeneinander (280 px, Abstand 12 px, Eingang zuerst, horizontal scrollend), darin die offenen Tasks als Karten
@@ -53,9 +66,56 @@ ohne Protons Code, Assets oder Marke zu übernehmen.
 └───────────────┘ └────────────────────┘ └────────────────────┘
 ```
 
-**Notes-Modus (N5, Entwurf – `notes.md` §5/§6):** Klick auf den Namen neben dem Logo („Tasks“ ⇄ „Notes“) bzw.
-`Strg+1`/`Strg+2` wechselt den Modus. Die Seitenleiste bleibt, ihr Inhalt wird zum Ordnerbaum mit Notizen
-(2 Spalten: Baum + Editor, kein Detail-Panel). Jeder Modus behält seinen Zustand.
+**Notes-Modus (N5-07, `notes.md` §5/§6):** Der Name neben dem Logo ist ein Button („Tasks ⇄“ bzw. „Notes ⇄“,
+Tooltip „Zu Notes wechseln (Strg+2)“; eingeklappt ein Icon-Button) und wechselt den Modus, ebenso `Strg+1`/`Strg+2`
+(auch in Feldern) und die Palette („Zu Tasks/Notes wechseln“). Kopf der Seitenleiste und Sync-Fußzeile bleiben stehen,
+Inhalt und Hauptbereich blenden in 160 ms über (nur `opacity`, bei `prefers-reduced-motion` nicht). 2 Spalten: Baum
++ Editor, kein Detail-Panel. Beide Teilbäume bleiben nach dem ersten Laden gemountet (`hidden`); der Notes-Teil ist
+ein eigener Lazy-Chunk (10,6 KB gzip mit Baum und Papierkorb). Gemerkt pro Gerät: `tasks.mode`, `notes.open`,
+`notes.expanded`.
+
+```
+┌─ [◆] Notes ⇄ ───────┐
+│ [+ Neue Notiz]   ⋯   │  ⋯ = Neuer Ordner, Ordner importieren…
+│ ▾ Uni                │  Zeilen 32 px, Einrückung 16 px je Ebene, virtualisiert
+│   ▾ Analysis         │  Ordner-Inhalt erst beim Aufklappen geladen
+│     ▤ Blatt 3     ◀  │  ▤ .txt / ⌗ .md (Icon), offene Notiz = aktive Navigation
+│ ─────────────────── │
+│ 🗑 Papierkorb      3 │  öffnet die Liste der obersten Elemente im Hauptbereich
+│ ⟳ Synchronisiert     │
+└──────────────────────┘
+```
+
+Baum: `role="tree"`, Zeilen `treeitem` mit `aria-level`/`aria-expanded`; Klick öffnet die Notiz bzw. klappt den Ordner,
+Doppelklick benennt inline um, Ziehen (ab 4 px) verschiebt (mittlere Hälfte eines Ordners = hinein, sonst
+Einfügelinie), Rechtsklick/`Umschalt+F10` = Kontextmenü (Neue Notiz hier, Neuer Ordner hier, Umbenennen, Typ,
+Verschieben nach…, In den Papierkorb). Gleichnamige Elemente im selben Ordner sind erlaubt (Hinweis-Toast). Papierkorb:
+Name, Herkunft, „gelöscht vor 3 Tagen“, Wiederherstellen, Endgültig löschen und „Papierkorb leeren“ (je mit
+Bestätigung); Notizen darin sind nur lesbar.
+
+Editor (N5-08, `NoteEditor`): natives `<textarea>` über die volle Fläche, `.md` in `--font-sans`, `.txt` in
+`--font-mono`, 15 px / Zeilenhöhe 1,6, Textspalte 72ch zentriert (Einstellung „Zeilenbreite begrenzen“),
+Rechtschreibprüfung aus. Autosave 400 ms nach der letzten Eingabe, sofort bei Blur, Fenster verborgen, Notiz- und
+Moduswechsel und vor dem Schließen (die Shell wartet bis 1,5 s); je Notiz ein Speichern nach dem anderen.
+Remote-Revisionen kommen in den Puffer (gemeinsamer Anfang/Ende, `setRangeText`, Cursor und Scroll bleiben); mit
+ungespeicherten Eingaben wird sofort gespeichert und der gemergte Text übernommen. Statuszeile 28 px: Pfad › Name.ext
+(Klick benennt um) · Gespeichert/Speichert…/Nicht synchronisiert/Synchronisiert · Wörter · Zeichen · ausgewählt
+(gezählt 300 ms nach der Eingabe), ab 256 KB „Große Notiz“, `⋯` (Umbenennen, Typ, Verschieben nach…, Papierkorb, Zen).
+Zen (`Strg+Umschalt+F`): ohne Seitenleiste, Statuszeile nur nach Mausbewegung oder mit Fokus; das erste `Esc`
+beendet Zen. Konfliktkopien melden ein Toast „Konflikt – Kopie „…“ angelegt“ mit „Anzeigen“. Einstellungen →
+„Notizen“: Typ neuer Notizen (Markdown/Text), Zeilenbreite begrenzen.
+
+Ordner importieren (N5-11, nur Desktop, `⋯` und Palette): System-Dialog des Portals, danach Dialog „Ordner
+importiert“ mit „412 Notizen in 37 Ordnern importiert, 9 übersprungen.“ und aufklappbarer Liste der übersprungenen
+Pfade mit Grund; der neue Ordner wird aufgeklappt und markiert. Im Web fehlt der Eintrag.
+
+Vorschau (N5-09, `.md`): `Strg+E` bzw. „Bearbeiten | Vorschau“ in der Statuszeile, je Notiz gemerkt
+(`notes.view`). Eigener Renderer (`markdown/render.ts`, ~4 KB gzip) erzeugt DOM-Knoten, nie `innerHTML` aus dem
+Text; Links nur `http:`/`https:`/`mailto:`, ein Klick öffnet den Standardbrowser (`open_external`), nie die
+WebView. Checklisten sind anklickbar und ändern genau ihre Quellzeile (wie eine Eingabe gespeichert). Beim Umschalten
+springt die Vorschau zur Zeile des Cursors und zurück zur obersten sichtbaren Zeile. Ab ~200 KB erst „Vorschau wird
+erstellt…“. Typografie: Überschriften 1,6/1,3/1,1 em, Code in `--font-mono` auf `--color-bg-subtle`, Zitate mit
+3-px-Linie, Tabellen mit 1-px-Rahmen.
 
 ## 3. Design-Tokens
 
@@ -115,6 +175,10 @@ Als CSS Custom Properties in `packages/ui/src/tokens/tokens.css`. Komponenten nu
 }
 ```
 
+**P5 (2026-10-21):** Schrift „Inter Variable" (Latin-Subset, Achse `wght`, 48 KB WOFF2 im Bundle, OFL; ADR-030) vor
+dem System-Stack; `--text-2xl: 24px` (Ansichtstitel); `--content-max: 820px` und `--content-inset` (Rand der
+Lesespalte); `--row-height` 44 px bei Touch/schmal. `tabular-nums` gezielt für Zähler, Daten, Uhrzeiten, Statuszeilen.
+
 Umsetzung (P7-05, `packages/ui/src/tokens/tokens.css`) – Abweichungen nur für Kontrast, automatisch geprüft
 (`tokens.test.ts`, Text ≥ 4.5:1, Bedienelemente ≥ 3:1, beide Themes):
 - Hell: `--color-text-muted` `#65646f` (statt `#6c6b78`, 4.4:1 auf Hover), `--color-warning` `#a35f00` (statt `#c77700`,
@@ -139,21 +203,33 @@ Theme-Regeln:
 | `Button` | Varianten `primary` (Akzent, gefüllt), `secondary` (Rahmen), `ghost`, `danger`; Höhe 32 px (36 px groß) |
 | `IconButton` | 28/32 px, immer mit `aria-label` + Tooltip |
 | Tooltips (`Tooltips.svelte`) | als `popover` gezeigt (oberste Ebene, auch über modalen Dialogen); per `data-tooltip` (+ `data-tooltip-side` bottom/top/right/left) an jedem Element; **eine** fest positionierte Schicht in `App` statt CSS-`::after` – nie von `overflow` abgeschnitten (eingeklappte Seitenleiste), am Fensterrand im Bild gehalten; 450 ms Verzögerung bei Hover, sofort bei Tastaturfokus; `aria-hidden` (Name kommt aus `aria-label`) |
-| `Checkbox` (Task) | rund (Proton-artig), Hover zeigt Haken angedeutet, Abhaken animiert ≤ 160 ms; danach (250 ms, bei `prefers-reduced-motion` sofort) verlässt die Zeile jede offene Ansicht – erledigte Tasks stehen nur unter „Erledigt", Rückgängig im Toast (P1-01). Der Cursor springt auf die nächste Zeile |
+| `Checkbox` (Task) | rund (Proton-artig); **die Priorität steht nur im Ring** (hoch rot, mittel orange, niedrig violett, zart gefüllt; Tooltip und Ende des Zeilennamens nennen sie – kein Fähnchen mehr, P5-03). Hover zeigt Haken angedeutet, Abhaken animiert ≤ 160 ms; danach (250 ms, bei `prefers-reduced-motion` sofort) verlässt die Zeile jede offene Ansicht – erledigte Tasks stehen nur unter „Erledigt", Rückgängig im Toast (P1-01). Der Cursor springt auf die nächste Zeile |
 | Abschnitte (P4, `GroupHeading`) | „Heute": **Überfällig · n** (rot, älteste zuerst, Aktion „Alle auf heute" – ein `set_dues`, Uhrzeit bleibt, Rückgängig) über **Heute · n**; ohne Überfällige keine Überschrift. „Geplant": Morgen, Einzeltage („Mi, 21. Okt.") bis 6 Tage, „Später in diesem Monat", Monate (fremdes Jahr mit Jahreszahl). Überschrift = Zeilenhöhe in der virtuellen Liste, `role="presentation"`, nicht fokussierbar (↑/↓ überspringen). Zeilen unter einem Tagesabschnitt zeigen nur die Uhrzeit. Seitenleiste „Heute": Zahl der Überfälligen rot vor dem Zähler. „Erledigt" (P4-06): Heute, Gestern, Wochentage dieser Woche, Letzte Woche, Monate; „⋯" → „Erledigte älter als 30 Tage löschen…" (Bestätigung, Rückgängig) |
-| Befehlspalette (P4-05, `CommandPalette`, lazy) | Modal oben (12 vh), Eingabe als `combobox` + `aria-activedescendant`, Ergebnisse als `listbox` mit Gruppen „Tasks" (Core-Suche, 100 ms entprellt, ≤ 50, Treffer im Titel `<mark>`, sonst „in Notiz"; Fälligkeit, Liste), „Listen", „Befehle" (Registry-Einträge mit `palette`, z. B. „Gehe zu Heute", „Neue Liste…"). Ohne Text: „Zuletzt geöffnet" (Sitzung) + Befehle. Kein Treffer: Enter öffnet „Neue Task" mit dem Text. `↑/↓`, `Enter`, `Esc` |
+| Befehlspalette (P4-05, `CommandPalette`, lazy) | Modal oben (12 vh), Eingabe als `combobox` + `aria-activedescendant`, Ergebnisse als `listbox` mit Gruppen „Tasks" (Core-Suche, 100 ms entprellt, ≤ 50, Treffer im Titel `<mark>`, sonst „in Notiz"; Fälligkeit, Liste), „Notizen" (N5-10: parallel zur Task-Suche, Name mit `<mark>`, bei Inhaltstreffern der Ausschnitt ±40 Zeichen darunter, rechts der Ordnerpfad; im Modus „Notes" vor „Tasks"; Enter wechselt in den Modus „Notes", öffnet die Notiz und markiert den Treffer im Quelltext), „Listen", „Befehle" (Registry-Einträge mit `palette`, z. B. „Gehe zu Heute", „Neue Liste…"). Ohne Text: „Zuletzt geöffnet" (Sitzung) + Befehle. Kein Treffer: Enter öffnet „Neue Task" mit dem Text. `↑/↓`, `Enter`, `Esc` |
 | `ListPicker` (P2) | Rundlicher Button „Liste ▾" mit Icon (Eingang/`#`), Menü aller Listen (Eingang zuerst, aktuelle mit Häkchen) + „Neue Liste…" (Dialog, wählt die neue sofort). Im Fenster „Neue Task" (Vorauswahl = Liste der Ansicht, `Alt+L`) und im Detail-Panel |
-| Listenaktionen (P2) | Kontextmenü eines Listeneintrags (Rechtsklick, `Umschalt+F10`), Button „⋯" im Kopf einer Listenansicht und einer Board-Spalte: Umbenennen (inline in der ausgeklappten Seitenleiste, sonst Dialog), Nach oben/unten, Löschen… (Bestätigungsdialog nennt, wie viele offene/erledigte Tasks in den Eingang wandern). Eingang ohne Aktionen |
+| Listenaktionen (P2) | Kontextmenü eines Listeneintrags (Rechtsklick, `Umschalt+F10`), Button „⋯" im Kopf einer Listenansicht und einer Board-Spalte: Umbenennen (inline in der ausgeklappten Seitenleiste, sonst Dialog), Nach oben/unten, Zusammenführen mit… (N10-03: Menü der anderen Listen, Tasks ans Ende des Ziels, ein Commit; gleichnamige Listen bietet ein Toast einmal je Sitzung zum Zusammenführen an), Löschen… (Bestätigungsdialog nennt, wie viele offene/erledigte Tasks in den Eingang wandern). Eingang ohne Aktionen |
 | Board (P2) | `Board` → `BoardColumn` (Kopf: Name, Zahl offener Tasks, „⋯"; Kopf ist Griff zum Umsortieren) → `BoardCard` (runder Haken, Titel einzeilig, Meta-Zeile). Ziehen einer Karte nach 4 px mit Vorschau am Zeiger und Einfügelinie; Spalten ziehen mit senkrechter Linie. Spalten `listbox`, Karten `option` (`aria-selected` = Cursor), Live-Region meldet Verschiebungen |
 | `SelectBox` (Auswahl, P0) | **eckig** (16 px, Radius 3 px) – bewusst anders als der runde Erledigt-Haken; ausgewählt = Akzentfläche mit Häkchen, Tri-State „–" für „Alle auswählen"; in Zeilen nur dekorativ (die Zeile trägt `aria-selected`), in der Aktionsleiste ein `role="checkbox"` |
 | `SelectionBar` (Aktionsleiste, P0) | ersetzt im Auswahlmodus die Kopfzeilen-Aktionen (gleiche Höhe, keine zweite Zeile): Tri-State „Alle auswählen" · Zähler „3 ausgewählt" (Live-Region) · Erledigt · Wieder öffnen · Verschieben nach… (Menü, Eingang zuerst, aktuelle Liste deaktiviert) · Löschen · „Fertig". Aktionen bei leerer Auswahl deaktiviert; Erledigt/Wieder öffnen je nach offenen/erledigten in der Auswahl |
+| `TaskMeta` (P5-03) | Meta-Angaben in Zeile und Board-Karte, gleiche Reihenfolge: `#Liste` (nur Sammelansichten) · Fälligkeit (rot nur überfällig, Akzent heute) · `repeat`-Icon bei Serien (Tooltip „Wiederholt sich", im Namen „wiederholt sich") · Notiz-Icon (`sticky-note`). Springt die Fälligkeit (Serie abgehakt), blendet der neue Wert einmal ein (100 ms, nur opacity/transform, nicht beim ersten Zeichnen) |
+| Erste Schritte (N10-04) | Im leeren Eingang statt des Leertexts eine Karte „Willkommen": Neue Task mit `N` und Beispiele der Texterkennung, `Strg+K`, `?`, Anmelden für den Sync; Buttons „Erste Task anlegen", „Anmelden…" (Einstellungen), „Ausblenden" (pro Gerät gemerkt) |
+| Sortieren und filtern (N10-01, ADR-037) | Kopfzeile: `sliders-horizontal` „Sortieren und filtern" (gedrückt, wenn abweichend) → Popover mit Optionsfeldern: Sortieren (Eigene Reihenfolge bzw. in Heute/Geplant „Fälligkeit", Fälligkeit, Priorität, Titel), Priorität (Alle, Hoch, Mittel, Niedrig, Keine), Tag (Alle + Tags; nicht in der Tag-Ansicht). Gilt sofort, gemerkt pro Ansicht und Gerät. Unter dem Titel Chips „Sortiert: Titel ×", „Priorität: Hoch ×", „#uni ×". Ziehen nur in der eigenen Reihenfolge ohne Filter |
+| Verknüpfung Task ↔ Notiz (N9-02, ADR-036) | Detail: Abschnitt „Notizen" mit den verknüpften Notizen (Klick öffnet sie im Modus „Notes", × löst), „+ Notiz verknüpfen" → `NoteLinkPicker` (lazy): Suche über Name und Inhalt wie die Palette, schon verknüpfte ausgegraut, „Neue Notiz zu dieser Task" (Überschrift = Titel, gleich geöffnet). Statuszeile der Notiz: „n Tasks" → Menü der verknüpften Tasks (öffnet sie im Modus „Tasks") + „Neue Task aus dieser Notiz" (Titel = Notizname, Toast mit „Öffnen"). Zeile/Karte: `link-2`, im Namen „mit Notiz verknüpft" |
+| Tags (N8-03, ADR-035) | `#name` im Fenster „Neue Task" (alle Angaben zählen, Akzent markiert; reine Zahlen wie `#12` nicht), Chip „Tags" (`tag`, `Alt+T`) öffnet `TagPicker`: Suchfeld, vorhandene Tags als Umschalter, „Neuer Tag „x"" – angelegt wird erst beim Anlegen der Task. Zeile/Karte: graue Chips „#uni" (höchstens 3 bzw. 2, dann „+n"), im Namen „#uni". Detail: Zeile „Tags" mit Chips (× entfernt) und „+ Tag". Seitenleiste: Abschnitt „Tags" (nur wenn es welche gibt) → Ansicht „#uni" mit allen offenen Tasks des Tags; „⋯" Umbenennen / Löschen… (nimmt den Tag von allen Tasks). Neue Tasks in der Tag-Ansicht bekommen den Tag. Palette: „Gehe zu #uni" |
+| Checkliste (N8-01, ADR-034) | Detail: Abschnitt „Checkliste" unter der Notiz mit „n von m erledigt"; Punkt = Haken (nativ, Akzent) · Text (randlos, Fokus mit Rahmen) · × beim Überfahren; „Punkt hinzufügen …" darunter. `Enter` am Ende öffnet einen neuen Punkt darunter (leer verlassen = verworfen), `Rücktaste` im leeren Punkt löscht ihn, `Alt+↑/↓` oder Griff verschiebt, `Esc` verwirft die Bearbeitung. Erledigte durchgestrichen. Zeile/Karte: `list-checks` „2/5" (alle erledigt grün) |
+| Wiederkehrende Tasks (N4, ADR-028) | Abhaken einer Serie: Zeile/Karte bleibt offen stehen, Fälligkeit rückt vor; Toast „„Blatt" erledigt – nächstes Mal Fr, 31. Okt." (bzw. „– Serie beendet") mit Rückgängig (Eintrag weg, alte Fälligkeit). Der Verlaufseintrag steht unter „Erledigt" wie jede erledigte Task. Sammel-Abhaken: ein Toast. „Dieses Mal überspringen" im Kontextmenü und im Detail. Detail: Zeile „Wiederholung" (`RecurrenceField`: Regel im Klartext, Menü mit Vorlagen, „Benutzerdefiniert…", „Wiederholung beenden"). Löschen-Toast nennt eine einzelne Serie („Serie „X" …") |
+| `RecurrenceDialog` (N4-05, lazy) | „Benutzerdefiniert…": Alle [n] [Tage/Wochen/Monate/Jahre], Wochentage als Umschalter (mind. einer), Bezug „Fester Rhythmus" / „Nach Erledigung", „Endet am" (Text wie „Fällig am", `parseDue`), Zusammenfassung im Klartext, „Übernehmen" nur bei gültigen Angaben |
+| Zähler der Seitenleiste (P5-06) | eine Zahl je Eintrag; mit Überfälligen als rote Pille (`--color-danger-subtle`), Aufteilung im Tooltip und im Namen („3, davon 1 überfällig") |
+| Papierkorb der Tasks (N6-03, ADR-031) | Seitenleiste unten „Papierkorb" mit Zahl (wie im Modus „Notes"); Ansicht zuletzt gelöschte zuerst, Unterzeile „n Tasks · nach 30 Tagen endgültig gelöscht"; Zeile ohne Haken (Papierkorb-Symbol), Meta „vor 3 Tagen gelöscht" (Tooltip: Restfrist), beim Überfahren „Wiederherstellen" und „Endgültig löschen"; Kontextmenü und Auswahlleiste ebenso; `Entf` und „Papierkorb leeren…" (`⋯` der Kopfzeile) fragen nach (`PurgeDialog`); kein Detail-Panel im Papierkorb |
+| Einstellungen › Erinnerungen (N7, ADR-033, nur Desktop) | „An Fälligkeiten erinnern", Uhrzeit für ganztägige (Textfeld `HH:MM`, Fehler als `alert`), „Im Hintergrund weiterlaufen" (Schließen versteckt, Tray mit Öffnen/Neue Task/Beenden), „Mit dem System starten" (nur mit Hintergrund). Jede Änderung wird sofort gespeichert. Klick auf eine Erinnerung zeigt das Fenster und öffnet die Task (wechselt bei Bedarf in den Modus „Tasks") |
+| Einstellungen › Daten (N6-04, ADR-032, nur Desktop) | „Exportieren…" (Ordner wählen → `Tasks-Export-JJJJ-MM-TT/`), „Aus Export wiederherstellen…" (`tasks.json` wählen); Ergebnis als Hinweis; auch in der Palette |
 | `TextInput`, `Textarea` | 32 px, Rahmen `--color-border`, Fokus: Akzent-Rahmen + Focus-Ring |
-| `Menu` / Kontextmenü | Popover mit `--shadow-popover`, Tastaturnavigation, Shortcuts rechtsbündig gedimmt |
-| `Dialog` | nur für destruktive Bestätigungen und Einstellungen; Esc schließt |
-| `Toaster` (+ `toasts.svelte.ts`) | unten links, 4 s, „Rückgängig"-Aktion bei Löschen/Abhaken/Verschieben – bei Sammelaktionen eine Meldung für die ganze Auswahl („3 Tasks gelöscht") |
+| `Menu` / Kontextmenü | Popover mit `--shadow-popover`, Tastaturnavigation, Shortcuts rechtsbündig gedimmt; über die Popover-API in der obersten Ebene (`lib/popover.ts`), damit es auch in und über modalen Dialogen bedienbar ist (P6-02) |
+| `Dialog` | für destruktive Bestätigungen, Einstellungen und Eingabefenster; Esc schließt. `bare`: ohne Kopf (Name nur über `aria-label`), `placement="top"`: fest bei 15 vh, wächst nur nach unten; unter 700 px ein Bereich, der unten aufgeht (volle Breite, max. 85 dvh) |
+| `Toaster` (+ `toasts.svelte.ts`) | unten links (schmal über dem runden Button „Neue Task"), 4 s, „Rückgängig"-Aktion bei Löschen/Abhaken/Verschieben – bei Sammelaktionen eine Meldung für die ganze Auswahl („3 Tasks gelöscht") |
 | `VirtualList` | eigene, kleine Implementierung (feste Zeilenhöhe → trivial und schnell) |
-| `DatePicker` | nach dem Prototyp: schlank, eigene Umsetzung + natürliche Eingabe („morgen", „fr 14:00"); Prototyp: natives `<input type=date>` |
-| `NewTaskDialog` (Fenster „Neue Task") | Öffnet über „+ Neue Task" (Seitenleiste, leere Ansicht), `N`, `Strg+N`; modaler Dialog in der App (kein OS-Fenster). Titelzeile mit Erkennung (Tag, Wochentag, `24.10.`, `14:00`, `!1`–`!3`, `@liste`; `parseNewTask`), Hinweiszeile („Titel: …" bzw. Syntax), Chips Fällig/Priorität/Liste/Notiz (von Hand gesetzt gilt vor dem Text), optionale Notiz, „Weitere anlegen". Vorauswahl Liste/Fälligkeit wie die Ansicht. `Enter` bzw. `Strg+Enter` legt an (ein `createTask`), `Esc` schließt (P3-03) |
+| `DuePicker` / `DueField` (P5-08) | eigene Umsetzung statt `<input type=date/time>`: Texteingabe „Fällig am" mit demselben Parser wie „Neue Task" (`parseDue`: „morgen", „fr 14:00", „24.10."; Vorschau darunter, Fehler als `alert`), Schnellwahl (Heute, Morgen, Nächster Montag, In einer Woche), Monatsraster (Montag zuerst, `role="grid"`, Pfeile/Pos1/Ende/Bild↑↓, gewählter Tag gefüllt, heute mit Punkt), Uhrzeit als Text („14:00", leer = ganztägig), „Entfernen". Ein reiner Tag behält die Uhrzeit. `DueField` im Detail: Button mit Fälligkeit im Ton der Zeile → Popover (Esc, Klick daneben, Tab bleibt drin). Im Fenster „Neue Task" klappt der Chip „Fällig" den Wähler auf; „Datum wählen…" (`D`) zeigt ihn im Dialog |
+| `NewTaskDialog` (Fenster „Neue Task", P3-03, Schnelleingabe seit P6) | Öffnet über „+ Neue Task" (Seitenleiste, leere Ansicht, runder Button schmal), `N`, `Strg+N`; `Dialog` `bare` + `placement="top"`. Eine Karte: Titelzeile (16 px) mit Erkennung (Tag, Wochentag, `24.10.`, `14:00`, `!1`–`!3`, `@liste`; `parseNewTask`) – erkannte Stellen sind im Text getönt markiert (`recognizedMarks`, Ebene hinter dem transparenten Feld; Datum Akzent, Priorität Ringfarbe, Liste neutral; ein von Hand gesetzter Chip hebt die Markierung seiner Art auf); darunter randlos „Notiz hinzufügen …" (wächst mit). Chips: leer nur Kontur, gesetzt getönt mit vollem Wert („Fr, 23. Okt. 14:00") und × („Fälligkeit/Priorität entfernen"); Priorität als Ring; „Fällig" öffnet `DuePopover` am Chip. Fußleiste: „Weitere anlegen" · „?" (Syntax im Tooltip) · `Esc` · „Anlegen ↵" (leer gedämpft). Mit „Weitere anlegen" bestätigt eine Zeile im Fenster statt eines Toasts. `Enter` bzw. `Strg+Enter` (Notiz) legt an (ein `createTask`), `Alt+D/W/P/L/N` für Fälligkeit/Wiederholung/Priorität/Liste/Notiz. Wiederholung (N4-05): „täglich", „jeden Mo und Do", „alle 2 Wochen", „jeden 15.", „werktags", Zusatz „nach Erledigung" / „bis 20.12." – grün markiert; Chip „Wiederholung" (`repeat`) mit Keine, Vorlagen, „Benutzerdefiniert…"; Hinweiszeile „Wiederholt sich wöchentlich, Mo und Do". Eine Regel ohne Tag beginnt mit ihrem ersten Vorkommen ab heute. Schmal: Chips waagerecht scrollbar, „Anlegen" groß |
 
 Icons: **Lucide** (ISC-Lizenz), einzeln als SVG importiert (Tree-Shaking), 16 px in Listen, 20 px in Toolbars,
 `stroke-width: 1.75`, Farbe `currentColor`.
@@ -167,7 +243,7 @@ Icons: **Lucide** (ISC-Lizenz), einzeln als SVG importiert (Tree-Shaking), 16 px
 | Navigieren | `↑/↓` oder `J/K` |
 | Erledigt umschalten | `Leertaste` bzw. `E` |
 | Bearbeiten / Detail öffnen | `Enter` |
-| Löschen | `Entf` (mit Rückgängig-Toast, kein Dialog) |
+| Löschen = in den Papierkorb (N6-03) | `Entf` (Rückgängig im Toast, gleiche IDs; **im Papierkorb** endgültig, mit Bestätigung) |
 | Fälligkeit: heute / morgen (Uhrzeit bleibt, Rückgängig) | `T` / `Umschalt+T` (P4-04; Zeile, Karte oder Auswahl) |
 | Fälligkeit wählen… (Menü: Heute, Morgen, Nächster Montag, In einer Woche, Datum wählen…, Entfernen) | `D` (auch Auswahlleiste und Kontextmenü der Zeile) |
 | Kürzel-Übersicht | `?` |
@@ -196,13 +272,32 @@ Auswahl (Auswahlfarbe) getrennt. Kontextmenü auf einer ausgewählten Zeile wirk
 | Aktion | Shortcut |
 |---|---|
 | Darstellung Liste ↔ Kanban | `V` |
-| Im Fenster „Neue Task": Fälligkeit / Priorität / Liste / Notiz | `Alt+D` / `Alt+P` / `Alt+L` / `Alt+N` |
+| Im Fenster „Neue Task": Fälligkeit / Wiederholung / Priorität / Tags / Liste / Notiz | `Alt+D` / `Alt+W` / `Alt+P` / `Alt+T` / `Alt+L` / `Alt+N` |
 | Listenaktionen der fokussierten Liste (Seitenleiste) | `Umschalt+F10` bzw. Menütaste |
 | Fokussierte Liste in der Seitenleiste verschieben | `Alt+↑/↓` |
 | Board: Karte wählen / Spalte wechseln | `↑/↓`, `J/K` / `←/→`, `H/L` (gleiche Höhe) |
 | Board: Karte öffnen / abhaken / löschen | `Enter` / `Leertaste`, `E` / `Entf` |
 | Board: Karte in die Nachbarspalte / in der Spalte verschieben | `Alt+←/→` / `Alt+↑/↓` |
 | Board: fokussierte Spalte (Kopf) verschieben | `Alt+←/→` |
+
+**Notes (N5-07).** Task-Kürzel gelten nur im Modus „Tasks“ (Registry-`scope`), die folgenden nur im Modus „Notes“.
+
+| Aktion | Shortcut |
+|---|---|
+| Modus Tasks / Notes (überall, auch in Feldern) | `Strg+1` / `Strg+2` |
+| Neue Notiz (im Ordner der offenen Notiz, Editor fokussiert; leer verlassen = verworfen) | `N` bzw. `Strg+N` |
+| Baum: bewegen / aufklappen, hinein / zuklappen, Elternordner | `↑/↓`, `J/K` / `→` / `←` |
+| Baum: Notiz öffnen und Editor fokussieren / Ordner auf- und zuklappen | `Enter` |
+| Baum: umbenennen / in den Papierkorb (Rückgängig) / verschieben nach… | `F2` / `Entf` / `M` |
+| Baum: unter Geschwistern nach oben/unten | `Alt+↑/↓` |
+| Baum: Aktionen | `Umschalt+F10` bzw. Menütaste |
+| Editor: Liste fortsetzen (`- `, `* `, `1.` → `2.`, `- [ ] `, `> `; leerer Punkt beendet) | `Enter` am Ende des Punkts |
+| Editor: ein-/ausrücken (Auswahl zeilenweise; `.md` 2 Leerzeichen, `.txt` Tab) | `Tab` / `Umschalt+Tab` |
+| Editor verlassen (statt Tab) | `Esc`, dann `Tab` |
+| `.md`: Fett / Kursiv / Durchgestrichen / Link / Checkbox | `Strg+B` / `Strg+I` / `Strg+Umschalt+S` / `Strg+L` / `Strg+Umschalt+X` |
+| `.md`: Überschrift 1–3 / Absatz (Ziffer über die Taste, auch mit AltGr) | `Strg+Alt+1…3` / `Strg+Alt+0` |
+| `.md`: Adresse über markiertem Text einfügen → Link | `Strg+V` |
+| Zen-Modus | `Strg+Umschalt+F` |
 
 Bewusst kein „Keine auswählen" auf `Strg+Umschalt+A`. Seit P4-04 erkennt die Kürzel-Registry Shift bei **Buchstaben**
 (`shift+t`), bei Satzzeichen weiterhin nicht (`?` ist je nach Layout schon Shift); Feststelltaste zählt nicht als Shift.
@@ -258,4 +353,26 @@ Abschlusskritik (`frontend-design`): Signatur (runder Haken) bleibt das einzige 
 heißen gleich („Erledigt“ → „erledigt“, „Löschen“ → „gelöscht“). **Leere Ansichten boten keine Aktion → Button
 „Neue Task“ (außer in „Erledigt“)** – behoben.
 
-Offen (bewusst): kein eigenes DatePicker-Popover (Prototyp: natives `<input type=date>`), Tags/Subtasks/Suche (nach dem Prototyp).
+Offen (bewusst): Tags/Subtasks (nach dem Prototyp). Eigenes Datumsfeld seit P5-08 (`DuePicker`), Suche seit P4-05.
+
+## 9. Design-Review P5 (2026-10-21)
+
+Sichtung per Screenshot (Demo `app.html`, headless Chrome, 1440/1000/420 px, hell/dunkel; Parameter neu: `?layout=board`,
+`?mode=notes`, `?due=1` mit `?open=1`) und Selbsttest in der WebView (`base`, `p3new`, `p4due`, `p4today`, `p4keys`,
+`p708a/b`).
+
+| Bereich | Befund | Status |
+|---|---|---|
+| Typografie | `system-ui` je nach Distribution anders, keine eigene Handschrift | ✔ Inter mitgeliefert (ADR-030), Titel 24 px |
+| Lesbarkeit | Zeilen über die volle Breite (Titel links, Datum ~1 000 px weiter rechts), Trennlinien unter jeder Zeile | ✔ Lesespalte 820 px, Flächen statt Linien |
+| Farbe/Bedeutung | Priorität doppelt (Ring + Fähnchen), Rot zugleich „hoch" und „überfällig" | ✔ Priorität nur im Ring, rote Schrift nur überfällig |
+| Fokus | Cursor im Dunkelmodus als eckiger 2-px-Rahmen bis an den Rand | ✔ gerundet; Karte mit Fläche + Balken |
+| Navigation | fünf gleichrangige Icons, Suche unsichtbar | ✔ Suchfeld in der Seitenleiste, Einstellungen in der Fußzeile (jetzt auch im Modus „Notes") |
+| Zähler | „1 3" bei Heute mehrdeutig | ✔ eine Zahl, Pille bei Überfälligen |
+| Detail | native Datumsfelder, doppelte Datumsanzeige, Notizfeld mit Griff, Fuß unten angeheftet | ✔ `DueField`/`DuePicker`, Notiz wächst mit, Fuß unter dem Inhalt |
+| Touch/schmal | 36-px-Zeilen, „Neue Task" nur über die Schublade | ✔ 44 px, runder Button, Menü statt Icon-Reihe |
+
+| Fenster „Neue Task" (P6) | mittig, sprang beim Aufklappen; Kopf und Syntax-Zeile wie ein Formular; erkannte Wörter nicht zu sehen; gesetzte und leere Chips gleich; Notiz als eigenes Kästchen; Prioritätsmenü hinter der modalen Ebene | ✔ oben verankert ohne Kopf, Markierung im Text, Chips mit ×, Datums-Popover, Notiz als zweite Zeile, Menüs als Popover |
+
+Bewusst nicht in P5 (mit dem User geklärt): Eingabezeile in der Liste (P4-07 bleibt offen), Listenfarben,
+Notiz-Vorschau in der Zeile (bräuchte DTO-Änderung und variable Zeilenhöhe).

@@ -2,11 +2,10 @@
 //! Proton-Konto. Die App ist sofort lokal benutzbar; Sync startet erst mit einer Sitzung.
 
 use std::{
-    collections::HashMap,
     env, fs,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicI64, Ordering},
         Arc, Mutex, PoisonError,
     },
     time::{SystemTime, UNIX_EPOCH},
@@ -26,7 +25,8 @@ use todo_sync::{SchedulerConfig, SyncConfig, SyncEngine, SyncReport};
 
 use crate::{
     dto::ErrorDto,
-    events::{ChangedEmitter, SYNC_STATUS_EVENT},
+    events::{ChangedEmitter, OPEN_TASK_EVENT, SYNC_STATUS_EVENT},
+    reminders::{self, settings::BackgroundSettingsDto, Notifier, Reminders},
     sync::{self, SyncHandle, SyncRunner},
 };
 
@@ -78,6 +78,69 @@ pub struct AppState {
     pub api: Arc<CoreApi>,
     pub sync: SyncHandle,
     pub account: Arc<Account>,
+    /// Letztes automatisches Leeren des Notiz-Papierkorbs (Unix-ms; 0 = noch nie).
+    notes_purged_at: AtomicI64,
+    /// Schließen läuft (das zweite `CloseRequested` schließt sofort).
+    pub closing: AtomicBool,
+    /// „Beenden“ aus dem Tray: Schließen beendet wirklich, auch im Hintergrundbetrieb.
+    pub quitting: AtomicBool,
+    /// Erinnerungen (ADR-033).
+    pub reminders: Reminders,
+    /// Hintergrundbetrieb und Erinnerungen dieses Geräts (`settings.json`).
+    pub settings: Mutex<BackgroundSettingsDto>,
+    /// Datenordner (Einstellungen, Erinnerungsstand).
+    pub data_dir: PathBuf,
+    /// Eigenes Profil (`TODO_DATA_DIR`) – der Autostart startet dasselbe.
+    pub profile: Option<PathBuf>,
+}
+
+/// Höchstens so oft wird der Notiz-Papierkorb automatisch geleert (`notes.md` §4.7).
+const NOTE_PURGE_INTERVAL_MS: i64 = 24 * 60 * 60 * 1000;
+
+impl AppState {
+    /// Beim Start und bei Fokus aufrufen: löscht höchstens einmal täglich, was seit mehr als
+    /// 30 Tagen im Papierkorb liegt (Notizen und Tasks) – ohne Timer im Leerlauf.
+    pub fn purge_expired_notes_daily(&self) {
+        let now = SystemClock.now().as_millis();
+        let last = self.notes_purged_at.load(Ordering::Relaxed);
+        if now - last < NOTE_PURGE_INTERVAL_MS
+            || self
+                .notes_purged_at
+                .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                .is_err()
+        {
+            return;
+        }
+        let (api, sync) = (Arc::clone(&self.api), self.sync.clone());
+        tauri::async_runtime::spawn(async move {
+            match api.purge_expired_notes().await {
+                Ok(0) => {}
+                Ok(n) => {
+                    tracing::info!(items = n, "expired notes purged");
+                    sync.local_change();
+                }
+                Err(err) => tracing::warn!(error = %err, "purging expired notes failed"),
+            }
+            // Papierkorb der Tasks (ADR-031): gleiche Frist, gleicher Takt.
+            match api.purge_expired_tasks().await {
+                Ok(0) => {}
+                Ok(n) => {
+                    tracing::info!(tasks = n, "expired tasks purged");
+                    sync.local_change();
+                }
+                Err(err) => tracing::warn!(error = %err, "purging expired tasks failed"),
+            }
+            // Verknüpfungen mit endgültig gelöschtem Ende (ADR-036).
+            match api.purge_dangling_links().await {
+                Ok(0) => {}
+                Ok(n) => {
+                    tracing::info!(links = n, "dangling links purged");
+                    sync.local_change();
+                }
+                Err(err) => tracing::warn!(error = %err, "purging dangling links failed"),
+            }
+        });
+    }
 }
 
 /// Baut den State und registriert die Event-Emitter.
@@ -85,16 +148,22 @@ pub struct AppState {
 /// # Errors
 /// Wenn das Datenverzeichnis oder die Datenbank nicht geöffnet werden kann.
 pub fn init<R: Runtime>(app: &AppHandle<R>, options: &Options) -> Result<AppState, String> {
-    let dir = match &options.data_dir {
-        Some(dir) => dir.clone(),
-        None => app.path().app_data_dir().map_err(|e| e.to_string())?,
-    };
-    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    restrict_to_owner(&dir);
+    let dir = data_dir(app, options)?;
     let repo = SqliteTaskRepository::open(dir.join(DB_FILE)).map_err(|e| e.to_string())?;
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-    let api = Arc::new(CoreApi::new(Arc::new(repo), Arc::clone(&clock)));
+    let api = Arc::new(
+        CoreApi::new(Arc::new(repo), Arc::clone(&clock))
+            .with_time_zones(Arc::new(crate::zones::JiffZones)),
+    );
     api.subscribe(Box::new(ChangedEmitter::new(app.clone())));
+    let settings = reminders::settings::load(&dir);
+    let reminders = reminders::spawn(
+        Arc::clone(&api),
+        dir.clone(),
+        settings.clone(),
+        notifier(app),
+    );
+    api.subscribe(reminders.sink());
 
     let emitter = app.clone();
     let sync = sync::spawn(
@@ -120,7 +189,72 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, options: &Options) -> Result<AppStat
         let (account, api, sync) = (Arc::clone(&account), Arc::clone(&api), sync.clone());
         tauri::async_runtime::spawn(async move { account.restore(&api, &sync).await });
     }
-    Ok(AppState { api, sync, account })
+    Ok(AppState {
+        api,
+        sync,
+        account,
+        notes_purged_at: AtomicI64::new(0),
+        closing: AtomicBool::new(false),
+        quitting: AtomicBool::new(false),
+        reminders,
+        settings: Mutex::new(settings),
+        data_dir: dir,
+        profile: options.data_dir.clone(),
+    })
+}
+
+/// Datenordner des Profils (angelegt, nur für den Besitzer lesbar).
+///
+/// # Errors
+/// Wenn er nicht bestimmt oder angelegt werden kann.
+pub fn data_dir<R: Runtime>(app: &AppHandle<R>, options: &Options) -> Result<PathBuf, String> {
+    let dir = match &options.data_dir {
+        Some(dir) => dir.clone(),
+        None => app.path().app_data_dir().map_err(|e| e.to_string())?,
+    };
+    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    restrict_to_owner(&dir);
+    Ok(dir)
+}
+
+/// Benachrichtigungen über das Portal; Klick zeigt das Fenster und öffnet die Task. Im Debug-Build
+/// mit `TODO_NOTIFY=log` nur ins Log (Selbsttest ohne Meldungen auf dem Desktop).
+fn notifier<R: Runtime>(app: &AppHandle<R>) -> Arc<dyn Notifier> {
+    if cfg!(debug_assertions) && env::var("TODO_NOTIFY").is_ok_and(|v| v == "log") {
+        return Arc::new(reminders::LogNotifier);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let app = app.clone();
+        Arc::new(reminders::PortalNotifier::new(Arc::new(
+            move |task_id: String| {
+                crate::tray::show_window(&app);
+                let _ = app.emit(OPEN_TASK_EVENT, task_id);
+            },
+        )))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app;
+        Arc::new(reminders::LogNotifier)
+    }
+}
+
+impl AppState {
+    /// Aktuelle Einstellungen des Hintergrundbetriebs.
+    #[must_use]
+    pub fn settings(&self) -> BackgroundSettingsDto {
+        self.settings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Hintergrundbetrieb an (Schließen versteckt nur)?
+    #[must_use]
+    pub fn background(&self) -> bool {
+        self.settings().background
+    }
 }
 
 /// Schlüsselbund + Anmeldung beim Sync-Backend. Wird beim ersten Zugriff (oder im Hintergrund
@@ -128,8 +262,6 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, options: &Options) -> Result<AppStat
 pub struct Account {
     backend: tokio::sync::OnceCell<Option<Backend>>,
     clock: Arc<dyn Clock>,
-    /// Login-URLs laufender Vorgänge (für „Browser erneut öffnen").
-    login_urls: Mutex<HashMap<String, String>>,
     keyring_id: String,
 }
 
@@ -153,7 +285,6 @@ impl Account {
                 tokio::sync::OnceCell::new_with(Some(None))
             },
             clock,
-            login_urls: Mutex::default(),
             keyring_id,
         }
     }
@@ -224,25 +355,11 @@ impl Account {
         Ok(backend.auth.current_session().await?.map(Into::into))
     }
 
+    /// Startet den Login. Die Shell öffnet keinen Browser: Die UI zeigt die URL zum Kopieren
+    /// (ADR-038, `xdg-open` landete je nach Dateizuordnung in fremden Programmen).
     pub async fn begin_login(&self) -> Result<crate::dto::AuthStepDto, ErrorDto> {
         let backend = self.require().await?;
-        let step = backend.auth.begin_login().await?;
-        if let todo_core::ports::AuthStep::OpenBrowser { flow, url, .. } = &step {
-            self.urls().insert(flow.0.clone(), url.clone());
-            open_browser(url);
-        }
-        Ok(step.into())
-    }
-
-    /// Öffnet die Login-Seite eines laufenden Vorgangs erneut.
-    pub fn reopen_browser(&self, flow: &str) -> Result<(), ErrorDto> {
-        let url = self
-            .urls()
-            .get(flow)
-            .cloned()
-            .ok_or_else(|| ErrorDto::from(CoreError::NotFound(format!("login flow {flow}"))))?;
-        open_browser(&url);
-        Ok(())
+        Ok(backend.auth.begin_login().await?.into())
     }
 
     /// Fragt den Login-Status ab; bei Erfolg startet der Sync.
@@ -254,11 +371,7 @@ impl Account {
     ) -> Result<crate::dto::AuthStepDto, ErrorDto> {
         let backend = self.require().await?;
         let flow_id = todo_core::ports::AuthFlowId(flow);
-        let result = backend.auth.poll_login(&flow_id).await;
-        if !matches!(result, Ok(todo_core::ports::AuthStep::Pending { .. })) {
-            self.urls().remove(&flow_id.0);
-        }
-        let step = result?;
+        let step = backend.auth.poll_login(&flow_id).await?;
         if matches!(step, todo_core::ports::AuthStep::Done(_)) {
             sync.set_runner(Some(self.runner(backend, api)?));
         }
@@ -267,7 +380,6 @@ impl Account {
 
     pub async fn cancel_login(&self, flow: String) -> Result<(), ErrorDto> {
         let backend = self.require().await?;
-        self.urls().remove(&flow);
         backend
             .auth
             .cancel_login(&todo_core::ports::AuthFlowId(flow))
@@ -288,12 +400,6 @@ impl Account {
         session?;
         key?;
         Ok(())
-    }
-
-    fn urls(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
-        self.login_urls
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -418,34 +524,6 @@ fn restrict_to_owner(dir: &Path) {
     }
     #[cfg(not(unix))]
     let _ = dir;
-}
-
-/// Öffnet die Login-Seite im Standardbrowser (Fehler egal: die UI zeigt die URL zum Kopieren).
-///
-/// Die URL enthält im Fragment den Fork-Schlüssel und darf daher nicht in die Kommandozeile
-/// (`/proc/<pid>/cmdline` ist für andere Nutzer lesbar): Übergeben wird eine nur für den
-/// Besitzer lesbare HTML-Datei, die auf die Login-Seite weiterleitet.
-fn open_browser(url: &str) {
-    let page = match proton_adapter::write_login_redirect(url) {
-        Ok(page) => page,
-        Err(err) => {
-            tracing::warn!(error = %err, "login page not written; browser not opened");
-            return;
-        }
-    };
-    match std::process::Command::new("xdg-open").arg(&page).spawn() {
-        // Abwarten (kein Zombie-Prozess), dann die Datei entfernen, sobald der Browser sie
-        // sicher gelesen hat.
-        Ok(mut child) => drop(std::thread::spawn(move || {
-            let _ = child.wait();
-            std::thread::sleep(std::time::Duration::from_secs(60));
-            let _ = fs::remove_file(page);
-        })),
-        Err(err) => {
-            let _ = fs::remove_file(&page);
-            tracing::warn!(error = %err, "xdg-open failed");
-        }
-    }
 }
 
 #[cfg(test)]

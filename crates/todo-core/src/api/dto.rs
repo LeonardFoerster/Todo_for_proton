@@ -7,10 +7,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     domain::{
-        Due, LocalDay, NaiveDate, Priority, SortKey, TagId, Task, TaskId, TaskList, TaskListId,
-        TaskParts, TaskStatus, Timestamp,
+        ChecklistItem, ChecklistItemId, Due, Frequency, LocalDay, NaiveDate, Priority, Recurrence,
+        RecurrenceAnchor, SortKey, Tag, TagId, Task, TaskId, TaskList, TaskListId, TaskParts,
+        TaskStatus, Timestamp, WeekdaySet,
     },
-    ports::{Page, SmartView, TaskQuery, TaskSummary},
+    ports::{Page, SmartView, TaskQuery, TaskSort, TaskSummary},
     CoreError, CoreResult,
 };
 
@@ -189,6 +190,84 @@ pub struct TaskDto {
     pub created_at: String,
     pub updated_at: String,
     pub completed_at: Option<String>,
+    /// Im Papierkorb seit (ADR-031).
+    pub trashed_at: Option<String>,
+    /// Wiederholung (N4, ADR-028).
+    pub recurrence: Option<RecurrenceDto>,
+    /// Checkliste (N8, ADR-034), in Anzeigereihenfolge.
+    pub checklist: Vec<ChecklistItemDto>,
+    /// Tag-IDs (ADR-035); Namen über `list_tags`.
+    pub tags: Vec<String>,
+}
+
+/// Ein Tag (ADR-035).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TagDto {
+    pub id: String,
+    /// Ohne `#`.
+    pub name: String,
+}
+
+impl From<&Tag> for TagDto {
+    fn from(tag: &Tag) -> Self {
+        Self {
+            id: tag.id().to_string(),
+            name: tag.name().to_owned(),
+        }
+    }
+}
+
+/// Tag-IDs von außen.
+///
+/// # Errors
+/// `CoreError::Validation` bei einer ungültigen ID.
+pub fn tag_ids(ids: &[String]) -> CoreResult<Vec<TagId>> {
+    ids.iter()
+        .map(|id| TagId::parse(id).map_err(|e| CoreError::Validation(e.to_string())))
+        .collect()
+}
+
+/// Punkt einer Checkliste. Beim Schreiben bekommt ein Punkt mit leerer `id` eine neue.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct ChecklistItemDto {
+    pub id: String,
+    pub text: String,
+    pub done: bool,
+}
+
+impl From<&ChecklistItem> for ChecklistItemDto {
+    fn from(item: &ChecklistItem) -> Self {
+        Self {
+            id: item.id().to_string(),
+            text: item.text().to_owned(),
+            done: item.is_done(),
+        }
+    }
+}
+
+impl TryFrom<&ChecklistItemDto> for ChecklistItem {
+    type Error = CoreError;
+
+    fn try_from(dto: &ChecklistItemDto) -> CoreResult<Self> {
+        let id = if dto.id.is_empty() {
+            ChecklistItemId::new()
+        } else {
+            ChecklistItemId::parse(&dto.id).map_err(|e| CoreError::Validation(e.to_string()))?
+        };
+        ChecklistItem::new(id, &dto.text, dto.done)
+    }
+}
+
+/// Liste von Punkten in Domain-Form (neue IDs für leere).
+///
+/// # Errors
+/// `CoreError::Validation` bei ungültigem Punkt.
+pub fn checklist_from_dto(items: &[ChecklistItemDto]) -> CoreResult<Vec<ChecklistItem>> {
+    items.iter().map(TryInto::try_into).collect()
 }
 
 impl From<&Task> for TaskDto {
@@ -205,12 +284,20 @@ impl From<&Task> for TaskDto {
             created_at: iso(task.created_at()),
             updated_at: iso(task.updated_at()),
             completed_at: task.completed_at().map(iso),
+            trashed_at: task.trashed_at().map(iso),
+            recurrence: task.recurrence().map(RecurrenceDto::from),
+            checklist: task
+                .checklist()
+                .iter()
+                .map(ChecklistItemDto::from)
+                .collect(),
+            tags: task.tags().iter().map(ToString::to_string).collect(),
         }
     }
 }
 
 /// Für `restore_tasks`: alle Felder zurück in Domain-Form (Prüfung der Invarianten erst in
-/// [`Task::from_parts`]). Unterteilungen und Tags kennt das DTO noch nicht – leer.
+/// [`Task::from_parts`]). Unterteilungen kennt das DTO nicht – leer.
 impl TryFrom<&TaskDto> for TaskParts {
     type Error = CoreError;
 
@@ -224,11 +311,15 @@ impl TryFrom<&TaskDto> for TaskParts {
             status: dto.status.into(),
             priority: dto.priority.into(),
             due: dto.due.clone().map(TryInto::try_into).transpose()?,
-            tags: Vec::new(),
+            tags: tag_ids(&dto.tags)?,
             sort_key: SortKey::parse(&dto.sort_key)?,
             created_at: parse_iso(&dto.created_at)?,
             updated_at: parse_iso(&dto.updated_at)?,
             completed_at: dto.completed_at.as_deref().map(parse_iso).transpose()?,
+            // Wiederhergestellt wird nie in den Papierkorb.
+            trashed_at: None,
+            recurrence: dto.recurrence.as_ref().map(TryInto::try_into).transpose()?,
+            checklist: checklist_from_dto(&dto.checklist)?,
         })
     }
 }
@@ -247,6 +338,17 @@ pub struct TaskSummaryDto {
     pub has_notes: bool,
     pub sort_key: String,
     pub completed_at: Option<String>,
+    /// Im Papierkorb seit (ADR-031; nur in der Ansicht „Papierkorb“ gesetzt).
+    pub trashed_at: Option<String>,
+    /// Wirksame Serie (N4) – Symbol in der Zeile.
+    pub recurring: bool,
+    /// Checkliste (N8): erledigte / alle Punkte („2/5“; 0 Punkte = keine Anzeige).
+    pub checklist_done: u16,
+    pub checklist_total: u16,
+    /// Tag-IDs (ADR-035).
+    pub tags: Vec<String>,
+    /// Mit Notizen verknüpft (ADR-036).
+    pub has_links: bool,
 }
 
 impl From<&TaskSummary> for TaskSummaryDto {
@@ -261,6 +363,12 @@ impl From<&TaskSummary> for TaskSummaryDto {
             has_notes: s.has_notes,
             sort_key: s.sort_key.to_string(),
             completed_at: s.completed_at.map(iso),
+            trashed_at: s.trashed_at.map(iso),
+            recurring: s.recurring,
+            checklist_done: s.checklist_done,
+            checklist_total: s.checklist_total,
+            tags: s.tags.iter().map(ToString::to_string).collect(),
+            has_links: s.has_links,
         }
     }
 }
@@ -302,6 +410,14 @@ pub struct CreateTaskDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional = nullable))]
     pub due: Option<DueDto>,
+    /// Wiederholung; ohne `due` wird das erste Vorkommen ab heute die Fälligkeit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub recurrence: Option<RecurrenceDto>,
+    /// Tag-IDs (ADR-035); Namen vorher mit `ensure_tag` anlegen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub tags: Option<Vec<String>>,
 }
 
 /// Zu ändernde Felder; fehlend = unverändert. `due: null` entfernt die Fälligkeit,
@@ -326,6 +442,22 @@ pub struct TaskPatchDto {
     )]
     #[cfg_attr(test, ts(as = "Option<DueDto>", optional = nullable))]
     pub due: Option<Option<DueDto>>,
+    /// `null` beendet die Wiederholung.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "double_option"
+    )]
+    #[cfg_attr(test, ts(as = "Option<RecurrenceDto>", optional = nullable))]
+    pub recurrence: Option<Option<RecurrenceDto>>,
+    /// Ersetzt die ganze Checkliste (ADR-034); leere `id` = neuer Punkt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub checklist: Option<Vec<ChecklistItemDto>>,
+    /// Ersetzt die Tags (IDs, ADR-035).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub tags: Option<Vec<String>>,
 }
 
 /// Unterscheidet bei `Option<Option<T>>` „Feld fehlt" (`None`) von „Feld ist null" (`Some(None)`).
@@ -347,6 +479,153 @@ mod double_option {
     ) -> Result<Option<Option<T>>, D::Error> {
         Option::<T>::deserialize(d).map(Some)
     }
+}
+
+/// Häufigkeit einer Wiederholung (N4, ADR-028).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum FrequencyDto {
+    Daily,
+    Weekly,
+    Monthly,
+    Yearly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum RecurrenceAnchorDto {
+    /// Fester Rhythmus ab der Fälligkeit.
+    Schedule,
+    /// Ab dem Tag des Abhakens.
+    Completion,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum WeekdayDto {
+    Mo,
+    Tu,
+    We,
+    Th,
+    Fr,
+    Sa,
+    Su,
+}
+
+const WEEKDAY_ORDER: [WeekdayDto; 7] = [
+    WeekdayDto::Mo,
+    WeekdayDto::Tu,
+    WeekdayDto::We,
+    WeekdayDto::Th,
+    WeekdayDto::Fr,
+    WeekdayDto::Sa,
+    WeekdayDto::Su,
+];
+
+/// Wiederholungsregel (ADR-028). `weekdays` nur bei `weekly` (leer = Wochentag der Fälligkeit),
+/// `monthDay` nur bei `monthly`/`yearly` (31 = letzter Tag), `until` = `YYYY-MM-DD`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct RecurrenceDto {
+    pub freq: FrequencyDto,
+    pub interval: u16,
+    #[serde(default)]
+    pub weekdays: Vec<WeekdayDto>,
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub month_day: Option<u8>,
+    pub anchor: RecurrenceAnchorDto,
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub until: Option<String>,
+}
+
+impl From<&Recurrence> for RecurrenceDto {
+    fn from(r: &Recurrence) -> Self {
+        Self {
+            freq: match r.freq() {
+                Frequency::Daily => FrequencyDto::Daily,
+                Frequency::Weekly => FrequencyDto::Weekly,
+                Frequency::Monthly => FrequencyDto::Monthly,
+                Frequency::Yearly => FrequencyDto::Yearly,
+            },
+            interval: r.interval(),
+            weekdays: r
+                .weekdays()
+                .iter()
+                .map(|d| WEEKDAY_ORDER[d.num_days_from_monday() as usize])
+                .collect(),
+            month_day: r.month_day(),
+            anchor: match r.anchor() {
+                RecurrenceAnchor::Schedule => RecurrenceAnchorDto::Schedule,
+                RecurrenceAnchor::Completion => RecurrenceAnchorDto::Completion,
+            },
+            until: r.until().map(|d| d.to_string()),
+        }
+    }
+}
+
+impl TryFrom<&RecurrenceDto> for Recurrence {
+    type Error = CoreError;
+
+    fn try_from(dto: &RecurrenceDto) -> CoreResult<Self> {
+        let mut weekdays = WeekdaySet::EMPTY;
+        for d in &dto.weekdays {
+            let i = WEEKDAY_ORDER.iter().position(|w| w == d).unwrap_or(0);
+            weekdays = weekdays.with(
+                chrono::Weekday::try_from(u8::try_from(i).unwrap_or(0))
+                    .unwrap_or(chrono::Weekday::Mon),
+            );
+        }
+        let until = dto
+            .until
+            .as_deref()
+            .map(|s| {
+                s.parse::<NaiveDate>()
+                    .map_err(|_| CoreError::Validation(format!("invalid date {s:?}")))
+            })
+            .transpose()?;
+        Recurrence::new(
+            match dto.freq {
+                FrequencyDto::Daily => Frequency::Daily,
+                FrequencyDto::Weekly => Frequency::Weekly,
+                FrequencyDto::Monthly => Frequency::Monthly,
+                FrequencyDto::Yearly => Frequency::Yearly,
+            },
+            dto.interval,
+            weekdays,
+            dto.month_day,
+            match dto.anchor {
+                RecurrenceAnchorDto::Schedule => RecurrenceAnchor::Schedule,
+                RecurrenceAnchorDto::Completion => RecurrenceAnchor::Completion,
+            },
+            until,
+        )
+    }
+}
+
+/// Abgehaktes Vorkommen einer Serie (für „Rückgängig“ per `undo_occurrence`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct OccurrenceDto {
+    pub series_id: String,
+    /// `null`, wenn die Serie damit geendet hat.
+    pub occurrence_id: Option<String>,
+    pub previous_due: DueDto,
+}
+
+/// Ergebnis von `complete_tasks`: geänderte Tasks (Verlaufseinträge dahinter) und die Vorkommen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct CompleteResultDto {
+    pub tasks: Vec<TaskDto>,
+    pub occurrences: Vec<OccurrenceDto>,
 }
 
 /// Ziel einer Verschiebung (Semantik wie `MoveTaskInput`).
@@ -425,6 +704,8 @@ pub enum ViewDto {
     },
     All,
     Completed,
+    /// Papierkorb (ADR-031).
+    Trash,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -438,6 +719,36 @@ pub struct TaskQueryDto {
     #[serde(default)]
     #[cfg_attr(test, ts(optional = nullable))]
     pub tag: Option<String>,
+    /// Nur diese Priorität (N10-01).
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub priority: Option<PriorityDto>,
+    /// Sortierung (N10-01); fehlt = wie die Ansicht.
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub sort: Option<TaskSortDto>,
+}
+
+/// Sortierung einer Ansicht (ADR-037).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum TaskSortDto {
+    View,
+    Due,
+    Priority,
+    Title,
+}
+
+impl From<TaskSortDto> for TaskSort {
+    fn from(s: TaskSortDto) -> Self {
+        match s {
+            TaskSortDto::View => Self::View,
+            TaskSortDto::Due => Self::Due,
+            TaskSortDto::Priority => Self::Priority,
+            TaskSortDto::Title => Self::Title,
+        }
+    }
 }
 
 impl TryFrom<&TaskQueryDto> for TaskQuery {
@@ -451,11 +762,14 @@ impl TryFrom<&TaskQueryDto> for TaskQuery {
             ViewDto::Upcoming { day } => SmartView::Upcoming(day.try_into()?),
             ViewDto::All => SmartView::All,
             ViewDto::Completed => SmartView::Completed,
+            ViewDto::Trash => SmartView::Trash,
         };
         Ok(Self {
             view,
             status: dto.status.map(Into::into),
             tag: dto.tag.as_deref().map(TagId::parse).transpose()?,
+            priority: dto.priority.map(Into::into),
+            sort: dto.sort.map(Into::into).unwrap_or_default(),
         })
     }
 }

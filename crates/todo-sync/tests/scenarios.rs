@@ -106,6 +106,48 @@ fn delete_beats_concurrent_edit() {
     assert_converged(&[&a, &b]);
 }
 
+/// Papierkorb (ADR-031): A legt in den Papierkorb, B bearbeitet später → beide Änderungen bleiben
+/// (LWW-Feld statt Tombstone); A holt sie zurück → wieder sichtbar, mit dem Titel von B. Endgültig
+/// löschen auf B ist dann wieder „Delete gewinnt“.
+#[test]
+fn trash_and_concurrent_edit_both_survive() {
+    let world = World::new();
+    let a = world.device("a");
+    let b = world.device("b");
+    let task = a.add("Steuer");
+    a.sync();
+    b.sync();
+
+    block_on(a.api.trash_tasks(vec![task.id.clone()])).expect("trash");
+    b.clock.advance(60_000);
+    b.rename(&task.id, "Steuer 2025");
+
+    b.sync();
+    a.sync();
+    b.sync();
+    for device in [&a, &b] {
+        let t = device.task(&task.id).expect("noch da");
+        assert_eq!(t.title, "Steuer 2025");
+        assert!(t.trashed_at.is_some(), "im Papierkorb");
+        assert!(device.all().is_empty());
+        assert_eq!(device.trash().len(), 1);
+    }
+    assert_converged(&[&a, &b]);
+
+    block_on(a.api.untrash_tasks(vec![task.id.clone()])).expect("untrash");
+    a.sync();
+    b.sync();
+    assert_eq!(b.titles(), ["Steuer 2025"]);
+    assert_converged(&[&a, &b]);
+
+    block_on(b.api.trash_tasks(vec![task.id.clone()])).expect("trash");
+    assert_eq!(block_on(b.api.empty_task_trash()).expect("empty"), 1);
+    b.sync();
+    a.sync();
+    assert_eq!(a.task(&task.id), None);
+    assert_converged(&[&a, &b]);
+}
+
 /// Szenario 3: Beide verschieben verschiedene Tasks in derselben Liste (an dieselbe Stelle → gleiche
 /// Sort-Keys) → identische Reihenfolge auf beiden.
 #[test]
@@ -291,4 +333,219 @@ fn clock_two_hours_ahead_stays_consistent() {
     let c = world.device("c");
     c.sync();
     assert_converged(&[&a, &b, &c]);
+}
+
+fn today(date: &str) -> Option<todo_core::api::dto::LocalDayDto> {
+    Some(todo_core::api::dto::LocalDayDto {
+        date: date.into(),
+        start: format!("{date}T00:00:00.000Z"),
+        end: format!("{date}T23:59:59.999Z"),
+    })
+}
+
+fn daily_series(device: &Device, due: &str) -> todo_core::api::dto::TaskDto {
+    use todo_core::api::dto::{CreateTaskDto, FrequencyDto, RecurrenceAnchorDto, RecurrenceDto};
+    block_on(device.api.create_task(CreateTaskDto {
+        title: "Blumen gießen".into(),
+        due: Some(DueDto::Date { date: due.into() }),
+        recurrence: Some(RecurrenceDto {
+            freq: FrequencyDto::Daily,
+            interval: 1,
+            weekdays: Vec::new(),
+            month_day: None,
+            anchor: RecurrenceAnchorDto::Schedule,
+            until: None,
+        }),
+        ..CreateTaskDto::default()
+    }))
+    .expect("create series")
+}
+
+/// Serien (ADR-028): A und B haken offline dasselbe Vorkommen ab → **ein** Verlaufseintrag
+/// (deterministische ID), gleiche Fälligkeit.
+#[test]
+fn completing_the_same_occurrence_on_two_devices_gives_one_entry() {
+    let world = World::new();
+    let a = world.device("a");
+    let b = world.device("b");
+    let series = daily_series(&a, "2026-10-21");
+    a.sync();
+    b.sync();
+
+    let ra = block_on(
+        a.api
+            .complete_tasks(vec![series.id.clone()], true, today("2026-10-21")),
+    )
+    .unwrap();
+    b.clock.advance(50);
+    let rb = block_on(
+        b.api
+            .complete_tasks(vec![series.id.clone()], true, today("2026-10-21")),
+    )
+    .unwrap();
+    assert_eq!(
+        ra.occurrences[0].occurrence_id,
+        rb.occurrences[0].occurrence_id
+    );
+
+    a.sync();
+    b.sync();
+    a.sync();
+    for device in [&a, &b] {
+        assert_eq!(
+            device.titles(),
+            ["Blumen gießen", "Blumen gießen"],
+            "Serie + ein Eintrag"
+        );
+        let s = device.task(&series.id).unwrap();
+        assert_eq!(
+            s.due,
+            Some(DueDto::Date {
+                date: "2026-10-22".into()
+            })
+        );
+    }
+    assert_converged(&[&a, &b]);
+}
+
+/// A überspringt, B hakt ab (beide offline) → beide schreiben dieselbe nächste Fälligkeit; Bs
+/// Verlaufseintrag bleibt. Ergebnis: Serie am 22., ein Eintrag für den 21.
+#[test]
+fn skip_and_complete_of_the_same_occurrence_converge() {
+    let world = World::new();
+    let a = world.device("a");
+    let b = world.device("b");
+    let series = daily_series(&a, "2026-10-21");
+    a.sync();
+    b.sync();
+
+    block_on(
+        a.api
+            .skip_occurrence(series.id.clone(), today("2026-10-21")),
+    )
+    .unwrap();
+    b.clock.advance(50);
+    block_on(
+        b.api
+            .complete_tasks(vec![series.id.clone()], true, today("2026-10-21")),
+    )
+    .unwrap();
+
+    b.sync();
+    a.sync();
+    b.sync();
+    for device in [&a, &b] {
+        assert_eq!(device.titles().len(), 2);
+        let s = device.task(&series.id).unwrap();
+        assert_eq!(
+            s.due,
+            Some(DueDto::Date {
+                date: "2026-10-22".into()
+            })
+        );
+        assert_eq!(s.status, todo_core::api::dto::TaskStatusDto::Open);
+    }
+    assert_converged(&[&a, &b]);
+}
+
+/// Tags (ADR-035): Beide legen offline „#Uni“ an → nach dem Sync **ein** Tag (abgeleitete ID).
+#[test]
+fn same_tag_created_offline_on_two_devices_is_one_tag() {
+    let world = World::new();
+    let a = world.device("a");
+    let b = world.device("b");
+    a.sync();
+    b.sync();
+    let ta = block_on(a.api.ensure_tag("Uni".into())).unwrap();
+    b.clock.advance(50);
+    let tb = block_on(b.api.ensure_tag("#uni".into())).unwrap();
+    assert_eq!(ta.id, tb.id);
+    a.sync();
+    b.sync();
+    a.sync();
+    for device in [&a, &b] {
+        let tags = block_on(device.api.list_tags()).unwrap();
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].name, "uni", "später geschrieben gewinnt");
+    }
+    assert_converged(&[&a, &b]);
+}
+
+/// A benennt einen Tag um, B weist ihn offline einer Task zu → beides bleibt.
+#[test]
+fn tag_rename_and_concurrent_assignment_both_survive() {
+    let world = World::new();
+    let a = world.device("a");
+    let b = world.device("b");
+    let tag = block_on(a.api.ensure_tag("uni".into())).unwrap();
+    let task = a.add("Blatt 3");
+    a.sync();
+    b.sync();
+
+    block_on(a.api.rename_tag(tag.id.clone(), "studium".into())).unwrap();
+    b.clock.advance(50);
+    b.update(
+        &task.id,
+        TaskPatchDto {
+            tags: Some(vec![tag.id.clone()]),
+            ..TaskPatchDto::default()
+        },
+    );
+    a.sync();
+    b.sync();
+    a.sync();
+    for device in [&a, &b] {
+        let tags = block_on(device.api.list_tags()).unwrap();
+        assert_eq!(
+            tags.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+            ["studium"]
+        );
+        assert_eq!(
+            device.task(&task.id).unwrap().tags,
+            std::slice::from_ref(&tag.id)
+        );
+    }
+    assert_converged(&[&a, &b]);
+
+    // Löschen auf B nimmt den Tag überall von der Task.
+    assert_eq!(block_on(b.api.delete_tag(tag.id.clone())).unwrap(), 1);
+    b.sync();
+    a.sync();
+    assert!(block_on(a.api.list_tags()).unwrap().is_empty());
+    assert!(a.task(&task.id).unwrap().tags.is_empty());
+    assert_converged(&[&a, &b]);
+}
+
+/// Verknüpfungen (ADR-036): Beide verknüpfen offline dieselbe Task mit derselben Notiz → **eine**
+/// Verknüpfung (ID aus beiden Enden); Lösen auf einem Gerät löst sie überall.
+#[test]
+fn same_link_on_two_devices_is_one_and_unlinks_everywhere() {
+    use todo_core::api::note_dto::NoteKindDto;
+    let world = World::new();
+    let a = world.device("a");
+    let b = world.device("b");
+    let task = a.add("Blatt 3");
+    let note = block_on(a.api.create_note(None, NoteKindDto::Markdown)).unwrap();
+    a.sync();
+    b.sync();
+    let la = block_on(a.api.link_task_note(task.id.clone(), note.id.clone())).unwrap();
+    b.clock.advance(50);
+    let lb = block_on(b.api.link_task_note(task.id.clone(), note.id.clone())).unwrap();
+    assert_eq!(la.id, lb.id);
+    a.sync();
+    b.sync();
+    a.sync();
+    for device in [&a, &b] {
+        let linked = block_on(device.api.task_links(task.id.clone())).unwrap();
+        assert_eq!(linked.len(), 1);
+        assert_eq!(linked[0].note_id, note.id);
+        assert!(device.all()[0].has_links);
+    }
+    block_on(b.api.unlink(lb.id.clone())).unwrap();
+    b.sync();
+    a.sync();
+    assert!(block_on(a.api.task_links(task.id.clone()))
+        .unwrap()
+        .is_empty());
+    assert_converged(&[&a, &b]);
 }

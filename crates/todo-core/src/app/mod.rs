@@ -5,19 +5,35 @@
 
 mod complete_task;
 mod complete_tasks;
+mod create_note;
+mod create_note_folder;
 mod create_task;
 mod create_task_list;
 mod delete_task;
 mod delete_task_list;
 mod delete_tasks;
+mod edit_note;
 mod ensure_inbox;
+mod export_data;
+mod import_notes;
+mod links;
+mod move_note_items;
 mod move_task;
 mod move_task_list;
 mod move_tasks;
+mod notes;
+#[cfg(test)]
+mod notes_sync_tests;
+mod purge_notes;
+mod recurring;
 mod rename_task_list;
 mod reopen_task;
 mod restore_tasks;
 mod set_dues;
+mod tags;
+mod trash_notes;
+mod trash_tasks;
+mod update_note_body;
 mod update_task;
 
 use std::{fmt, sync::Arc};
@@ -25,25 +41,64 @@ use std::{fmt, sync::Arc};
 use futures::lock::{Mutex, MutexGuard};
 
 pub use complete_task::{CompleteTask, CompleteTaskInput};
-pub use complete_tasks::{CompleteTasks, CompleteTasksInput};
+pub use complete_tasks::{
+    CompleteTasks, CompleteTasksInput, CompleteTasksOutput, CompletedOccurrence,
+};
+pub use create_note::{CreateNote, CreateNoteInput};
+pub use create_note_folder::{
+    CreateNoteFolder, CreateNoteFolderInput, RenameNoteFolder, RenameNoteFolderInput,
+};
 pub use create_task::{CreateTask, CreateTaskInput};
 pub use create_task_list::{CreateTaskList, CreateTaskListInput};
 pub use delete_task::{DeleteTask, DeleteTaskInput};
-pub use delete_task_list::{DeleteTaskList, DeleteTaskListInput, DeleteTaskListOutput};
+pub use delete_task_list::{
+    DeleteTaskList, DeleteTaskListInput, DeleteTaskListOutput, MergeTaskLists, MergeTaskListsInput,
+};
 pub use delete_tasks::{DeleteTasks, DeleteTasksInput};
+pub use edit_note::{RenameNote, RenameNoteInput, SetNoteKind, SetNoteKindInput};
 pub use ensure_inbox::EnsureInbox;
+pub use export_data::{
+    DataSnapshot, ExportData, ExportNote, ExportNotes, ImportData, ImportDataInput,
+    ImportDataReport, ImportList, ImportTag, IMPORT_TASK_CHUNK,
+};
+pub use import_notes::{
+    ImportNoteFile, ImportNotes, ImportNotesInput, ImportReport, ImportSkip, IMPORT_CHUNK,
+};
+pub use links::{LinkTaskNote, ListLinks, PurgeDanglingLinks, UnlinkTaskNote};
+pub use move_note_items::{
+    MoveNote, MoveNoteFolder, MoveNoteFolderInput, MoveNoteInput, NoteTarget,
+};
 pub use move_task::{MoveTask, MoveTaskInput};
 pub use move_task_list::{MoveTaskList, MoveTaskListInput};
 pub use move_tasks::{MoveTasks, MoveTasksInput};
+pub use notes::{NoteItem, NOTE_BULK_LIMIT_MAX};
+pub use purge_notes::{
+    EmptyNoteTrash, ListNoteTrash, NoteTrashEntry, PurgeExpiredNotes, PurgeNoteItems,
+    PurgeNoteItemsInput, NOTE_TRASH_RETENTION_MS,
+};
+pub use recurring::{SkipOccurrence, SkipOccurrenceInput, UndoOccurrence, UndoOccurrenceInput};
 pub use rename_task_list::{RenameTaskList, RenameTaskListInput};
 pub use reopen_task::{ReopenTask, ReopenTaskInput};
 pub use restore_tasks::{RestoreTasks, RestoreTasksInput};
 pub use set_dues::{SetDues, SetDuesInput};
+pub use tags::{DeleteTag, EnsureTag, RenameTag, RenameTagInput};
+pub use trash_notes::{
+    RestoreNoteItems, RestoreNoteItemsInput, TrashNoteItems, TrashNoteItemsInput,
+};
+pub use trash_tasks::{
+    EmptyTaskTrash, PurgeExpiredTasks, PurgeTasks, PurgeTasksInput, TrashTasks, TrashTasksInput,
+    UntrashTasks, UntrashTasksInput, TASK_TRASH_RETENTION_MS,
+};
+pub use update_note_body::{
+    DiscardEmptyNote, DiscardEmptyNoteInput, UpdateNoteBody, UpdateNoteBodyInput,
+};
 pub use update_task::{TaskPatch, UpdateTask, UpdateTaskInput};
 
 use crate::{
     domain::{SortKey, Task, TaskId},
-    ports::{Clock, PageRequest, TaskQuery, TaskRepository, TaskSummary, PAGE_LIMIT_MAX},
+    ports::{
+        Clock, PageRequest, TaskQuery, TaskRepository, TaskSummary, TimeZones, PAGE_LIMIT_MAX,
+    },
     CoreError, CoreResult,
 };
 
@@ -53,6 +108,8 @@ use crate::{
 pub struct Deps {
     pub repo: Arc<dyn TaskRepository>,
     pub clock: Arc<dyn Clock>,
+    /// Zeitzonen für Serien mit Uhrzeit (N4); ohne Port gehen nur ganztägige Serien.
+    pub zones: Option<Arc<dyn TimeZones>>,
     order: Arc<Mutex<()>>,
 }
 
@@ -62,8 +119,16 @@ impl Deps {
         Self {
             repo,
             clock,
+            zones: None,
             order: Arc::default(),
         }
+    }
+
+    /// Mit Zeitzonen (Serien mit Uhrzeit, N4).
+    #[must_use]
+    pub fn with_zones(mut self, zones: Arc<dyn TimeZones>) -> Self {
+        self.zones = Some(zones);
+        self
     }
 
     /// Serialisiert Use-Cases, die eine Reihenfolge lesen und darauf neue Sort-Keys committen
@@ -106,7 +171,7 @@ pub(crate) async fn load_task(repo: &dyn TaskRepository, id: TaskId) -> CoreResu
 }
 
 /// Höchstzahl an Tasks pro Sammel-Aufruf (`CompleteTasks`, `DeleteTasks`, `MoveTasks`,
-/// `RestoreTasks`, `SetDues`).
+/// `RestoreTasks`, `SetDues`, Papierkorb).
 pub const BULK_LIMIT_MAX: usize = 2_000;
 
 /// Prüft die Obergrenze und entfernt doppelte IDs (erstes Vorkommen bleibt).
@@ -160,8 +225,47 @@ mod send_tests {
                 name: "x".into(),
             }),
         );
-        assert_send(DeleteTaskList::new(deps).execute(DeleteTaskListInput {
-            id: TaskListId::new(),
+        assert_send(
+            DeleteTaskList::new(deps.clone()).execute(DeleteTaskListInput {
+                id: TaskListId::new(),
+            }),
+        );
+        let note = crate::domain::NoteId::new();
+        assert_send(CreateNote::new(deps.clone()).execute(CreateNoteInput {
+            folder: None,
+            kind: crate::domain::NoteKind::Text,
+        }));
+        assert_send(
+            UpdateNoteBody::new(deps.clone()).execute(UpdateNoteBodyInput {
+                id: note,
+                text: String::new(),
+                base_rev: None,
+            }),
+        );
+        assert_send(MoveNote::new(deps.clone()).execute(MoveNoteInput {
+            id: note,
+            target: NoteTarget {
+                folder: None,
+                after: None,
+                before: None,
+            },
+        }));
+        assert_send(EmptyNoteTrash::new(deps.clone()).execute());
+        assert_send(TrashTasks::new(deps.clone()).execute(TrashTasksInput { ids: Vec::new() }));
+        assert_send(EmptyTaskTrash::new(deps.clone()).execute());
+        assert_send(ExportData::new(deps.clone()).execute());
+        assert_send(ExportNotes::new(deps.clone()).execute());
+        assert_send(ImportData::new(deps.clone()).execute(ImportDataInput {
+            lists: Vec::new(),
+            tasks: Vec::new(),
+            tags: Vec::new(),
+        }));
+        assert_send(PurgeExpiredTasks::new(deps.clone()).execute());
+        assert_send(PurgeExpiredNotes::new(deps.clone()).execute());
+        assert_send(ListNoteTrash::new(deps.clone()).execute());
+        assert_send(ImportNotes::new(deps).execute(ImportNotesInput {
+            root: "x".into(),
+            files: Vec::new(),
         }));
     }
 }

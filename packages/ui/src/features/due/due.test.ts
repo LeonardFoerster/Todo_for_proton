@@ -8,6 +8,7 @@ import { toasts } from "../../components/toasts.svelte";
 import { dueToInputTime } from "../../lib/format-date";
 import { addDays, isoDate } from "../../lib/local-day";
 import { dueChoices, dueResult } from "./due-actions";
+import DuePicker from "./DuePicker.svelte";
 
 beforeEach(() => {
   location.hash = "";
@@ -136,5 +137,30 @@ describe("Fälligkeit per Tastatur", () => {
     await user.keyboard("{Shift>}T{/Shift}");
     await waitFor(async () => expect(await dueOf(client, ids[1])).toEqual(date(1)));
     expect(await dueOf(client, ids[0])).toBeNull();
+  });
+});
+
+describe("DuePicker (P5-08)", () => {
+  it("parses „fr 14:00“, keeps the time on a picked day and builds a Monday-first month", async () => {
+    const changes: (DueDto | null)[] = [];
+    const user = userEvent.setup();
+    const { unmount } = render(DuePicker, { props: { value: null, onchange: (d: DueDto | null) => changes.push(d) } });
+    await user.type(screen.getByRole("textbox", { name: "Fällig am" }), "fr 14:00{Enter}");
+    const friday = changes.at(-1)!;
+    expect(friday.kind).toBe("dateTime");
+    expect(new Date((friday as { at: string }).at).getDay()).toBe(5);
+    expect(dueToInputTime(friday)).toBe("14:00");
+    unmount();
+
+    // Mit Uhrzeit: ein Tag im Raster behält sie; die erste Spalte ist Montag.
+    render(DuePicker, { props: { value: friday, onchange: (d: DueDto | null) => changes.push(d) } });
+    const grid = screen.getByRole("grid");
+    const firstCell = within(grid).getAllByRole("gridcell")[0];
+    expect(firstCell.getAttribute("aria-label")).toMatch(/^Montag/);
+    const cells = within(grid).getAllByRole("gridcell").filter((c) => !c.classList.contains("outside"));
+    await user.click(cells[0]);
+    const picked = changes.at(-1)!;
+    expect(dueToInputTime(picked)).toBe("14:00");
+    expect(new Date((picked as { at: string }).at).getDate()).toBe(1);
   });
 });

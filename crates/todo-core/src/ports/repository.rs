@@ -7,13 +7,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{MaybeSend, MaybeSync};
+use super::{MaybeSend, MaybeSync, NoteRepository};
 use crate::{
     domain::{
-        DeviceId, Due, LocalDay, Priority, SortKey, TagId, Task, TaskId, TaskList, TaskListId,
-        TaskStatus, Timestamp,
+        DeviceId, Due, Link, LinkId, LocalDay, Note, NoteFolder, NoteFolderId, NoteId, Priority,
+        SortKey, Tag, TagId, Task, TaskId, TaskList, TaskListId, TaskStatus, Timestamp,
     },
-    sync::{EntityState, Op, RemoteBatch, RemoteReceipt},
+    sync::{EntityState, NoteConflict, Op, RemoteBatch, RemoteReceipt},
     CoreError, CoreResult,
 };
 
@@ -25,6 +25,12 @@ pub const PAGE_LIMIT_MAX: u32 = 500;
 pub enum EntityRef {
     Task(TaskId),
     TaskList(TaskListId),
+    Note(NoteId),
+    NoteFolder(NoteFolderId),
+    /// Seit ADR-035.
+    Tag(TagId),
+    /// Seit ADR-036.
+    Link(LinkId),
 }
 
 /// Eine einzelne Domain-Änderung.
@@ -34,6 +40,15 @@ pub enum Change {
     UpsertTask(Task),
     /// Liste anlegen oder vollständig ersetzen.
     UpsertList(TaskList),
+    /// Notiz anlegen oder ersetzen. Weicht `body` vom bisherigen Inhalt ab, entsteht eine neue
+    /// Revision auf der Basis `body_rev` (ADR-029); gespeichert wird danach der aufgelöste Inhalt.
+    UpsertNote(Note),
+    /// Notiz-Ordner anlegen oder ersetzen.
+    UpsertNoteFolder(NoteFolder),
+    /// Tag anlegen oder ersetzen (ADR-035).
+    UpsertTag(Tag),
+    /// Verknüpfung anlegen (ADR-036; unveränderlich, nur löschen).
+    UpsertLink(Link),
     /// Entity entfernen. Unbekannte IDs sind kein Fehler (idempotent, wichtig für den Sync).
     Delete(EntityRef),
 }
@@ -45,6 +60,10 @@ impl Change {
         match self {
             Self::UpsertTask(task) => EntityRef::Task(task.id()),
             Self::UpsertList(list) => EntityRef::TaskList(list.id()),
+            Self::UpsertNote(note) => EntityRef::Note(note.id()),
+            Self::UpsertNoteFolder(folder) => EntityRef::NoteFolder(folder.id()),
+            Self::UpsertTag(tag) => EntityRef::Tag(tag.id()),
+            Self::UpsertLink(link) => EntityRef::Link(link.id()),
             Self::Delete(entity) => *entity,
         }
     }
@@ -77,6 +96,30 @@ impl ChangeSet {
     }
 
     #[must_use]
+    pub fn upsert_note(mut self, note: Note) -> Self {
+        self.changes.push(Change::UpsertNote(note));
+        self
+    }
+
+    #[must_use]
+    pub fn upsert_note_folder(mut self, folder: NoteFolder) -> Self {
+        self.changes.push(Change::UpsertNoteFolder(folder));
+        self
+    }
+
+    #[must_use]
+    pub fn upsert_tag(mut self, tag: Tag) -> Self {
+        self.changes.push(Change::UpsertTag(tag));
+        self
+    }
+
+    #[must_use]
+    pub fn upsert_link(mut self, link: Link) -> Self {
+        self.changes.push(Change::UpsertLink(link));
+        self
+    }
+
+    #[must_use]
     pub fn delete(mut self, entity: EntityRef) -> Self {
         self.changes.push(Change::Delete(entity));
         self
@@ -103,7 +146,10 @@ impl ChangeSet {
                 .filter_map(|change| match change {
                     Change::UpsertTask(task) => Some(task.updated_at()),
                     Change::UpsertList(list) => Some(list.updated_at()),
-                    Change::Delete(_) => None,
+                    Change::UpsertNote(note) => Some(note.modified_at()),
+                    Change::UpsertTag(tag) => Some(tag.updated_at()),
+                    Change::UpsertLink(link) => Some(link.created_at()),
+                    Change::UpsertNoteFolder(_) | Change::Delete(_) => None,
                 })
                 .max()
         })
@@ -151,6 +197,8 @@ impl IntoIterator for ChangeSet {
 pub struct CommitReceipt {
     /// Geänderte Entities (Grundlage für `CoreEvent::Changed`).
     pub changed: Vec<EntityRef>,
+    /// Beim Speichern entstandene Konfliktkopien (Notiz-Inhalt, ADR-029).
+    pub conflicts: Vec<NoteConflict>,
 }
 
 /// Vordefinierte Ansichten. Bestimmen, *welche* Tasks in Frage kommen und wie sortiert wird.
@@ -168,11 +216,44 @@ pub enum SmartView {
     All,
     /// Erledigte Tasks aller Listen, neueste zuerst.
     Completed,
+    /// Tasks im Papierkorb (ADR-031), zuletzt gelöschte zuerst. Alle anderen Ansichten (und die
+    /// Suche) blenden sie aus.
+    Trash,
+}
+
+/// Sortierung einer Ansicht (N10-01, ADR-037). Gilt nicht für „Erledigt“ und den Papierkorb (die
+/// sind immer nach Zeitpunkt sortiert).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TaskSort {
+    /// Wie die Ansicht: eigene Reihenfolge, in Heute/Geplant nach Fälligkeit.
+    #[default]
+    View,
+    /// Fälligkeit (ohne zuletzt), dann eigene Reihenfolge.
+    Due,
+    /// Priorität (hoch zuerst), dann eigene Reihenfolge.
+    Priority,
+    /// Titel (Groß/Klein bei ASCII egal), dann `id`.
+    Title,
+}
+
+/// Wirksame Reihenfolge einer Abfrage – daraus folgen Sortierung und Cursor-Art.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskOrder {
+    SortKey,
+    Completion,
+    Trashed,
+    /// Fälligkeit relativ zum Tag der Ansicht (Heute/Geplant, ADR-026).
+    DueInView(LocalDay),
+    /// Fälligkeit ohne Bezugstag ([`Due::rough_instant`](crate::domain::Due::rough_instant)).
+    Due,
+    Priority,
+    Title,
 }
 
 /// Abfrage für [`TaskRepository::list_tasks`]: eine Ansicht plus optionale UND-Filter.
 ///
-/// Sortierung: [`SmartView::Completed`] nach `completed_at` absteigend; [`SmartView::Today`] und
+/// Sortierung: [`SmartView::Completed`] nach `completed_at` absteigend, [`SmartView::Trash`] nach
+/// `trashed_at` absteigend; [`SmartView::Today`] und
 /// [`SmartView::Upcoming`] nach Fälligkeit ([`Due::sort_instant`](crate::domain::Due::sort_instant)
 /// zum Tag der Ansicht, ADR-026), dann `sort_key`; alle anderen nach `sort_key` aufsteigend; bei
 /// Gleichstand jeweils nach `id`.
@@ -183,6 +264,10 @@ pub struct TaskQuery {
     /// [`SmartView::Completed`] liefert unabhängig davon nur erledigte Tasks.
     pub status: Option<TaskStatus>,
     pub tag: Option<TagId>,
+    /// Nur Tasks mit genau dieser Priorität (N10-01).
+    pub priority: Option<Priority>,
+    /// Sortierung (N10-01); Standard = wie die Ansicht.
+    pub sort: TaskSort,
 }
 
 impl TaskQuery {
@@ -193,6 +278,8 @@ impl TaskQuery {
             view,
             status: None,
             tag: None,
+            priority: None,
+            sort: TaskSort::View,
         }
     }
 
@@ -200,9 +287,24 @@ impl TaskQuery {
     #[must_use]
     pub fn open(view: SmartView) -> Self {
         Self {
-            view,
             status: Some(TaskStatus::Open),
-            tag: None,
+            ..Self::view(view)
+        }
+    }
+
+    /// Wirksame Reihenfolge (Erledigt und Papierkorb immer nach Zeitpunkt).
+    #[must_use]
+    pub fn order(&self) -> TaskOrder {
+        match (self.view, self.sort) {
+            (SmartView::Completed, _) => TaskOrder::Completion,
+            (SmartView::Trash, _) => TaskOrder::Trashed,
+            (SmartView::Today(day) | SmartView::Upcoming(day), TaskSort::View | TaskSort::Due) => {
+                TaskOrder::DueInView(day)
+            }
+            (_, TaskSort::View) => TaskOrder::SortKey,
+            (_, TaskSort::Due) => TaskOrder::Due,
+            (_, TaskSort::Priority) => TaskOrder::Priority,
+            (_, TaskSort::Title) => TaskOrder::Title,
         }
     }
 
@@ -217,10 +319,15 @@ impl TaskQuery {
             SmartView::Upcoming(day) => task.due().is_some_and(|d| !d.is_due_by(&day)),
             SmartView::All => true,
             SmartView::Completed => task.is_done(),
+            SmartView::Trash => true,
         };
+        // Papierkorb nur in seiner Ansicht (ADR-031).
+        let trash_ok = task.is_trashed() == (self.view == SmartView::Trash);
         in_view
+            && trash_ok
             && self.status.is_none_or(|s| task.status() == s)
             && self.tag.is_none_or(|t| task.tags().contains(&t))
+            && self.priority.is_none_or(|p| task.priority() == p)
     }
 }
 
@@ -262,7 +369,7 @@ pub struct Page<T> {
 pub const SEARCH_TEXT_MAX_CHARS: usize = 200;
 
 /// Suche über Titel und Notizen (P4-05, ADR-027): **jedes** Wort aus `text` muss als Teilwort in
-/// Titel oder Notiz vorkommen, ohne Unterscheidung von Groß/Klein. Ergebnis: offene vor erledigten,
+/// Titel, Notiz oder einem Punkt der Checkliste (ADR-034) vorkommen, ohne Unterscheidung von Groß/Klein. Ergebnis: offene vor erledigten,
 /// Titeltreffer vor reinen Notiztreffern, dann `sort_key`, `id`; höchstens `limit`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchQuery {
@@ -300,7 +407,12 @@ impl SearchQuery {
     #[must_use]
     pub fn rank(terms: &[String], task: &Task) -> Option<(bool, bool, SortKey, TaskId)> {
         let title = task.title().to_lowercase();
-        let notes = task.notes().to_lowercase();
+        // Notiz und Punkte der Checkliste (ADR-034) zählen gleich: „in Notiz“.
+        let mut notes = task.notes().to_lowercase();
+        for item in task.checklist() {
+            notes.push('\n');
+            notes.push_str(&item.text().to_lowercase());
+        }
         let all = terms
             .iter()
             .all(|t| title.contains(t.as_str()) || notes.contains(t.as_str()));
@@ -329,6 +441,16 @@ pub struct TaskSummary {
     pub has_notes: bool,
     pub sort_key: SortKey,
     pub completed_at: Option<Timestamp>,
+    pub trashed_at: Option<Timestamp>,
+    /// Wirksame Serie (Regel und Fälligkeit, N4) – Symbol in der Zeile.
+    pub recurring: bool,
+    /// Checkliste (N8): erledigte / alle Punkte.
+    pub checklist_done: u16,
+    pub checklist_total: u16,
+    /// Tags (ADR-035), in der Reihenfolge der Task.
+    pub tags: Vec<TagId>,
+    /// Mit mindestens einer Notiz verknüpft (ADR-036) – Symbol in der Zeile.
+    pub has_links: bool,
 }
 
 impl From<&Task> for TaskSummary {
@@ -343,6 +465,15 @@ impl From<&Task> for TaskSummary {
             has_notes: !task.notes().is_empty(),
             sort_key: task.sort_key().clone(),
             completed_at: task.completed_at(),
+            trashed_at: task.trashed_at(),
+            recurring: task.is_recurring(),
+            // Höchstens 100 Punkte (ADR-034).
+            checklist_done: u16::try_from(task.checklist().iter().filter(|i| i.is_done()).count())
+                .unwrap_or(u16::MAX),
+            checklist_total: u16::try_from(task.checklist().len()).unwrap_or(u16::MAX),
+            tags: task.tags().to_vec(),
+            // Kennt die Task nicht; das Repository setzt es beim Lesen.
+            has_links: false,
         }
     }
 }
@@ -351,7 +482,7 @@ impl From<&Task> for TaskSummary {
 /// `InMemoryTaskRepository` (Tests).
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-pub trait TaskRepository: MaybeSend + MaybeSync {
+pub trait TaskRepository: NoteRepository + MaybeSend + MaybeSync {
     /// Lädt eine Task; `None`, wenn sie nicht existiert.
     async fn get_task(&self, id: TaskId) -> CoreResult<Option<Task>>;
 
@@ -373,6 +504,17 @@ pub trait TaskRepository: MaybeSend + MaybeSync {
 
     /// Alle Listen, sortiert nach `sort_key` (dann `id`). Wenige Einträge, daher ohne Paginierung.
     async fn list_task_lists(&self) -> CoreResult<Vec<TaskList>>;
+
+    /// Lädt einen Tag; `None`, wenn er nicht existiert (ADR-035).
+    async fn get_tag(&self, id: TagId) -> CoreResult<Option<Tag>>;
+
+    /// Alle Tags, nach Name (Groß/Klein egal, dann `id`). Wenige Einträge, ohne Paginierung.
+    async fn list_tags(&self) -> CoreResult<Vec<Tag>>;
+
+    /// Verknüpfungen (ADR-036) einer Task bzw. einer Notiz, nach Anlage (dann `id`); beide Filter
+    /// leer = alle (Aufräumen).
+    async fn list_links(&self, task: Option<TaskId>, note: Option<NoteId>)
+        -> CoreResult<Vec<Link>>;
 
     /// Eine Seite Tasks gemäß `query` (Sortierung siehe [`TaskQuery`]).
     ///
@@ -399,6 +541,24 @@ pub trait TaskRepository: MaybeSend + MaybeSync {
             match result.next_cursor {
                 Some(cursor) => page = PageRequest::after(cursor, PAGE_LIMIT_MAX),
                 None => return Ok(last),
+            }
+        }
+    }
+
+    /// Anzahl der Tasks einer Abfrage (FIX-04, N10-02) – für Zähler ohne Seiten. Standard: seitenweise
+    /// zählen; SQLite überschreibt das mit `COUNT(*)`.
+    ///
+    /// # Errors
+    /// Fehler des Speichers.
+    async fn count_tasks(&self, query: &TaskQuery) -> CoreResult<u64> {
+        let mut page = PageRequest::first(PAGE_LIMIT_MAX);
+        let mut n = 0u64;
+        loop {
+            let result = self.list_tasks(query, page).await?;
+            n += result.items.len() as u64;
+            match result.next_cursor {
+                Some(cursor) => page = PageRequest::after(cursor, PAGE_LIMIT_MAX),
+                None => return Ok(n),
             }
         }
     }
@@ -461,6 +621,19 @@ pub trait TaskRepository: MaybeSend + MaybeSync {
 
     /// Entfernt alle Ops mit Nummer `<= up_to` aus der Outbox. Idempotent.
     async fn mark_ops_pushed(&self, up_to: u64) -> CoreResult<()>;
+
+    /// Gibt die Outbox bis `up_to` zum Upload heraus (vor dem Hochladen aufrufen): Diese Ops
+    /// sind ab dann unveränderlich, auch über einen Neustart – eine neue Bearbeitung derselben
+    /// Notiz ersetzt sie nicht mehr, sondern schreibt eine neue Revision (§4.6, ADR-029).
+    async fn freeze_outbox(&self, up_to: u64) -> CoreResult<()>;
+
+    /// Alle gespeicherten Revisionen nicht gelöschter Notizen als `Revise`-Ops (Snapshot).
+    async fn revision_ops(&self) -> CoreResult<Vec<Op>>;
+
+    /// Räumt Revisionen auf, die kein aktives Gerät mehr als Basis braucht
+    /// ([`crate::sync::prune_revisions`]). `acked` = je Gerät die höchste Op-Nummer, die alle
+    /// aktiven Geräte gesehen haben. Liefert die Zahl entfernter Revisionen.
+    async fn prune_revisions(&self, acked: Vec<(DeviceId, u64)>) -> CoreResult<u32>;
 
     /// Wendet empfangene Ops an (Merge, Materialisierung) und setzt die Cursor des Batches –
     /// atomar und idempotent ([`crate::sync::apply_remote`]).

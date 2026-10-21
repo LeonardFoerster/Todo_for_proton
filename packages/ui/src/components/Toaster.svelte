@@ -37,6 +37,12 @@
     gap: var(--space-2);
     pointer-events: none;
   }
+  /* Schmal: über dem runden Button „Neue Task“ (P5-09). */
+  @media (max-width: 699px) {
+    .toaster {
+      bottom: calc(var(--space-4) + 56px + var(--space-3));
+    }
+  }
   .toast {
     display: flex;
     align-items: center;

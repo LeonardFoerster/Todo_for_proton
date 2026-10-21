@@ -57,6 +57,13 @@ async function openPalette(user: ReturnType<typeof userEvent.setup>) {
 const options = (dialog: HTMLElement) => within(dialog).queryAllByRole("option").map((o) => o.textContent?.replace(/\s+/g, " ").trim());
 
 describe("CommandPalette", () => {
+  it("opens from the search field in the sidebar (P5-05)", async () => {
+    const { user } = await setup();
+    await user.click(screen.getByRole("button", { name: "Suchen" }));
+    const dialog = await screen.findByRole("dialog", { name: "Suchen und Befehle" });
+    expect(within(dialog).getByRole("combobox", { name: "Suchen" })).toBeTruthy();
+  });
+
   it("finds tasks of all lists by a part of the notes and opens the detail", async () => {
     const { user } = await setup();
     const { dialog } = await openPalette(user);
@@ -98,7 +105,7 @@ describe("CommandPalette", () => {
     const { user } = await setup();
     const { dialog } = await openPalette(user);
     await user.keyboard("Zahnarzt");
-    await within(dialog).findByText(/Keine Task mit „Zahnarzt“/);
+    await within(dialog).findByText(/Keine Task oder Notiz mit „Zahnarzt“/);
     await user.keyboard("{Enter}");
     const newTask = await screen.findByRole("dialog", { name: "Neue Task" });
     expect((within(newTask).getByRole("textbox", { name: "Neue Task" }) as HTMLInputElement).value).toBe("Zahnarzt");

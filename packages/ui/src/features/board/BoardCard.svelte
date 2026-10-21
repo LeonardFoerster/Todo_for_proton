@@ -2,8 +2,9 @@
   /** Karte im Kanban-Board: feste Höhe (Virtualisierung), Haken, Titel, Meta – wie `TaskRow`. */
   import type { TaskSummaryDto } from "@tasks/core-client";
   import Checkbox from "../../components/Checkbox.svelte";
-  import { Flag } from "../../icons";
-  import { dueLabel } from "../../lib/format-date";
+    import { dueLabel } from "../../lib/format-date";
+  import { priorityInLabel, priorityLabel } from "../task-list/priority";
+  import TaskMeta from "../task-list/TaskMeta.svelte";
 
   interface Props {
     task: TaskSummaryDto;
@@ -14,13 +15,15 @@
     onopen: (task: TaskSummaryDto) => void;
     /** Ziehen beginnt (P2-07). */
     onpointerdown?: (e: PointerEvent, task: TaskSummaryDto) => void;
+    /** Namen der Tags (ADR-035). */
+    tagNames?: readonly string[];
   }
 
-  let { task, cursor = false, dragging = false, ontoggle, onopen, onpointerdown }: Props = $props();
+  let { task, cursor = false, dragging = false, ontoggle, onopen, onpointerdown, tagNames = [] }: Props = $props();
 
   const done = $derived(task.status === "done");
   const due = $derived(task.due ? dueLabel(task.due) : null);
-  const priorityLabel = { none: "", low: "Niedrige Priorität", medium: "Mittlere Priorität", high: "Hohe Priorität" };
+  const priority = $derived(done ? "" : priorityLabel[task.priority]);
 </script>
 
 <!-- Tasten behandelt die zentrale Registry (lib/shortcuts.ts). -->
@@ -32,7 +35,7 @@
     class:cursor
     class:dragging
     role="option"
-    aria-label={[task.title, done ? "erledigt" : null, due?.long].filter(Boolean).join(", ")}
+    aria-label={[task.title, done ? "erledigt" : null, due?.long, task.recurring ? "wiederholt sich" : null, task.hasLinks ? "mit Notiz verknüpft" : null, tagNames.length > 0 ? tagNames.map((t) => `#${t}`).join(" ") : null, done ? null : priorityInLabel(task.priority)].filter(Boolean).join(", ")}
     aria-selected={cursor}
     tabindex={cursor ? 0 : -1}
     data-task-id={task.id}
@@ -47,21 +50,12 @@
       label={done ? `Wieder öffnen: ${task.title}` : `Erledigt: ${task.title}`}
       tone={done || task.priority === "none" ? "default" : task.priority}
       tabindex={-1}
+      tooltip={priority || undefined}
       onchange={(value) => ontoggle(task, value)}
     />
     <span class="body">
       <span class="title">{task.title}</span>
-      {#if due || task.hasNotes || (task.priority !== "none" && !done)}
-        <span class="meta">
-          {#if due}<span class="due {due.tone}" title={due.long}>{due.text}</span>{/if}
-          {#if task.hasNotes}<span class="notes" title="Hat Notizen" aria-label="Hat Notizen"></span>{/if}
-          {#if task.priority !== "none" && !done}
-            <span class="prio {task.priority}" title={priorityLabel[task.priority]} aria-label={priorityLabel[task.priority]}>
-              <Flag size={12} strokeWidth={2} aria-hidden="true" />
-            </span>
-          {/if}
-        </span>
-      {/if}
+      {#if due || task.hasNotes || task.hasLinks || task.recurring || task.checklistTotal > 0 || tagNames.length > 0}<TaskMeta {task} {due} size="card" tags={tagNames} />{/if}
     </span>
   </div>
 </div>
@@ -73,6 +67,7 @@
     padding: 0 var(--space-2) var(--space-2);
   }
   .card {
+    position: relative;
     display: flex;
     align-items: flex-start;
     gap: var(--space-2);
@@ -90,9 +85,20 @@
   .card:hover {
     border-color: var(--color-border-strong);
   }
+  /* Cursor wie in der Liste (P5-04): Auswahlfläche + Akzentbalken links, kein Akzentrahmen. */
   .card.cursor {
-    border-color: var(--color-accent);
+    border-color: transparent;
     background: var(--color-bg-selected);
+  }
+  .card.cursor::before {
+    content: "";
+    position: absolute;
+    left: -1px;
+    top: 10px;
+    bottom: 10px;
+    width: 3px;
+    border-radius: 0 2px 2px 0;
+    background: var(--color-accent);
   }
   .card.dragging {
     opacity: 0.5;
@@ -100,7 +106,7 @@
   .card:focus-visible,
   :global([data-input="keyboard"]) .card:focus {
     outline: 2px solid var(--color-focus-outline);
-    outline-offset: 1px;
+    outline-offset: -1px;
   }
   :global([data-input="pointer"]) .card:focus:not(:focus-visible) {
     outline: none;
@@ -121,47 +127,5 @@
   .done .title {
     color: var(--color-text-muted);
     text-decoration: line-through;
-  }
-  .meta {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    color: var(--color-text-muted);
-    font-size: var(--text-xs);
-  }
-  .due {
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-  .due.overdue {
-    color: var(--color-danger);
-    font-weight: var(--weight-medium);
-  }
-  .due.today {
-    color: var(--color-accent-text);
-    font-weight: var(--weight-medium);
-  }
-  .notes {
-    width: 10px;
-    height: 2px;
-    border-radius: 1px;
-    background: currentColor;
-    box-shadow:
-      0 3px 0 currentColor,
-      0 -3px 0 currentColor;
-    opacity: 0.7;
-  }
-  .prio {
-    display: grid;
-    place-items: center;
-  }
-  .prio.high {
-    color: var(--color-danger);
-  }
-  .prio.medium {
-    color: var(--color-warning);
-  }
-  .prio.low {
-    color: var(--color-accent);
   }
 </style>

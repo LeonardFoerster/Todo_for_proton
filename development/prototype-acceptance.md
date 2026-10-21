@@ -114,6 +114,9 @@ Protokoll: <ordner>/protocol.txt
 
 ## B · Live über Proton Drive (von Hand)
 
+> **2026-10-21:** vom User insgesamt abgenommen („Die Live-Abnahme ist alright“); die Zeilen unten wurden nicht
+> einzeln protokolliert.
+
 Vorbereitung (einmal):
 
 ```sh
@@ -191,4 +194,97 @@ Installierte App (`tasks-app` bzw. Starter „Tasks", Stand nach P2). Automatisc
 | 10 | Tastatur im Board: Pfeile/HJKL, `Enter`, `Leertaste`, `Alt+←/→` | Cursor wandert, Detail öffnet, abgehakte Karte verschwindet, Karte wechselt die Spalte | ✔ |
 | 11 | Spaltenkopf ziehen bzw. fokussieren und `Alt+←/→` | Spaltenreihenfolge ändert sich – auch in der Seitenleiste | ✔ |
 | 12 | Hell/Dunkel und schmales Fenster im Board | Spalten, Karten, Hervorhebung gut lesbar; Board scrollt horizontal | ✔ |
+
+
+## E · Modus „Notes" (N5-12) – Abnahme durch den User am Desktop: **offen**
+
+Installierte App (`tasks-app` bzw. Starter „Tasks", Stand nach N5). Automatisch geprüft ist das schon (Selbsttest
+`notes` in der WebView, Abnahmeskript Abschnitt 8 „Notiz auf zwei Geräten": sauberer Merge + Konfliktkopie, beide
+Profile identisch; Messung `MODE=notes tools/measure-desktop.sh`, siehe `architecture.md` §6) – hier geht es um
+Gefühl, Optik und Bedienbarkeit. Live über Proton zusätzlich B-Schritte mit einer Notiz (zwei Profile).
+
+| # | Schritt | Erwartung | Ergebnis |
+|---|---|---|---|
+| 1 | Name oben in der Seitenleiste bzw. `Strg+2` / `Strg+1` | Wechsel ohne Flackern; geöffnete Task bzw. Notiz bleibt; nach Neustart der zuletzt benutzte Modus | |
+| 2 | „Neue Notiz", sofort tippen: `# Einkauf`, Zeilen | Cursor steht im Editor; Name folgt der ersten Zeile; Statuszeile „Speichert…" → „Gespeichert" | |
+| 3 | Neue Notiz anlegen und leer wieder verlassen | Leere Notiz verschwindet von selbst | |
+| 4 | `- Punkt` + `Enter`, `Tab`/`Umschalt+Tab`, `Strg+B/I/L`, `Strg+Alt+1`, `Strg+Umschalt+X` | Liste setzt sich fort, Einrücken, Formatieren; `Strg+Z` macht jeden Schritt rückgängig | |
+| 5 | `Strg+E` bzw. „Bearbeiten \| Vorschau" | Vorschau sauber gesetzt (hell/dunkel), Checkbox anklickbar, Link öffnet den Browser | |
+| 6 | Ordner anlegen, Notizen hineinziehen, `Alt+↑/↓`, `F2`, `M` (Verschieben nach…) | Baum folgt, Tastatur im Baum wie in den Listen | |
+| 7 | Notiz/Ordner löschen → Papierkorb unten → Wiederherstellen; „Rückgängig" im Hinweis | Kommt am alten Platz zurück | |
+| 8 | `Strg+K`: Wort aus dem Inhalt einer Notiz | Gruppe „Notizen" mit Ausschnitt; `Enter` öffnet die Notiz mit markiertem Treffer | |
+| 9 | Zen (`Strg+Umschalt+F`), `Esc`; Einstellungen → „Notizen" | Ohne Seitenleiste; Zeilenbreite/Typ neuer Notizen wirken | |
+| 10 | `⋯` → „Ordner importieren…" mit einem Ordner voller `.md`-Dateien | Portal-Dialog; Ergebnis „… Notizen in … Ordnern importiert, … übersprungen" mit Gründen; Baum zeigt den Ordner | |
+| 11 | Zwei Profile (`TODO_DATA_DIR`) mit Sync: dieselbe Notiz offline in verschiedenen bzw. derselben Zeile ändern | Verschiedene Zeilen: beide Änderungen da; dieselbe Zeile: Hinweis „Konflikt – Kopie … angelegt", nichts verloren | |
+| 12 | Während des Tippens schließen (Fenster-X) | Nach Neustart ist der letzte Buchstabe da | |
+
+
+## F · Feinschliff der Oberfläche (P5-10) – Sichtprüfung durch den User am Desktop: **offen**
+
+Installierte App nach P5. Automatisch geprüft: Vitest (Zeilenname mit Priorität, Suche öffnet die Palette, Zähler,
+`DuePicker`-Raster per Tastatur, schmale Ansicht), Kontraste (`tokens.test.ts`), Selbsttest in der WebView (`base`,
+`p3new`, `p4due`, `p4today`, `p4keys`, `p708a/b`), Messung `tools/measure-desktop.sh` (`roadmap.md` P5-10). Hier geht es
+um den Eindruck – siehe `ui-guidelines.md` §9.
+
+| # | Schritt | Erwartung | Ergebnis |
+|---|---|---|---|
+| 1 | Eingang, breites Fenster, hell und dunkel | Inter als Schrift; Liste als ruhige Spalte ohne Linien; Titel mit „n offen" darunter | |
+| 2 | Task mit hoher Priorität und überfälligem Datum | Priorität nur am (zart gefüllten) Ring, Tooltip am Haken; nur das Datum rot | |
+| 3 | Mit `↑/↓` durch die Liste, dann klicken | Cursor gerundet mit Balken; kein eckiger Rahmen bis an den Rand | |
+| 4 | „Heute" | Unterzeile mit Datum, offen, überfällig; Seitenleiste: eine Zahl, rot hinterlegt bei Überfälligen | |
+| 5 | Suchfeld oben links; Zahnrad unten links (auch im Modus „Notes") | Palette bzw. Einstellungen öffnen sich | |
+| 6 | Detail: Fälligkeit anklicken – „fr 14:00", ein Tag im Raster, Pfeiltasten/Bild↓, Uhrzeit leeren, Entfernen | Popover unter dem Feld; Uhrzeit bleibt beim Tageswechsel; `Esc` schließt nur das Popover | |
+| 7 | Lange Notiz im Detail | Feld wächst mit, kein Griff; „Erstellt · Geändert" direkt darunter | |
+| 8 | Fenster schmaler als 700 px | 44-px-Zeilen, runder Button „Neue Task" unten rechts, `⋯` mit Darstellung/Auswählen/Listenaktionen | |
+| 9 | „Neue Task" (`N`): „Bericht bis fr 14:00 !1 @Arbeit" tippen | Fenster oben, ohne Kopf; „bis fr 14:00", „!1", „@Arbeit" im Text getönt; Chips „Fr, … 14:00", „Hoch", „Arbeit" getönt mit × | |
+| 10 | Chip „Fällig" anklicken, `Esc`; × an „Hoch"; `Tab` in die Notiz, `Strg+Enter` | Popover am Chip, `Esc` schließt nur das Popover; Markierung von „!1" verschwindet; Task mit Notiz angelegt | |
+| 11 | „Weitere anlegen" an, zwei Tasks nacheinander; schmales Fenster | Bestätigungszeile im Fenster; schmal geht das Fenster unten auf, Chips scrollen waagerecht | |
+
+
+## G · Papierkorb, Export, Erinnerungen (N6/N7) – Abnahme durch den User am Desktop: **offen**
+
+Automatisch geprüft: Core-/Szenario-Tests (Papierkorb konvergiert mit gleichzeitiger Bearbeitung), Rundlauf Export →
+leeres Profil → Import (`tests/export.rs`), Vitest, Selbsttest `p0sel`, `p709a`, `n7rem` (Erinnerung nach 3,0 s),
+`n7bg` (Schließen versteckt im Hintergrundbetrieb). Hier geht es um das, was nur am echten Desktop sichtbar ist.
+
+| # | Schritt | Erwartung | Ergebnis |
+|---|---|---|---|
+| 1 | Task löschen (`Entf`), „Rückgängig"; dann löschen und im Papierkorb „Wiederherstellen" | Task am alten Platz; Papierkorb unten in der Seitenleiste mit Zahl | |
+| 2 | Einstellungen › Daten › Exportieren… in einen Ordner | Ordner `Tasks-Export-…` mit `tasks.json` und `notizen/…`, Hinweis mit Pfad | |
+| 3 | Zweites Profil (`TODO_DATA_DIR=…`): Aus Export wiederherstellen… | Listen und Tasks da (Papierkorb-Tasks im Papierkorb); zweites Mal: „… schon vorhanden" | |
+| 4 | Task „Test" fällig in 2 Minuten (Uhrzeit) | Benachrichtigung „Fällig – Test"; Klick öffnet die Task | |
+| 5 | Einstellungen › Erinnerungen › Im Hintergrund weiterlaufen; Fenster schließen | Fenster weg, Symbol im Tray; Tray › Öffnen / Neue Task / Beenden | |
+| 6 | Mit dem System starten an, abmelden/anmelden | App läuft im Tray, ohne Fenster; Starter öffnet das vorhandene Fenster (keine zweite Instanz) | |
+
+## H · Wiederkehrende Tasks (N4) – Abnahme durch den User am Desktop: **offen**
+
+Automatisch geprüft: Core-Tests (Abhaken, Überspringen, Rückgängig, Ende, Zeitumstellung, gemischtes Sammel-Abhaken),
+Szenario-Tests (dasselbe Vorkommen auf zwei Geräten → ein Eintrag; Überspringen vs. Abhaken), IPC mit `jiff` über
+die Zeitumstellung, Vitest, Selbsttest `n4rec` (Abhaken bis Repaint p50 16 / p95 18 ms – ein Frame) und Abnahme-Skript
+Abschnitt 9 (`ONLY=series tools/acceptance-two-devices.sh`, 2026-10-21: bestanden).
+
+| # | Schritt | Erwartung | Ergebnis |
+|---|---|---|---|
+| 1 | „Neue Task": `Blatt jeden Fr 10:00` | „jeden Fr" grün markiert, Chip „Wöchentlich", Hinweis „Wiederholt sich wöchentlich, Fr"; Task am nächsten Freitag 10:00 mit Wiederholungs-Icon | |
+| 2 | Die Task abhaken | Zeile bleibt, Fälligkeit springt eine Woche weiter; Toast „… erledigt – nächstes Mal Fr, …" | |
+| 3 | Im Toast „Rückgängig" | alte Fälligkeit, kein Eintrag unter „Erledigt" | |
+| 4 | Nochmal abhaken, dann „Erledigt" öffnen | ein erledigter Eintrag „Blatt" mit der alten Fälligkeit | |
+| 5 | Rechtsklick › „Dieses Mal überspringen" | Fälligkeit +1 Woche, kein neuer Eintrag | |
+| 6 | Detail › Wiederholung › Benutzerdefiniert…: alle 2 Wochen, Mo und Do, endet am 20.12. | Klartext stimmt, Regel übernommen | |
+| 7 | Detail › Wiederholung › „Wiederholung beenden" | Icon weg; Abhaken erledigt die Task normal | |
+
+## I · Checklisten, Tags, Verknüpfungen, Sortieren (N8–N10) – Abnahme durch den User am Desktop: **offen**
+
+Automatisch geprüft: Core-/Contract-Tests (beide Speicher), Szenario-Tests (Tag offline doppelt angelegt → einer,
+Umbenennen vs. Zuweisen, Verknüpfung auf zwei Geräten → eine), Vitest, Selbsttest `n8`.
+
+| # | Schritt | Erwartung | Ergebnis |
+|---|---|---|---|
+| 1 | Task öffnen, Checkliste: drei Punkte (Enter), einen abhaken, einen per `Alt+↑` verschieben | „1 von 3 erledigt“, Zeile zeigt „1/3“ | |
+| 2 | „Neue Task“: `Blatt 4 #uni morgen` | `#uni` markiert, Chip „Tags: #uni“; Seitenleiste „Tags“ mit „uni“ | |
+| 3 | Tag-Ansicht „#uni“ › ⋯ › Umbenennen in „studium“, dann Löschen… | Titel „#studium“; nach dem Löschen weg, Tasks bleiben | |
+| 4 | Detail › „Notiz verknüpfen“ › Notiz suchen und wählen; Notiz öffnen | Wechsel zu „Notes“, Statuszeile „1 Task“ → zurück zur Task | |
+| 5 | „Sortieren und filtern“ › Titel, dann Priorität „Hoch“ | Liste sortiert/gefiltert, Chips unter dem Titel, nach Ansichtswechsel gemerkt | |
+| 6 | Zwei Listen gleichen Namens anlegen, App neu starten | Toast „2 Listen heißen …“ › Zusammenführen | |
+| 7 | Neues Profil (`TODO_DATA_DIR=…`) starten | Karte „Willkommen“ im Eingang; „Ausblenden“ bleibt aus | |
 

@@ -9,6 +9,11 @@ const params = new URLSearchParams(location.search);
 // Für Screenshots: ?theme=dark|light, ?collapsed=1
 const theme = params.get("theme");
 if (theme === "dark" || theme === "light") setThemePreference(theme);
+// ?layout=board|list: Darstellung (P5-Screenshots); ?mode=notes|tasks: Modus.
+for (const [param, key] of [["layout", "tasks.layout"], ["mode", "tasks.mode"]]) {
+  const value = params.get(param);
+  if (value) localStorage.setItem(key, value);
+}
 if (params.has("collapsed")) localStorage.setItem("tasks.sidebar-collapsed", params.get("collapsed") === "1" ? "1" : "0");
 const client = new FakeCoreClient({ latencyMs: Number(params.get("latency") ?? 0), loginPolls: Number(params.get("polls") ?? 1) });
 if (params.get("seed") === "0") await client.ensureInbox();
@@ -17,6 +22,8 @@ mount(App, { target: document.getElementById("app")!, props: { client } });
 
 // ?open=1: erste Task öffnen (Detail-Panel), ?type=Text: Quick-Add vorbelegen (Screenshots).
 if (params.has("open")) setTimeout(() => document.querySelector<HTMLElement>('[role="option"]')?.click(), 300);
+// ?due=1 (mit ?open=1): Fälligkeits-Popover im Detail öffnen (P5-08).
+if (params.has("due")) setTimeout(() => document.querySelector<HTMLElement>("#detail-due")?.click(), 600);
 const typed = params.get("type");
 if (typed) {
   setTimeout(() => {
@@ -49,4 +56,17 @@ if (params.has("settings")) {
       }
     }
   }, 400);
+}
+// ?new=Text: Fenster „Neue Task“ vorbelegt öffnen (P6-Screenshots); &chip=due öffnet das Datums-Popover.
+const fresh = params.get("new");
+if (fresh !== null) {
+  setTimeout(() => {
+    document.querySelector<HTMLElement>('aside nav button[title^="Neue Task"], button.fab')?.click();
+    setTimeout(() => {
+      const input = document.querySelector<HTMLInputElement>('dialog[open] input[aria-label="Neue Task"]')!;
+      input.value = fresh;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      if (params.get("chip") === "due") document.querySelector<HTMLElement>("dialog[open] [data-tooltip^='Fälligkeit']")?.click();
+    }, 300);
+  }, 300);
 }

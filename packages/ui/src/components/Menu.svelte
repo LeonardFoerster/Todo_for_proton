@@ -18,6 +18,7 @@
 
 <script lang="ts">
   import { onMount } from "svelte";
+  import { POPOVER, showOnTop } from "../lib/popover";
 
   interface Props {
     items: MenuItem[];
@@ -36,6 +37,8 @@
   const enabled = () => [...menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')];
 
   onMount(() => {
+    // Oberste Ebene (Popover-API): auch in und über modalen Dialogen sichtbar und bedienbar (P6-02).
+    showOnTop(menu);
     // Im Fenster halten.
     const rect = menu.getBoundingClientRect();
     left = Math.min(x, innerWidth - rect.width - 8);
@@ -76,6 +79,7 @@
   class="menu"
   role="menu"
   tabindex="-1"
+  popover={POPOVER}
   aria-label={label}
   style:left="{left}px"
   style:top="{top}px"
@@ -105,11 +109,15 @@
   .menu {
     position: fixed;
     z-index: 60;
+    /* Popover-Vorgaben des Browsers aufheben. */
+    inset: auto;
+    margin: 0;
     min-width: 220px;
     padding: var(--space-1);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     background: var(--color-bg-raised);
+    color: var(--color-text);
     box-shadow: var(--shadow-popover);
     animation: pop var(--duration-fast) var(--ease);
   }

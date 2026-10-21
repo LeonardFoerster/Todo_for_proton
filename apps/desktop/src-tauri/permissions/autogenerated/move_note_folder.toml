@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-move-note-folder"
+description = "Enables the move_note_folder command without any pre-configured scope."
+commands.allow = ["move_note_folder"]
+
+[[permission]]
+identifier = "deny-move-note-folder"
+description = "Denies the move_note_folder command without any pre-configured scope."
+commands.deny = ["move_note_folder"]

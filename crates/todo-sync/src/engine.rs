@@ -72,6 +72,9 @@ const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const PARALLEL_DOWNLOADS: usize = 4;
 /// So viele Segmente werden je `apply_remote` (eine Transaktion) zusammengefasst.
 const SEGMENTS_PER_APPLY: usize = 20;
+/// Höchstens so viel Klartext (kodierte Ops) je Segment – Notiz-Revisionen sind groß (ADR-029).
+/// Eine einzelne Op passt immer (Inhalt ≤ 1 MiB).
+pub const MAX_SEGMENT_PLAIN_BYTES: usize = 2 * 1024 * 1024;
 
 /// Einstellungen der Engine (aus der Composition Root).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,6 +140,8 @@ pub struct SyncReport {
     pub snapshot_written: bool,
     /// Durch Kompaktierung gelöschte eigene Segmente.
     pub segments_deleted: u32,
+    /// Aufgeräumte Notiz-Revisionen (ADR-029, `notes.md` §4.5).
+    pub revisions_pruned: u32,
 }
 
 impl SyncReport {
@@ -151,6 +156,7 @@ impl SyncReport {
         self.snapshot_loaded |= other.snapshot_loaded;
         self.snapshot_written |= other.snapshot_written;
         self.segments_deleted += other.segments_deleted;
+        self.revisions_pruned += other.revisions_pruned;
     }
 }
 
@@ -469,14 +475,18 @@ impl SyncEngine {
         let session = self.session()?;
         let mut pushed = 0;
         loop {
-            let ops = self
+            let mut ops = self
                 .repo
                 .pending_ops(u32::try_from(MAX_OPS).unwrap_or(u32::MAX))
                 .await?;
             if ops.is_empty() {
                 return Ok(pushed);
             }
+            limit_segment_size(&mut ops);
             let (header, bytes) = seal_segment(self.cipher.as_ref(), &session.key, &ops)?;
+            // Ab hier unveränderlich: Eine neue Bearbeitung ersetzt diese Ops nicht mehr (§4.6),
+            // auch wenn der Upload abbricht und später wiederholt wird.
+            self.repo.freeze_outbox(header.seq_to).await?;
             let path = session.root.join(&format!(
                 "{OPS_DIR}/{}/{}",
                 session.device,
@@ -923,6 +933,7 @@ impl SyncEngine {
         let body = SnapshotBody {
             vector,
             entities: self.repo.entity_states().await?,
+            revisions: self.repo.revision_ops().await?,
         };
         let header = SnapshotHeader {
             device: session.device,
@@ -974,9 +985,11 @@ impl SyncEngine {
         self.repo
             .set_sync_value(OWN_SNAPSHOTS, own.join(","))
             .await?;
+        let (segments_deleted, revisions_pruned) = self.compact(&session).await?;
         Ok(SyncReport {
             snapshot_written: true,
-            segments_deleted: self.compact(&session).await?,
+            segments_deleted,
+            revisions_pruned,
             ..SyncReport::default()
         })
     }
@@ -985,13 +998,12 @@ impl SyncEngine {
     /// aktiven Geräte (laut `devices/*.json`) schon gelesen haben. Das jüngste eigene Segment
     /// bleibt immer liegen: Daran erkennen zurückliegende Geräte die Lücke (→ Snapshot laden).
     /// Liefert die Zahl gelöschter Segmente.
-    async fn compact(&self, session: &Session) -> CoreResult<u32> {
+    async fn compact(&self, session: &Session) -> CoreResult<(u32, u32)> {
         let now = self.clock.now().as_millis();
-        let mut bound = self.number(PREV_SNAPSHOT_SEQ).await?;
-        if bound == 0 {
-            return Ok(0);
-        }
         let devices_dir = session.root.join(DEVICES_DIR)?;
+        // Aktive fremde Geräte mit ihren Cursorn; `None` = unlesbar (zählt als aktiv, hat nichts
+        // gesehen).
+        let mut active: Vec<Option<DeviceInfo>> = Vec::new();
         for entry in self.remote.list(&devices_dir, None).await?.entries {
             let bytes = match self.remote.read(&entry.path).await {
                 Ok(bytes) => bytes,
@@ -1002,26 +1014,30 @@ impl SyncEngine {
             // gelten als aktiv, ohne etwas gelesen zu haben. `last_seen` aus der Zukunft zählt
             // als „jetzt", damit eine Datei die Kompaktierung nicht für immer festhält.
             let stem = entry.path.file_name().strip_suffix(".json").unwrap_or("");
-            let (device, last_seen, cursor) = match serde_json::from_slice::<DeviceInfo>(&bytes) {
-                Ok(info) if info.device_id.to_string() == stem => (
-                    Some(info.device_id),
-                    info.last_seen.min(now),
-                    info.cursors
-                        .get(&session.device.to_string())
-                        .copied()
-                        .unwrap_or(0),
-                ),
-                Ok(_) | Err(_) => (None, now, 0),
+            let info = match serde_json::from_slice::<DeviceInfo>(&bytes) {
+                Ok(info) if info.device_id.to_string() == stem => Some(info),
+                Ok(_) | Err(_) => None,
             };
-            if device == Some(session.device)
+            let last_seen = info.as_ref().map_or(now, |i| i.last_seen.min(now));
+            if info.as_ref().is_some_and(|i| i.device_id == session.device)
                 || now.saturating_sub(last_seen) > self.config.inactive_device_ms
             {
                 continue;
             }
+            active.push(info);
+        }
+        let revisions_pruned = self.prune_revisions(session, &active).await?;
+
+        let mut bound = self.number(PREV_SNAPSHOT_SEQ).await?;
+        for info in &active {
+            let cursor = info
+                .as_ref()
+                .and_then(|i| i.cursors.get(&session.device.to_string()).copied())
+                .unwrap_or(0);
             bound = bound.min(cursor);
         }
         if bound == 0 {
-            return Ok(0);
+            return Ok((0, revisions_pruned));
         }
         let own_dir = session
             .root
@@ -1045,7 +1061,53 @@ impl SyncEngine {
                 deleted += 1;
             }
         }
-        Ok(deleted)
+        Ok((deleted, revisions_pruned))
+    }
+
+    /// Notiz-Revisionen aufräumen (§4.5): je Ursprungsgerät die höchste Op-Nummer, die alle
+    /// aktiven Geräte (einschließlich dieses) gesehen haben. Eine unlesbare Gerätedatei
+    /// verhindert das Aufräumen ganz.
+    async fn prune_revisions(
+        &self,
+        session: &Session,
+        active: &[Option<DeviceInfo>],
+    ) -> CoreResult<u32> {
+        let Some(others) = active.iter().cloned().collect::<Option<Vec<DeviceInfo>>>() else {
+            return Ok(0);
+        };
+        let own: BTreeMap<DeviceId, u64> = self.repo.sync_cursors().await?.into_iter().collect();
+        let mut origins: Vec<DeviceId> = own.keys().copied().collect();
+        origins.push(session.device);
+        origins.extend(others.iter().map(|i| i.device_id));
+        origins.sort();
+        origins.dedup();
+        let seen_by = |info: &DeviceInfo, origin: DeviceId| -> u64 {
+            if info.device_id == origin {
+                u64::MAX
+            } else {
+                info.cursors.get(&origin.to_string()).copied().unwrap_or(0)
+            }
+        };
+        let acked: Vec<(DeviceId, u64)> = origins
+            .into_iter()
+            .map(|origin| {
+                let local = if origin == session.device {
+                    u64::MAX
+                } else {
+                    own.get(&origin).copied().unwrap_or(0)
+                };
+                let min = others
+                    .iter()
+                    .map(|info| seen_by(info, origin))
+                    .fold(local, u64::min);
+                (origin, min)
+            })
+            .filter(|(_, seq)| *seq > 0)
+            .collect();
+        if acked.is_empty() {
+            return Ok(0);
+        }
+        self.repo.prune_revisions(acked).await
     }
 
     async fn number(&self, key: &str) -> CoreResult<u64> {
@@ -1073,6 +1135,21 @@ impl SyncEngine {
 }
 
 /// `ops/<device>/<from>-<to>.seg` → (Gerät, from, to).
+/// Kürzt `ops` (aufsteigende Nummern) so, dass ihre Kodierung höchstens
+/// [`MAX_SEGMENT_PLAIN_BYTES`] groß ist – mindestens eine Op bleibt.
+fn limit_segment_size(ops: &mut Vec<Op>) {
+    let mut total = 0;
+    let keep = ops
+        .iter()
+        .take_while(|op| {
+            total += op.encode().len();
+            total <= MAX_SEGMENT_PLAIN_BYTES
+        })
+        .count()
+        .max(1);
+    ops.truncate(keep);
+}
+
 fn parse_segment_path(path: &RemotePath, ops_dir: &RemotePath) -> Option<(DeviceId, u64, u64)> {
     let (device, name) = path.relative_to(ops_dir)?.split_once('/')?;
     let device = DeviceId::parse(device).ok()?;

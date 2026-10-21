@@ -6,7 +6,7 @@
     icon: IconComponent;
     label: string;
     count?: string;
-    /** Davon überfällig (rot vor dem Zähler, P4-02). */
+    /** Davon überfällig: Zähler wird zur roten Pille, Aufteilung in Tooltip und Name (P5-06). */
     overdue?: string;
     active?: boolean;
     collapsed?: boolean;
@@ -73,8 +73,16 @@
   {/if}
   {#if !collapsed}
     <span class="label">{label}</span>
-    {#if hasOverdue}<span class="overdue"><span class="sr-only">überfällig:&nbsp;</span>{overdue}</span>{/if}
-    {#if count && count !== "0"}<span class="count">{#if hasOverdue}<span class="sr-only">, gesamt:&nbsp;</span>{/if}{count}</span>{/if}
+    {#if count && count !== "0"}
+      <span
+        class="count"
+        class:alert={hasOverdue}
+        data-tooltip={hasOverdue ? `${count} offen, davon ${overdue} überfällig` : undefined}
+        data-tooltip-side="right"
+      >
+        {count}{#if hasOverdue}<span class="sr-only">, davon {overdue} überfällig</span>{/if}
+      </span>
+    {/if}
   {:else if count && count !== "0"}
     <span class="dot" class:alert={hasOverdue} aria-hidden="true"></span>
   {/if}
@@ -114,11 +122,14 @@
     font-size: var(--text-xs);
     font-variant-numeric: tabular-nums;
   }
-  .overdue {
+  .count.alert {
+    min-width: 20px;
+    padding: 1px 6px;
+    border-radius: var(--radius-full);
+    background: var(--color-danger-subtle);
     color: var(--color-danger);
-    font-size: var(--text-xs);
     font-weight: var(--weight-semibold);
-    font-variant-numeric: tabular-nums;
+    text-align: center;
   }
   .sr-only {
     position: absolute;

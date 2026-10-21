@@ -37,6 +37,9 @@ describe("Login & Sync-Status", () => {
     await user.click(within(dialog).getByRole("button", { name: "Mit Demo anmelden" }));
     expect(begin).toHaveBeenCalledOnce();
     expect(await within(dialog).findByText("Im Browser anmelden")).toBeTruthy();
+    // Kein automatisches Öffnen (ADR-038): Der Link steht zum Kopieren da.
+    expect((within(dialog).getByLabelText("Anmeldelink") as HTMLInputElement).value).toBe("https://login.example.invalid/");
+    expect(within(dialog).getByRole("button", { name: "Link kopieren" })).toBeTruthy();
     // Fake: erster Poll „pending“, zweiter „done“ (Intervall 1 s).
     expect(await within(dialog).findByText("demo@example.invalid", {}, { timeout: 4000 })).toBeTruthy();
     expect(within(dialog).getByText("Synchronisiert")).toBeTruthy();

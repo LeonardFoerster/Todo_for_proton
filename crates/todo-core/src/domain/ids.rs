@@ -143,9 +143,83 @@ define_id!(
     TagId
 );
 define_id!(
+    /// ID eines Punkts einer Checkliste (N8, ADR-034).
+    ChecklistItemId
+);
+define_id!(
+    /// ID einer Verknüpfung Task ↔ Notiz (N9, ADR-036).
+    LinkId
+);
+define_id!(
     /// ID eines Geräts (eine Installation der App).
     DeviceId
 );
+define_id!(
+    /// ID einer Notiz ([`Note`](crate::domain::Note)).
+    NoteId
+);
+define_id!(
+    /// ID eines Notiz-Ordners ([`NoteFolder`](crate::domain::NoteFolder)).
+    NoteFolderId
+);
+
+impl NoteId {
+    /// Deterministische ID (UUIDv5 im Namensraum der Notiz-IDs) – z. B. für Konfliktkopien, die
+    /// mehrere Geräte unabhängig voneinander anlegen und die zu einer zusammenlaufen müssen
+    /// (ADR-029).
+    #[must_use]
+    pub fn derived(parts: &[&[u8]]) -> Self {
+        let name: Vec<u8> = parts.concat();
+        Self(Uuid::new_v5(&NOTE_ID_NAMESPACE, &name))
+    }
+}
+
+impl TaskId {
+    /// Deterministische ID (UUIDv5) – Verlaufseintrag einer Serie (ADR-028): Zwei Geräte, die
+    /// offline dasselbe Vorkommen abhaken, erzeugen dieselbe ID und damit **einen** Eintrag.
+    #[must_use]
+    pub fn derived(parts: &[&[u8]]) -> Self {
+        let name: Vec<u8> = parts.concat();
+        Self(Uuid::new_v5(&TASK_ID_NAMESPACE, &name))
+    }
+}
+
+impl TagId {
+    /// Deterministische ID (UUIDv5, ADR-035) aus dem Namensschlüssel ([`super::tag_key`]): Zwei
+    /// Geräte, die offline „#uni“ anlegen, bekommen **einen** Tag.
+    #[must_use]
+    pub fn derived(parts: &[&[u8]]) -> Self {
+        let name: Vec<u8> = parts.concat();
+        Self(Uuid::new_v5(&TAG_ID_NAMESPACE, &name))
+    }
+}
+
+impl LinkId {
+    /// Deterministische ID (UUIDv5, ADR-036) aus Task und Notiz; `attempt` > 0 nach einem
+    /// gelöschten Link desselben Paars (Tombstone).
+    #[must_use]
+    pub fn between(task: TaskId, note: NoteId, attempt: u8) -> Self {
+        let mut name = Vec::with_capacity(33);
+        name.extend_from_slice(&task.to_bytes());
+        name.extend_from_slice(&note.to_bytes());
+        if attempt > 0 {
+            name.push(attempt);
+        }
+        Self(Uuid::new_v5(&LINK_ID_NAMESPACE, &name))
+    }
+}
+
+/// Fester Namensraum für [`LinkId::between`]. **Nie ändern.**
+const LINK_ID_NAMESPACE: Uuid = Uuid::from_u128(0x6c69_6e6b_2d74_6173_6b6e_6f74_6500_0001);
+
+/// Fester Namensraum für [`TagId::derived`]. **Nie ändern** (sonst doppeln sich Tags).
+const TAG_ID_NAMESPACE: Uuid = Uuid::from_u128(0x7461_672d_6e61_6d65_0000_0000_0000_0001);
+
+/// Fester Namensraum für [`TaskId::derived`]. **Nie ändern** (sonst doppeln sich Verlaufseinträge).
+const TASK_ID_NAMESPACE: Uuid = Uuid::from_u128(0x7461_736b_2d6f_6363_7572_0000_0000_0001);
+
+/// Fester Namensraum für [`NoteId::derived`]. **Nie ändern** (sonst entstehen neue Kopien).
+const NOTE_ID_NAMESPACE: Uuid = Uuid::from_u128(0x6e6f_7465_2d63_6f70_7900_0000_0000_0001);
 
 #[cfg(test)]
 mod tests {
@@ -197,6 +271,19 @@ mod tests {
         let b = DeviceId::new();
         assert_eq!(DeviceId::from_bytes(a.to_bytes()), a);
         assert_eq!(a.to_bytes() < b.to_bytes(), a < b);
+    }
+
+    #[test]
+    fn derived_note_ids_are_stable_and_distinct() {
+        let a = NoteId::derived(&[b"x", b"y"]);
+        assert_eq!(a, NoteId::derived(&[b"x", b"y"]));
+        assert_ne!(a, NoteId::derived(&[b"x", b"z"]));
+        assert_eq!(a.to_string(), NoteId::derived(&[b"xy"]).to_string());
+        assert_eq!(
+            NoteId::derived(&[b"probe"]).to_string(),
+            "fc60b84d-5926-5d3f-99c2-a9440cb1a4f9",
+            "Namensraum unverändert"
+        );
     }
 
     #[test]

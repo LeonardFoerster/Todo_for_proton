@@ -5,35 +5,81 @@ use chrono::Datelike;
 use rusqlite::{named_params, Connection, Row};
 use todo_core::{
     domain::{
-        Due, NaiveDate, Priority, SortKey, TagId, Task, TaskId, TaskList, TaskListId,
-        TaskListParts, TaskParts, TaskStatus, Timestamp,
+        ChecklistItem, ChecklistItemId, Due, Link, LinkId, LinkParts, NaiveDate, Note, NoteFolder,
+        NoteFolderId, NoteFolderParts, NoteId, NoteKind, NoteParts, Priority, RevisionId, SortKey,
+        Tag, TagId, TagParts, Task, TaskId, TaskList, TaskListId, TaskListParts, TaskParts,
+        TaskStatus, Timestamp,
     },
-    ports::TaskSummary,
+    ports::{NoteSummary, NoteTreeItem, TaskSummary},
     CoreResult,
 };
 
 use crate::error::{corrupt, storage};
 
 pub(crate) const TASK_COLUMNS: &str = "id, list_id, parent_id, title, notes, status, priority, \
-     due_date, due_at, due_tz, tags, sort_key, created_at, updated_at, completed_at";
+     due_date, due_at, due_tz, tags, sort_key, created_at, updated_at, completed_at, trashed_at, recurrence, checklist";
 
 pub(crate) const LIST_COLUMNS: &str = "id, name, sort_key, created_at, updated_at, is_inbox";
 
+pub(crate) const TAG_COLUMNS: &str = "id, name, created_at, updated_at";
+
+pub(crate) const LINK_COLUMNS: &str = "id, task_id, note_id, created_at";
+
+const UPSERT_TAG: &str = "\
+    INSERT INTO tags (id, name, created_at, updated_at) VALUES (:id, :name, :created_at, :updated_at)
+    ON CONFLICT (id) DO UPDATE SET
+        name = excluded.name, created_at = excluded.created_at, updated_at = excluded.updated_at";
+
 /// Spalten für [`TaskSummary`] – ohne Notiztext, nur ob es einen gibt.
 pub(crate) const SUMMARY_COLUMNS: &str = "id, list_id, title, status, priority, due_date, due_at, \
-     due_tz, notes <> '' AS has_notes, sort_key, completed_at";
+     due_tz, notes <> '' AS has_notes, sort_key, completed_at, trashed_at, \
+     (recurrence IS NOT NULL AND (due_date IS NOT NULL OR due_at IS NOT NULL)) AS recurring, \
+     checklist_done, checklist_total, tags, \
+     EXISTS (SELECT 1 FROM links WHERE links.task_id = tasks.id) AS has_links";
+
+pub(crate) const NOTE_COLUMNS: &str = "id, folder_id, name, auto_name, kind, body, body_rev, \
+     sort_key, created_at, modified_at, trashed_at";
+
+pub(crate) const FOLDER_COLUMNS: &str = "id, parent_id, name, sort_key, created_at, trashed_at";
+
+/// Spalten für [`NoteSummary`] – ohne Inhalt.
+pub(crate) const NOTE_SUMMARY_COLUMNS: &str =
+    "id, folder_id, name, sort_key, created_at, trashed_at, kind, modified_at, size";
+
+const UPSERT_NOTE: &str = "\
+    INSERT INTO notes (id, folder_id, name, auto_name, kind, body, body_rev, size, sort_key,
+                       created_at, modified_at, trashed_at)
+    VALUES (:id, :folder_id, :name, :auto_name, :kind, :body, :body_rev, :size, :sort_key,
+            :created_at, :modified_at, :trashed_at)
+    ON CONFLICT (id) DO UPDATE SET
+        folder_id = excluded.folder_id, name = excluded.name, auto_name = excluded.auto_name,
+        kind = excluded.kind, body = excluded.body, body_rev = excluded.body_rev,
+        size = excluded.size, sort_key = excluded.sort_key, created_at = excluded.created_at,
+        modified_at = excluded.modified_at, trashed_at = excluded.trashed_at";
+
+const UPSERT_FOLDER: &str = "\
+    INSERT INTO note_folders (id, parent_id, name, sort_key, created_at, trashed_at)
+    VALUES (:id, :parent_id, :name, :sort_key, :created_at, :trashed_at)
+    ON CONFLICT (id) DO UPDATE SET
+        parent_id = excluded.parent_id, name = excluded.name, sort_key = excluded.sort_key,
+        created_at = excluded.created_at, trashed_at = excluded.trashed_at";
 
 const UPSERT_TASK: &str = "\
     INSERT INTO tasks (id, list_id, parent_id, title, notes, status, priority, due_date, due_at,
-                       due_tz, tags, sort_key, created_at, updated_at, completed_at)
+                       due_tz, tags, sort_key, created_at, updated_at, completed_at, trashed_at,
+                       recurrence, checklist, checklist_text, checklist_done, checklist_total)
     VALUES (:id, :list_id, :parent_id, :title, :notes, :status, :priority, :due_date, :due_at,
-            :due_tz, :tags, :sort_key, :created_at, :updated_at, :completed_at)
+            :due_tz, :tags, :sort_key, :created_at, :updated_at, :completed_at, :trashed_at,
+            :recurrence, :checklist, :checklist_text, :checklist_done, :checklist_total)
     ON CONFLICT (id) DO UPDATE SET
         list_id = excluded.list_id, parent_id = excluded.parent_id, title = excluded.title,
         notes = excluded.notes, status = excluded.status, priority = excluded.priority,
         due_date = excluded.due_date, due_at = excluded.due_at, due_tz = excluded.due_tz,
         tags = excluded.tags, sort_key = excluded.sort_key, created_at = excluded.created_at,
-        updated_at = excluded.updated_at, completed_at = excluded.completed_at";
+        updated_at = excluded.updated_at, completed_at = excluded.completed_at,
+        trashed_at = excluded.trashed_at, recurrence = excluded.recurrence,
+        checklist = excluded.checklist, checklist_text = excluded.checklist_text,
+        checklist_done = excluded.checklist_done, checklist_total = excluded.checklist_total";
 
 const UPSERT_LIST: &str = "\
     INSERT INTO task_lists (id, name, sort_key, created_at, updated_at, is_inbox)
@@ -64,9 +110,69 @@ pub(crate) fn write_task(conn: &Connection, task: &Task) -> CoreResult<()> {
         ":created_at": task.created_at().as_millis(),
         ":updated_at": task.updated_at().as_millis(),
         ":completed_at": task.completed_at().map(Timestamp::as_millis),
+        ":trashed_at": task.trashed_at().map(Timestamp::as_millis),
+        ":recurrence": task.recurrence().map(ToString::to_string),
+        ":checklist": encode_checklist(task.checklist()),
+        ":checklist_text": task.checklist().iter().map(ChecklistItem::text).collect::<Vec<_>>().join("\n"),
+        // Höchstens 100 Punkte (ADR-034) – passt immer.
+        ":checklist_done": i64::try_from(task.checklist().iter().filter(|i| i.is_done()).count()).unwrap_or(i64::MAX),
+        ":checklist_total": i64::try_from(task.checklist().len()).unwrap_or(i64::MAX),
     })
     .map_err(storage)?;
     Ok(())
+}
+
+/// Legt den Tag an oder ersetzt ihn.
+pub(crate) fn write_tag(conn: &Connection, tag: &Tag) -> CoreResult<()> {
+    let mut stmt = conn.prepare_cached(UPSERT_TAG).map_err(storage)?;
+    stmt.execute(named_params! {
+        ":id": tag.id().to_string(),
+        ":name": tag.name(),
+        ":created_at": tag.created_at().as_millis(),
+        ":updated_at": tag.updated_at().as_millis(),
+    })
+    .map_err(storage)?;
+    Ok(())
+}
+
+/// Legt die Verknüpfung an (unveränderlich; ein zweites Mal ersetzt sie).
+pub(crate) fn write_link(conn: &Connection, link: &Link) -> CoreResult<()> {
+    conn.prepare_cached(
+        "INSERT INTO links (id, task_id, note_id, created_at) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT (id) DO UPDATE SET task_id = excluded.task_id, note_id = excluded.note_id,
+             created_at = excluded.created_at",
+    )
+    .and_then(|mut stmt| {
+        stmt.execute(rusqlite::params![
+            link.id().to_string(),
+            link.task().to_string(),
+            link.note().to_string(),
+            link.created_at().as_millis(),
+        ])
+    })
+    .map_err(storage)?;
+    Ok(())
+}
+
+/// Liest eine Zeile mit [`LINK_COLUMNS`].
+pub(crate) fn read_link(row: &Row<'_>) -> CoreResult<Link> {
+    Ok(Link::from_parts(LinkParts {
+        id: LinkId::parse(&get::<String>(row, 0)?).map_err(|e| corrupt("link id", e))?,
+        task: task_id(&get::<String>(row, 1)?)?,
+        note: note_id(&get::<String>(row, 2)?)?,
+        created_at: Timestamp::from_millis(get(row, 3)?),
+    }))
+}
+
+/// Liest eine Zeile mit [`TAG_COLUMNS`].
+pub(crate) fn read_tag(row: &Row<'_>) -> CoreResult<Tag> {
+    let parts = TagParts {
+        id: TagId::parse(&get::<String>(row, 0)?).map_err(|e| corrupt("tag id", e))?,
+        name: get(row, 1)?,
+        created_at: Timestamp::from_millis(get(row, 2)?),
+        updated_at: Timestamp::from_millis(get(row, 3)?),
+    };
+    Tag::from_parts(parts).map_err(|e| corrupt("tag", e))
 }
 
 /// Legt die Liste an oder ersetzt sie vollständig.
@@ -84,7 +190,146 @@ pub(crate) fn write_list(conn: &Connection, list: &TaskList) -> CoreResult<()> {
     Ok(())
 }
 
+/// Legt die Notiz an oder ersetzt sie vollständig.
+pub(crate) fn write_note(conn: &Connection, note: &Note) -> CoreResult<()> {
+    let mut stmt = conn.prepare_cached(UPSERT_NOTE).map_err(storage)?;
+    stmt.execute(named_params! {
+        ":id": note.id().to_string(),
+        ":folder_id": note.folder().map(|id| id.to_string()),
+        ":name": note.name().as_str(),
+        ":auto_name": note.auto_name(),
+        ":kind": encode_kind(note.kind()),
+        ":body": note.body(),
+        ":body_rev": note.body_rev().map(|rev| rev.to_string()),
+        ":size": i64::try_from(note.body().len()).unwrap_or(i64::MAX),
+        ":sort_key": note.sort_key().as_str(),
+        ":created_at": note.created_at().as_millis(),
+        ":modified_at": note.modified_at().as_millis(),
+        ":trashed_at": note.trashed_at().map(Timestamp::as_millis),
+    })
+    .map_err(storage)?;
+    Ok(())
+}
+
+/// Legt den Ordner an oder ersetzt ihn vollständig.
+pub(crate) fn write_folder(conn: &Connection, folder: &NoteFolder) -> CoreResult<()> {
+    let mut stmt = conn.prepare_cached(UPSERT_FOLDER).map_err(storage)?;
+    stmt.execute(named_params! {
+        ":id": folder.id().to_string(),
+        ":parent_id": folder.parent().map(|id| id.to_string()),
+        ":name": folder.name().as_str(),
+        ":sort_key": folder.sort_key().as_str(),
+        ":created_at": folder.created_at().as_millis(),
+        ":trashed_at": folder.trashed_at().map(Timestamp::as_millis),
+    })
+    .map_err(storage)?;
+    Ok(())
+}
+
 // --- Lesen -------------------------------------------------------------------------------------
+
+/// Liest eine Zeile mit [`NOTE_COLUMNS`].
+pub(crate) fn read_note(row: &Row<'_>) -> CoreResult<Note> {
+    let parts = NoteParts {
+        id: note_id(&get::<String>(row, 0)?)?,
+        folder: get::<Option<String>>(row, 1)?
+            .as_deref()
+            .map(folder_id)
+            .transpose()?,
+        name: get(row, 2)?,
+        auto_name: get(row, 3)?,
+        kind: decode_kind(get(row, 4)?)?,
+        body: get(row, 5)?,
+        body_rev: get::<Option<String>>(row, 6)?
+            .as_deref()
+            .map(|s| RevisionId::parse(s).map_err(|e| corrupt("revision id", e)))
+            .transpose()?,
+        sort_key: sort_key(&get::<String>(row, 7)?)?,
+        created_at: Timestamp::from_millis(get(row, 8)?),
+        modified_at: Timestamp::from_millis(get(row, 9)?),
+        trashed_at: get::<Option<i64>>(row, 10)?.map(Timestamp::from_millis),
+    };
+    Note::from_parts(parts).map_err(|e| corrupt("note", e))
+}
+
+/// Liest eine Zeile mit [`FOLDER_COLUMNS`].
+pub(crate) fn read_folder(row: &Row<'_>) -> CoreResult<NoteFolder> {
+    let parts = NoteFolderParts {
+        id: folder_id(&get::<String>(row, 0)?)?,
+        parent: get::<Option<String>>(row, 1)?
+            .as_deref()
+            .map(folder_id)
+            .transpose()?,
+        name: get(row, 2)?,
+        sort_key: sort_key(&get::<String>(row, 3)?)?,
+        created_at: Timestamp::from_millis(get(row, 4)?),
+        trashed_at: get::<Option<i64>>(row, 5)?.map(Timestamp::from_millis),
+    };
+    NoteFolder::from_parts(parts).map_err(|e| corrupt("note folder", e))
+}
+
+/// Liest eine Zeile mit [`NOTE_SUMMARY_COLUMNS`] ab Spalte `at`.
+pub(crate) fn read_note_summary(row: &Row<'_>, at: usize) -> CoreResult<NoteSummary> {
+    Ok(NoteSummary {
+        id: note_id(&get::<String>(row, at)?)?,
+        folder: get::<Option<String>>(row, at + 1)?
+            .as_deref()
+            .map(folder_id)
+            .transpose()?,
+        name: get(row, at + 2)?,
+        sort_key: sort_key(&get::<String>(row, at + 3)?)?,
+        created_at: Timestamp::from_millis(get(row, at + 4)?),
+        trashed_at: get::<Option<i64>>(row, at + 5)?.map(Timestamp::from_millis),
+        kind: decode_kind(get(row, at + 6)?)?,
+        modified_at: Timestamp::from_millis(get(row, at + 7)?),
+        size: u64::try_from(get::<i64>(row, at + 8)?).map_err(|e| corrupt("note size", e))?,
+    })
+}
+
+/// Eintrag der Baumseite ab Spalte 1: Ordner ([`FOLDER_COLUMNS`]) bzw. Notiz
+/// ([`NOTE_SUMMARY_COLUMNS`] – die ersten sechs Spalten liegen gleich).
+pub(crate) fn read_tree_item(row: &Row<'_>, is_note: bool) -> CoreResult<NoteTreeItem> {
+    if is_note {
+        return read_note_summary(row, 1).map(NoteTreeItem::Note);
+    }
+    let parts = NoteFolderParts {
+        id: folder_id(&get::<String>(row, 1)?)?,
+        parent: get::<Option<String>>(row, 2)?
+            .as_deref()
+            .map(folder_id)
+            .transpose()?,
+        name: get(row, 3)?,
+        sort_key: sort_key(&get::<String>(row, 4)?)?,
+        created_at: Timestamp::from_millis(get(row, 5)?),
+        trashed_at: get::<Option<i64>>(row, 6)?.map(Timestamp::from_millis),
+    };
+    NoteFolder::from_parts(parts)
+        .map(NoteTreeItem::Folder)
+        .map_err(|e| corrupt("note folder", e))
+}
+
+pub(crate) fn note_id(s: &str) -> CoreResult<NoteId> {
+    NoteId::parse(s).map_err(|e| corrupt("note id", e))
+}
+
+pub(crate) fn folder_id(s: &str) -> CoreResult<NoteFolderId> {
+    NoteFolderId::parse(s).map_err(|e| corrupt("note folder id", e))
+}
+
+pub(crate) fn encode_kind(kind: NoteKind) -> i64 {
+    match kind {
+        NoteKind::Text => 0,
+        NoteKind::Markdown => 1,
+    }
+}
+
+fn decode_kind(v: i64) -> CoreResult<NoteKind> {
+    match v {
+        0 => Ok(NoteKind::Text),
+        1 => Ok(NoteKind::Markdown),
+        _ => Err(corrupt("note kind", v)),
+    }
+}
 
 /// Liest eine Zeile mit [`TASK_COLUMNS`].
 pub(crate) fn read_task(row: &Row<'_>) -> CoreResult<Task> {
@@ -105,6 +350,11 @@ pub(crate) fn read_task(row: &Row<'_>) -> CoreResult<Task> {
         created_at: Timestamp::from_millis(get(row, 12)?),
         updated_at: Timestamp::from_millis(get(row, 13)?),
         completed_at: get::<Option<i64>>(row, 14)?.map(Timestamp::from_millis),
+        trashed_at: get::<Option<i64>>(row, 15)?.map(Timestamp::from_millis),
+        recurrence: get::<Option<String>>(row, 16)?
+            .map(|s| s.parse().map_err(|e| corrupt("recurrence", e)))
+            .transpose()?,
+        checklist: decode_checklist(&get::<String>(row, 17)?)?,
     };
     Task::from_parts(parts).map_err(|e| corrupt("task", e))
 }
@@ -134,6 +384,12 @@ pub(crate) fn read_summary(row: &Row<'_>) -> CoreResult<TaskSummary> {
         has_notes: get(row, 8)?,
         sort_key: sort_key(&get::<String>(row, 9)?)?,
         completed_at: get::<Option<i64>>(row, 10)?.map(Timestamp::from_millis),
+        trashed_at: get::<Option<i64>>(row, 11)?.map(Timestamp::from_millis),
+        recurring: get(row, 12)?,
+        checklist_done: get(row, 13)?,
+        checklist_total: get(row, 14)?,
+        tags: decode_tags(&get::<String>(row, 15)?)?,
+        has_links: get(row, 16)?,
     })
 }
 
@@ -175,7 +431,7 @@ fn decode_status(v: i64) -> CoreResult<TaskStatus> {
     }
 }
 
-fn encode_priority(priority: Priority) -> i64 {
+pub(crate) fn encode_priority(priority: Priority) -> i64 {
     match priority {
         Priority::None => 0,
         Priority::Low => 1,
@@ -231,6 +487,30 @@ fn encode_tags(tags: &[TagId]) -> String {
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Checkliste als Zeilen `id<TAB>0|1<TAB>Text` (Texte sind einzeilig ohne Steuerzeichen, ADR-034).
+fn encode_checklist(items: &[ChecklistItem]) -> String {
+    items
+        .iter()
+        .map(|i| format!("{}\t{}\t{}", i.id(), u8::from(i.is_done()), i.text()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn decode_checklist(s: &str) -> CoreResult<Vec<ChecklistItem>> {
+    s.lines()
+        .filter(|l| !l.is_empty())
+        .map(|line| {
+            let mut parts = line.splitn(3, '\t');
+            let (Some(id), Some(done), Some(text)) = (parts.next(), parts.next(), parts.next())
+            else {
+                return Err(corrupt("checklist item", line));
+            };
+            let id = ChecklistItemId::parse(id).map_err(|e| corrupt("checklist item id", e))?;
+            ChecklistItem::new(id, text, done == "1").map_err(|e| corrupt("checklist item", e))
+        })
+        .collect()
 }
 
 fn decode_tags(s: &str) -> CoreResult<Vec<TagId>> {

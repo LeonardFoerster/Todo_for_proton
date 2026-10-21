@@ -40,7 +40,8 @@ describe("multi-select mode", () => {
     const { user } = await setup();
     expect(listbox().getAttribute("aria-multiselectable")).toBeNull();
     await user.click(row("A"));
-    expect(screen.getByRole("region", { name: "Task-Details" })).toBeTruthy();
+    // Das Detail-Panel lädt beim ersten Öffnen nach (eigener Chunk).
+    expect(await screen.findByRole("region", { name: "Task-Details" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Auswählen" }));
     expect(screen.queryByRole("region", { name: "Task-Details" }), "Modus schließt das Detail").toBeNull();
     expect(listbox().getAttribute("aria-multiselectable")).toBe("true");

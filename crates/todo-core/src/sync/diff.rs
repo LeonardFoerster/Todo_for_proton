@@ -5,7 +5,7 @@
 
 use super::{FieldMap, FieldName, FieldValue, HlcState, Op, OpId, OpKind};
 use crate::{
-    domain::{Task, TaskList, Timestamp},
+    domain::{Link, Note, NoteFolder, Tag, Task, TaskList, Timestamp},
     ports::{Change, EntityRef},
 };
 
@@ -39,6 +39,12 @@ impl OpClock {
     #[must_use]
     pub fn last_seq(&self) -> u64 {
         self.last_seq
+    }
+
+    /// Gibt die letzten `n` Nummern zurück (Ops, die doch nicht entstehen). Die HLC bleibt
+    /// vorgerückt – sie muss nur streng monoton sein, nicht lückenlos.
+    pub fn rewind(&mut self, n: u64) {
+        self.last_seq = self.last_seq.saturating_sub(n);
     }
 
     /// Erzeugt eine Op mit neuer HLC und der nächsten Nummer.
@@ -77,6 +83,15 @@ pub fn task_fields(task: &Task) -> FieldMap {
             FieldName::CreatedAt,
             FieldValue::Timestamp(task.created_at()),
         ),
+        (FieldName::Trashed, FieldValue::Trashed(task.trashed_at())),
+        (
+            FieldName::Recurrence,
+            FieldValue::Recurrence(task.recurrence().cloned()),
+        ),
+        (
+            FieldName::Checklist,
+            FieldValue::Checklist(task.checklist().to_vec()),
+        ),
     ])
 }
 
@@ -97,6 +112,74 @@ pub fn list_fields(list: &TaskList) -> FieldMap {
     ])
 }
 
+/// Die synchronisierten Felder einer Notiz (ohne Inhalt – der läuft über Revisionen). Mit
+/// Auto-Name ist der Name kein Feld: Jedes Gerät leitet ihn aus dem aufgelösten Inhalt ab, so
+/// passen Name und Inhalt nach einem Merge zusammen.
+#[must_use]
+pub fn note_fields(note: &Note) -> FieldMap {
+    let mut fields = FieldMap::from([
+        (FieldName::ParentFolder, FieldValue::Folder(note.folder())),
+        (FieldName::AutoName, FieldValue::Bool(note.auto_name())),
+        (FieldName::NoteKind, FieldValue::NoteKind(note.kind())),
+        (
+            FieldName::SortKey,
+            FieldValue::SortKey(note.sort_key().clone()),
+        ),
+        (
+            FieldName::CreatedAt,
+            FieldValue::Timestamp(note.created_at()),
+        ),
+        (FieldName::Trashed, FieldValue::Trashed(note.trashed_at())),
+    ]);
+    if !note.auto_name() {
+        fields.insert(FieldName::Name, FieldValue::Text(note.name().to_string()));
+    }
+    fields
+}
+
+/// Die synchronisierten Felder eines Notiz-Ordners.
+#[must_use]
+pub fn note_folder_fields(folder: &NoteFolder) -> FieldMap {
+    FieldMap::from([
+        (FieldName::ParentFolder, FieldValue::Folder(folder.parent())),
+        (FieldName::Name, FieldValue::Text(folder.name().to_string())),
+        (
+            FieldName::SortKey,
+            FieldValue::SortKey(folder.sort_key().clone()),
+        ),
+        (
+            FieldName::CreatedAt,
+            FieldValue::Timestamp(folder.created_at()),
+        ),
+        (FieldName::Trashed, FieldValue::Trashed(folder.trashed_at())),
+    ])
+}
+
+/// Feldwerte eines Tags (ADR-035).
+#[must_use]
+pub fn tag_fields(tag: &Tag) -> FieldMap {
+    FieldMap::from([
+        (FieldName::Name, FieldValue::Text(tag.name().to_owned())),
+        (
+            FieldName::CreatedAt,
+            FieldValue::Timestamp(tag.created_at()),
+        ),
+    ])
+}
+
+/// Feldwerte einer Verknüpfung (ADR-036).
+#[must_use]
+pub fn link_fields(link: &Link) -> FieldMap {
+    FieldMap::from([
+        (FieldName::LinkTask, FieldValue::TaskRef(link.task())),
+        (FieldName::LinkNote, FieldValue::NoteRef(link.note())),
+        (
+            FieldName::CreatedAt,
+            FieldValue::Timestamp(link.created_at()),
+        ),
+    ])
+}
+
 /// Ops für eine Änderung. `before` sind die bisher bekannten Feldwerte der Entity (`None` =
 /// unbekannt); Felder, die dort fehlen, gelten als geändert.
 ///
@@ -112,6 +195,10 @@ pub fn ops_for(
     let after = match change {
         Change::UpsertTask(task) => task_fields(task),
         Change::UpsertList(list) => list_fields(list),
+        Change::UpsertNote(note) => note_fields(note),
+        Change::UpsertNoteFolder(folder) => note_folder_fields(folder),
+        Change::UpsertTag(tag) => tag_fields(tag),
+        Change::UpsertLink(link) => link_fields(link),
         Change::Delete(_) => {
             return before
                 .map(|_| clock.stamp(now, entity, OpKind::Delete))
@@ -233,6 +320,9 @@ mod tests {
             created_at: task.created_at(),
             updated_at: task.updated_at(),
             completed_at: None,
+            trashed_at: None,
+            recurrence: None,
+            checklist: Vec::new(),
         };
         parts.updated_at = Timestamp::from_millis(999_999);
         let touched = Task::from_parts(parts).unwrap();

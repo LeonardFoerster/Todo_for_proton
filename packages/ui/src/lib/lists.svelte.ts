@@ -1,5 +1,6 @@
-import type { CoreClient, MoveListTargetDto, TaskListDto, TaskQueryDto, TaskSummaryDto } from "@tasks/core-client";
+import type { CoreClient, MoveListTargetDto, TagDto, TaskListDto, TaskQueryDto, TaskSummaryDto } from "@tasks/core-client";
 import { isOverdue } from "./groups";
+import type { Route } from "./router.svelte";
 import { routeQuery } from "./views";
 
 /** So viele offene Tasks zählt die Sidebar höchstens (darüber „999+“). */
@@ -12,8 +13,23 @@ const PAGE = 500;
  */
 export class ListsState {
   lists = $state.raw<TaskListDto[]>([]);
-  /** Zähler der Seitenleiste; `overdue` = davon in „Heute“ überfällig (P4-02). */
-  counts = $state<{ inbox: number; today: number; overdue: number }>({ inbox: 0, today: 0, overdue: 0 });
+  /** Tags (ADR-035), nach Name. */
+  tags = $state.raw<TagDto[]>([]);
+  tagsLoaded = $state(false);
+  /**
+   * Zähler der Seitenleiste und Unterzeilen (offene Tasks); `overdue` = davon in „Heute“ überfällig (P4-02),
+   * `trash` = Papierkorb (ADR-031), `lists`/`tags` je ID (FIX-04, über `countTasks`).
+   */
+  counts = $state<{
+    inbox: number;
+    today: number;
+    overdue: number;
+    trash: number;
+    all: number;
+    upcoming: number;
+    lists: Record<string, number>;
+    tags: Record<string, number>;
+  }>({ inbox: 0, today: 0, overdue: 0, trash: 0, all: 0, upcoming: 0, lists: {}, tags: {} });
   loaded = $state(false);
 
   private recount: ReturnType<typeof setTimeout> | null = null;
@@ -22,11 +38,12 @@ export class ListsState {
 
   /** Startet Laden + Abo; gibt die Abmeldung zurück. */
   start(): () => void {
-    void this.reloadLists();
-    void this.refreshCounts();
+    // Zähler je Liste/Tag brauchen die Listen und Tags.
+    void Promise.all([this.reloadLists(), this.reloadTags()]).then(() => this.refreshCounts());
     const off = this.client.onChange((e) => {
       if (e.lists.length) void this.reloadLists();
-      if (e.tasks.length || e.lists.length) this.scheduleCounts();
+      if (e.tags.length) void this.reloadTags();
+      if (e.tasks.length || e.lists.length || e.tags.length) this.scheduleCounts();
     });
     return () => {
       off();
@@ -47,6 +64,24 @@ export class ListsState {
     this.loaded = true;
   }
 
+  async reloadTags() {
+    this.tags = await this.client.listTags();
+    this.tagsLoaded = true;
+  }
+
+  /** Namen bekannter Tags in der Reihenfolge der IDs (verwaiste IDs fallen weg, ADR-035). */
+  tagNames(ids: readonly string[]): string[] {
+    if (ids.length === 0) return [];
+    return ids.flatMap((id) => this.tags.find((t) => t.id === id)?.name ?? []);
+  }
+
+  /** Tags zu Namen finden oder anlegen (Reihenfolge bleibt); liefert die IDs. */
+  async ensureTags(names: readonly string[]): Promise<string[]> {
+    const ids: string[] = [];
+    for (const name of names) ids.push((await this.client.ensureTag(name)).id);
+    return ids.filter((id, i) => ids.indexOf(id) === i);
+  }
+
   /** Umbenennen (optimistisch; bei Fehler neu laden und weiterwerfen). */
   async rename(id: string, name: string): Promise<void> {
     const trimmed = name.trim();
@@ -58,6 +93,20 @@ export class ListsState {
       await this.reloadLists();
       throw e;
     }
+  }
+
+  /** `source` in `target` zusammenführen (ADR-020); liefert die Zahl verschobener Tasks. */
+  async merge(source: string, target: string): Promise<number> {
+    const moved = await this.client.mergeTaskLists(source, target);
+    await this.reloadLists();
+    return moved;
+  }
+
+  /** Benutzerlisten mit gleichem Namen (Groß/Klein egal), je Gruppe in Reihenfolge der Seitenleiste. */
+  duplicateGroups(): TaskListDto[][] {
+    const groups: Record<string, TaskListDto[]> = {};
+    for (const l of this.userLists) (groups[l.name.trim().toLowerCase()] ??= []).push(l);
+    return Object.values(groups).filter((g) => g.length > 1);
   }
 
   /** Löschen (Tasks wandern im Core in den Eingang); liefert deren Anzahl. */
@@ -89,14 +138,14 @@ export class ListsState {
     }
   }
 
-  /** Offene bzw. erledigte Tasks einer Liste zählen (für den Lösch-Dialog, höchstens 999+). */
+  /** Offene bzw. erledigte Tasks einer Liste zählen (für den Lösch-Dialog). */
   async countTasks(listId: string): Promise<{ open: number; done: number }> {
     const view = { kind: "list" as const, listId };
     const [open, all] = await Promise.all([
-      this.count({ view, status: "open" }),
-      this.count({ view }),
+      this.client.countTasks({ view, status: "open" }),
+      this.client.countTasks({ view }),
     ]);
-    return { open: open.n, done: Math.max(0, all.n - open.n) };
+    return { open, done: Math.max(0, all - open) };
   }
 
   private scheduleCounts() {
@@ -107,11 +156,27 @@ export class ListsState {
   async refreshCounts() {
     // eslint-disable-next-line svelte/prefer-svelte-reactivity -- Momentaufnahme fürs Zählen, nicht reaktiv
     const now = new Date();
-    const [inbox, today] = await Promise.all([
-      this.count(routeQuery({ view: "inbox" })),
-      this.count(routeQuery({ view: "today" }), (t) => t.due != null && isOverdue(t.due, now)),
+    const count = (route: Route) => this.client.countTasks(routeQuery(route, now));
+    const [inbox, today, trash, all, upcoming, perList, perTag] = await Promise.all([
+      count({ view: "inbox" }),
+      // „Überfällig“ braucht die Fälligkeiten – „Heute“ ist klein, also seitenweise.
+      this.count(routeQuery({ view: "today" }, now), (t) => t.due != null && isOverdue(t.due, now)),
+      count({ view: "trash" }),
+      count({ view: "all" }),
+      count({ view: "upcoming" }),
+      Promise.all(this.userLists.map(async (l) => [l.id, await count({ view: "list", listId: l.id })] as const)),
+      Promise.all(this.tags.map(async (t) => [t.id, await count({ view: "tag", tagId: t.id })] as const)),
     ]);
-    this.counts = { inbox: inbox.n, today: today.n, overdue: today.matched };
+    this.counts = {
+      inbox,
+      today: today.n,
+      overdue: today.matched,
+      trash,
+      all,
+      upcoming,
+      lists: Object.fromEntries(perList),
+      tags: Object.fromEntries(perTag),
+    };
   }
 
   /** Zählt die Ansicht (bis über `COUNT_CAP`); `matched` = davon `pred` erfüllt – aus denselben Seiten. */
