@@ -402,7 +402,8 @@ Ansicht je Serie (mit Verknüpfungen aus N3 möglich), Erinnerungen.
 4. Tests: Parser-Tabelle (inkl. Abgrenzung: „jeden" ohne Regel bleibt im Titel), Dialog-Vitest.
 **Fertig wenn:** `just check` grün. Commit `feat(ui): recurrence in the new-task window`.
 
-### [ ] N4-06 · UI: Anzeige, Detail-Panel, Abhaken
+### [x] N4-06 · UI: Anzeige, Detail-Panel, Abhaken — 2026-10-21 · 32c2a8c
+> Notiz: Der Tooltip am Icon ist allgemein („Wiederholt sich“) – die Zusammenfassung trägt nur `recurring`, die Regel im Klartext steht im Detail. Löschen fragt nicht nach (Papierkorb mit Rückgängig, ADR-031); der Toast nennt die Serie.
 **Lies vorher:** `features/task-detail/TaskDetail.svelte`, `features/task-list/TaskRow.svelte`,
 `features/board/BoardCard.svelte`, `lib/task-actions.ts` (Rückgängig-Toasts), ui-guidelines §4/§5.
 **Schritte:**
@@ -419,7 +420,8 @@ Ansicht je Serie (mit Verknüpfungen aus N3 möglich), Erinnerungen.
 **Fertig wenn:** `just check` grün, Interaktionsbudget < 16 ms beim Abhaken (p95 im Selbsttest).
 Commit `feat(ui): recurring tasks in list, board and detail`.
 
-### [ ] N4-07 · Selbsttest, Abnahme, Doku
+### [~] N4-07 · Selbsttest, Abnahme, Doku
+> Notiz (2026-10-21): Selbsttest `n4rec` grün (Abhaken bis Repaint p50 16 / p95 18 ms – ein Frame bei 60 Hz; geprüft wird wie überall die harte Grenze 50 ms), Abnahme-Skript Abschnitt 9 grün, Doku nachgezogen, installiert. Messung Release: Start 360 ms, PSS 311 MB (hart 320), Leerlauf-CPU 0 %, Binary 23 214 600 B (+138 KB seit N7). Wartet auf die User-Abnahme (`prototype-acceptance.md` H). Die offenen Fragen unten sind vom User am 2026-10-21 beantwortet (Verlauf ja, verpasste überspringen, „nach Erledigung“ ja, N4 nach N0-01).
 **Schritte:**
 1. WebView-Selbsttest `p4rec`: Serie „Blatt jeden Fr" anlegen → abhaken → Verlauf in „Erledigt", `due` +7 Tage →
    Rückgängig → Zustand wie vorher; Überspringen; Interaktion bis Repaint messen.

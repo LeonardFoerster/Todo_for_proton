@@ -21,9 +21,12 @@ gemeinsame Suche, Ordner-Import; `development/notes.md`, ADR-029) umgesetzt und 
 Abnahme durch den User (`prototype-acceptance.md` E) ist offen. P5 (Feinschliff der Oberfläche nach dem Design-Review
 2026-10-21: Inter, Lesespalte, Priorität im Ring, Suche, eigenes Datumsfeld, Touch) und P6 (Fenster „Neue Task“ als
 Schnelleingabe) umgesetzt; Sichtprüfung durch den
-User offen (`prototype-acceptance.md` F). Als Nächstes N0 (Prototyp abrunden), N4
-(wiederkehrende Tasks), dann die Web-App (`development/roadmap-next.md`); langfristige Ideen (Verknüpfungen,
-Kalender, GitHub) stehen dort unter N3.
+User offen (`prototype-acceptance.md` F). Live-Abnahme über Proton (N0-01) am 2026-10-21 vom User abgenommen. N6
+(Papierkorb, Export/Import, ADR-031/032), N7 (Erinnerungen, Tray, Autostart, ADR-033) und N4 (wiederkehrende Tasks
+mit Verlauf, Überspringen, Rückgängig, ADR-028) umgesetzt und automatisiert abgenommen; Abnahme durch den User offen
+(`prototype-acceptance.md` G, H). Als Nächstes N8 (Checklisten + Tags), N9 (Task ↔ Notiz), N10 (Bedienung), N11
+(AUR-Paket), dann die Web-App (`development/roadmap-next.md`); langfristige Ideen (Kalender, GitHub) stehen dort
+unter N3.
 
 ## 2. Wo was liegt
 

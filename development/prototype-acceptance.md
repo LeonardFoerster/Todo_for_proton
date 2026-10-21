@@ -256,3 +256,20 @@ leeres Profil → Import (`tests/export.rs`), Vitest, Selbsttest `p0sel`, `p709a
 | 5 | Einstellungen › Erinnerungen › Im Hintergrund weiterlaufen; Fenster schließen | Fenster weg, Symbol im Tray; Tray › Öffnen / Neue Task / Beenden | |
 | 6 | Mit dem System starten an, abmelden/anmelden | App läuft im Tray, ohne Fenster; Starter öffnet das vorhandene Fenster (keine zweite Instanz) | |
 
+## H · Wiederkehrende Tasks (N4) – Abnahme durch den User am Desktop: **offen**
+
+Automatisch geprüft: Core-Tests (Abhaken, Überspringen, Rückgängig, Ende, Zeitumstellung, gemischtes Sammel-Abhaken),
+Szenario-Tests (dasselbe Vorkommen auf zwei Geräten → ein Eintrag; Überspringen vs. Abhaken), IPC mit `jiff` über
+die Zeitumstellung, Vitest, Selbsttest `n4rec` (Abhaken bis Repaint p50 16 / p95 18 ms – ein Frame) und Abnahme-Skript
+Abschnitt 9 (`ONLY=series tools/acceptance-two-devices.sh`, 2026-10-21: bestanden).
+
+| # | Schritt | Erwartung | Ergebnis |
+|---|---|---|---|
+| 1 | „Neue Task": `Blatt jeden Fr 10:00` | „jeden Fr" grün markiert, Chip „Wöchentlich", Hinweis „Wiederholt sich wöchentlich, Fr"; Task am nächsten Freitag 10:00 mit Wiederholungs-Icon | |
+| 2 | Die Task abhaken | Zeile bleibt, Fälligkeit springt eine Woche weiter; Toast „… erledigt – nächstes Mal Fr, …" | |
+| 3 | Im Toast „Rückgängig" | alte Fälligkeit, kein Eintrag unter „Erledigt" | |
+| 4 | Nochmal abhaken, dann „Erledigt" öffnen | ein erledigter Eintrag „Blatt" mit der alten Fälligkeit | |
+| 5 | Rechtsklick › „Dieses Mal überspringen" | Fälligkeit +1 Woche, kein neuer Eintrag | |
+| 6 | Detail › Wiederholung › Benutzerdefiniert…: alle 2 Wochen, Mo und Do, endet am 20.12. | Klartext stimmt, Regel übernommen | |
+| 7 | Detail › Wiederholung › „Wiederholung beenden" | Icon weg; Abhaken erledigt die Task normal | |
+

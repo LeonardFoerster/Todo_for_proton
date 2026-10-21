@@ -36,6 +36,10 @@ iOS folgen (siehe [Plattformen](#plattformen) und [Roadmap](#roadmap)).
 - Fenster „Neue Task" (`N`) mit natürlicher Eingabe: „Übungsblatt 3 **bis Fr 14:00 !1 @uni**" erkennt Tag
   (`morgen`, `Fr`, `24.10.`), Uhrzeit, Priorität (`!1`–`!3`) und Liste; dazu Chips zum Nachjustieren, optionale Notiz
   und „Weitere anlegen" für mehrere Tasks am Stück.
+- **Wiederkehrende Tasks:** „Blatt **jeden Fr**", „Gießen **alle 3 Tage nach Erledigung**", „Miete **jeden 1.**",
+  „Standup **werktags**", optional „bis 20.12.". Abhaken legt einen Eintrag unter „Erledigt" an und schiebt die Task
+  auf das nächste Vorkommen (verpasste werden übersprungen); „Dieses Mal überspringen" und Rückgängig gibt es auch.
+  Hinweis: Serien brauchen auf **allen** Geräten diese Version – ältere Apps überspringen die neuen Änderungen.
 - Ansichten: **Eingang, Heute, Geplant, Alle Tasks, Erledigt** – plus eigene Listen. Abgehakte Tasks verlassen die
   offenen Ansichten und stehen unter „Erledigt"; jede Aktion lässt sich im Hinweis unten links **rückgängig** machen.
 - Manuelle Reihenfolge per Drag & Drop oder `Alt+↑/↓`.
@@ -218,7 +222,7 @@ Planungs- und Entscheidungsdokumente (ADRs, Roadmap) stehen in `development/`.
 | Aktion | Kürzel |
 |---|---|
 | Neue Task | `N`, `Strg+N` |
-| Im Fenster „Neue Task": Fälligkeit / Priorität / Liste / Notiz | `Alt+D` / `Alt+P` / `Alt+L` / `Alt+N` |
+| Im Fenster „Neue Task": Fälligkeit / Wiederholung / Priorität / Liste / Notiz | `Alt+D` / `Alt+W` / `Alt+P` / `Alt+L` / `Alt+N` |
 | Navigieren / Öffnen | `↑/↓` bzw. `J/K` / `Enter` |
 | Erledigt umschalten / Löschen | `Leertaste` bzw. `E` / `Entf` |
 | Umsortieren | `Alt+↑/↓` |

@@ -34,6 +34,12 @@ pub enum OpKind {
 - **Delete** ist ein Tombstone mit HLC. Ein `Set` mit *höherer* HLC nach dem Delete wird ignoriert
   (Delete gewinnt – „Delete-wins" ist für Todos die erwartete Semantik). Wiederherstellen = expliziter `Restore`-Op (später).
 - **Status Done/Open**: normales LWW-Feld; `completed_at` wird mitgeführt.
+- **Wiederholung (N4, ADR-028)**: Feld `Recurrence` (Code 17, ganze Regel als LWW-Register, `None` = keine).
+  Abhaken einer Serie = ein `ChangeSet` aus „Serie: neue `due`" und „Verlaufseintrag anlegen". Die ID des Eintrags
+  ist **deterministisch** (UUIDv5 aus Serie + lokalem Tag des Vorkommens): Haken zwei Geräte offline dasselbe
+  Vorkommen ab, entsteht nur **ein** Eintrag (gleiche ID, Felder per LWW), und beide schreiben dieselbe `due`. Nach
+  „Rückgängig" (Tombstone) nimmt erneutes Abhaken die nächste ID-Variante. Ältere Apps kennen Code 17 nicht und
+  überspringen solche Segmente (Hinweis „alle Geräte aktualisieren").
 - **Notizen**: v1 LWW für das ganze Feld. Später ggf. Text-CRDT (z. B. `yrs`) nur für `notes`.
 - **Tags**: v1 LWW auf die ganze Menge; bei Bedarf Upgrade auf OR-Set über `AddToSet`/`RemoveFromSet`.
 - **Reihenfolge**: `sort_key` als Fractional Index (String, z. B. Base62). Verschieben ändert nur

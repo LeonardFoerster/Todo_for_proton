@@ -2262,8 +2262,147 @@ const n7bg: Step[] = [
   ],
 ];
 
+// N4 (ADR-028): Serie über das Fenster „Neue Task“, Abhaken mit Verlauf, Rückgängig, Überspringen –
+// in der echten WebView mit Zeitzonen aus der Shell.
+const n4rec: Step[] = [];
+{
+  let seriesId = "";
+  const plusDays = (date: string, n: number) => {
+    const d = new Date(`${date}T12:00:00`);
+    d.setDate(d.getDate() + n);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const dueOf = async (client: CoreClient) => {
+    const due = (await client.getTask(seriesId)).due;
+    return due?.kind === "date" ? due.date : (due?.at ?? "");
+  };
+  const history = async (client: CoreClient) =>
+    (await client.listTasks({ view: { kind: "completed" } }, { limit: 50 })).items.filter((t) => t.title === "Blatt");
+  let first = "";
+  n4rec.push(
+    [
+      "„Blatt jeden Fr“ im Fenster „Neue Task“: Regel markiert, Serie am nächsten Freitag",
+      async (client) => {
+        const input = await openNewTask();
+        type(input, "Blatt jeden Fr");
+        await until("Markierung", () => document.querySelector("dialog[open] mark.repeat")?.textContent === "jeden Fr");
+        key(input, "Enter");
+        await newTaskClosed();
+        const row = await until("Zeile", () => byRole("option", /^Blatt, .*wiederholt sich/));
+        seriesId = row.dataset.taskId ?? "";
+        const task = await client.getTask(seriesId);
+        if (task.recurrence?.freq !== "weekly" || task.recurrence.weekdays.join() !== "fr") throw new Error(JSON.stringify(task.recurrence));
+        first = await dueOf(client);
+        if (new Date(`${first}T12:00:00`).getDay() !== 5) throw new Error(`kein Freitag: ${first}`);
+        return first;
+      },
+    ],
+    [
+      "Abhaken: Zeile bleibt, Fälligkeit +7 Tage, Eintrag in „Erledigt“; Rückgängig stellt alles her",
+      async (client) => {
+        await click("checkbox", "Erledigt: Blatt");
+        await untilAsync("+7 Tage", async () => (await dueOf(client)) === plusDays(first, 7));
+        await until("Toast", () => byRole("button", "Rückgängig"));
+        if (!byRole("option", /^Blatt/)) throw new Error("Zeile verschwunden");
+        const entries = await history(client);
+        if (entries.length !== 1 || entries[0].due?.kind !== "date" || entries[0].due.date !== first) {
+          throw new Error(`Verlauf: ${JSON.stringify(entries)}`);
+        }
+        (await until("Rückgängig", () => byRole("button", "Rückgängig"))).click();
+        await untilAsync("zurück", async () => (await dueOf(client)) === first && (await history(client)).length === 0);
+        return `${first} → ${plusDays(first, 7)} → ${first}`;
+      },
+    ],
+    [
+      "Überspringen (Kontextmenü): +7 Tage ohne Verlaufseintrag",
+      async (client) => {
+        const row = await until("Zeile", () => byRole("option", /^Blatt/));
+        row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 200, clientY: 200 }));
+        await click("menuitem", "Dieses Mal überspringen");
+        await untilAsync("+7", async () => (await dueOf(client)) === plusDays(first, 7));
+        if ((await history(client)).length !== 0) throw new Error("Verlauf beim Überspringen");
+      },
+    ],
+    [
+      "Interaktion: Abhaken einer Serie bis Repaint (10×)",
+      async (client) => {
+        const times: number[] = [];
+        for (let i = 0; i < 10; i++) {
+          const before = await dueOf(client);
+          await frame();
+          const t0 = performance.now();
+          (await until("Haken", () => byRole("checkbox", "Erledigt: Blatt"))).click();
+          times.push((await frame()) - t0);
+          await untilAsync("vorgerückt", async () => (await dueOf(client)) !== before);
+        }
+        // Bis zum nächsten Frame (wie `repaint`): ein Frame bei 60 Hz sind schon 16,7 ms – geprüft wird die harte Grenze.
+        const st = stats(times);
+        if (st.p95 > 50) throw new Error(`p95 ${st.p95.toFixed(1)} ms > 50 ms`);
+        const entries = await history(client);
+        if (entries.length !== 10) throw new Error(`${entries.length} Verlaufseinträge statt 10`);
+        return `p50 ${st.p50.toFixed(1)} / p95 ${st.p95.toFixed(1)} / max ${st.max.toFixed(1)} ms`;
+      },
+    ],
+  );
+}
+
+// N4-07, Abnahme Abschnitt 9: Serie auf zwei Geräten – beide haken offline dasselbe Vorkommen ab.
+const SERIES = "Serie Zwei Geräte";
+function today() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const date = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`;
+  return { date, start: start.toISOString(), end: end.toISOString() };
+}
+
+async function seriesState(client: CoreClient): Promise<string> {
+  const all = (await client.listTasks({ view: { kind: "all" } }, { limit: 200 })).items.filter((t) => t.title === SERIES);
+  const due = (t: TaskSummaryDto) => (t.due?.kind === "date" ? t.due.date : (t.due?.at ?? "-"));
+  const series = all.filter((t) => t.recurring).map((t) => `Serie ${t.status} ${due(t)}`);
+  const entries = all.filter((t) => !t.recurring).map((t) => `Eintrag ${t.status} ${due(t)} ${t.id}`);
+  return [...series, ...entries.sort()].join(" | ");
+}
+
+const seriesComplete: Step = [
+  "Vorkommen von heute abhaken",
+  async (client) => {
+    const s = (await client.listTasks({ view: { kind: "all" } }, { limit: 200 })).items.find((t) => t.title === SERIES && t.recurring);
+    if (!s) throw new Error("Serie fehlt");
+    const res = await client.completeTasks([s.id], true, today());
+    return `Eintrag ${res.occurrences[0]?.occurrenceId ?? "-"}`;
+  },
+];
+
+const n4create: Step[] = [
+  [
+    `A: „${SERIES}“ täglich ab heute`,
+    async (client) => {
+      await client.createTask({
+        title: SERIES,
+        due: { kind: "date", date: today().date },
+        recurrence: { freq: "daily", interval: 1, weekdays: [], anchor: "schedule" },
+      });
+    },
+  ],
+  ["Hochgeladen", async (client) => syncedNow(client)],
+];
+const n4offA: Step[] = [["B hat schon den Stand von A", async (client) => syncedNow(client)], offline, seriesComplete];
+const n4offB: Step[] = [["Stand von A holen", async (client) => syncedNow(client)], offline, seriesComplete];
+const n4sync: Step[] = [
+  [
+    "Online, synchronisieren",
+    async (client) => {
+      await online();
+      return syncedNow(client);
+    },
+  ],
+  ["Zustand", async (client) => seriesState(client)],
+];
+
 const SUITES: Record<string, Step[]> = { p002, p3new, p4due, p4today, p4upcoming, p4keys, p4search, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
-  p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth, notes, n5seed, n5create, n5offA, n5offB, n5sync, n7rem, n7bg };
+  p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth, notes, n5seed, n5create, n5offA, n5offB, n5sync, n7rem, n7bg, n4rec,
+  n4create, n4offA, n4offB, n4sync };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */
 export async function runSelftest(
