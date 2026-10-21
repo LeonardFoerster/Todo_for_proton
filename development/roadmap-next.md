@@ -20,8 +20,12 @@ dazu die Messung **angemeldet** (`RUNS=1 IDLE_S=60 CPU_S=300 tools/measure-deskt
 `architecture.md` §6. Funde als FIX-Aufgaben unten anhängen. Danach Testsitzungen beenden: in jedem Profil
 Einstellungen → Abmelden, `todo-cli logout`, im Proton-Konto unter Sicherheit → Sitzungen prüfen (aus P8-04 Schritt 3).
 
-### [-] N0-02 · RAM-Ziel < 250 MB (FIX-07) — zurückgestellt 2026-10-18 (User: „Der RAM-Verbrauch ist okay")
-Ist 306 MB (nicht angemeldet), angemeldet vermutlich ~326 MB (> hart 320). App-Prozess: 44 MB glibc-Heap (`heaptrack`),
+### [ ] N0-02 · RAM: harte Grenze 320 MB wieder einhalten, Ziel < 250 MB (FIX-07) — wieder aufgenommen 2026-10-21
+> Anlass (Merge `feat/n5-notes`, 2026-10-21): `MODE=tasks` 339 MB, `MODE=notes` 332 MB PSS (App ~145 MB, WebKitWebProcess
+> ~162 MB, NetworkProcess ~36 MB) – über der harten Grenze. Gegenmessung N7-02 (`3c2ba6d`) unter gleichen Bedingungen
+> 333 MB, also kein Rückschritt durch N4/N8–N11, sondern Drift seit der Messung bei N7-02 (300 MB; System/WebKit).
+> Erst den App-Prozess angehen (von 44 MB Heap bei P8-03 auf ~145 MB PSS gewachsen), dann WebKit.
+Früher zurückgestellt 2026-10-18 (User: „Der RAM-Verbrauch ist okay"). Ist damals 306 MB (nicht angemeldet), angemeldet vermutlich ~326 MB (> hart 320). App-Prozess: 44 MB glibc-Heap (`heaptrack`),
 `malloc_trim` nach Start/Sync, Keyring-/Proton-Kontext erst beim ersten Sync bzw. Login laden; WebKit-Cache-Modell mit
 stabiler Messreihe (3 Läufe je Variante) erneut prüfen. Kein X11-Zwang (nur als Schalter dokumentieren).
 
