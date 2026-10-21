@@ -54,6 +54,7 @@ macro_rules! repository_contract_tests {
             search_rejects_invalid_input,
             filter_completed_newest_first,
             filter_status_and_tag,
+            trash_view_hides_trashed_everywhere_else,
             summary_matches_task,
             sync_device_id_is_stable,
             commit_writes_ops_to_outbox,
@@ -135,6 +136,7 @@ pub fn run_all<R: TaskRepository>(make: impl Fn() -> R) {
     search_rejects_invalid_input(make());
     filter_completed_newest_first(make());
     filter_status_and_tag(make());
+    trash_view_hides_trashed_everywhere_else(make());
     summary_matches_task(make());
     sync_device_id_is_stable(make());
     commit_writes_ops_to_outbox(make());
@@ -810,6 +812,34 @@ pub fn filter_status_and_tag<R: TaskRepository>(repo: R) {
         ..all()
     };
     assert!(f.ids(tagged, 10).is_empty());
+}
+
+/// Papierkorb (ADR-031): nur in [`SmartView::Trash`] (zuletzt gelöschte zuerst, seitenweise),
+/// sonst nirgends – auch nicht in der Suche.
+pub fn trash_view_hides_trashed_everywhere_else<R: TaskRepository>(repo: R) {
+    let f = setup(repo);
+    let mut t = f.add_tasks(f.inbox.id(), 4);
+    for (task, at) in t.iter_mut().zip([0, 30, 20, 10]) {
+        if at > 0 {
+            task.set_trashed(Some(Timestamp::from_millis(at)), &f.clock);
+        }
+        task.set_notes("Papierkorbtest", &f.clock);
+    }
+    f.save(&t);
+    assert_eq!(f.ids(all(), 10), [t[0].id()]);
+    assert_eq!(f.ids(TaskQuery::view(SmartView::Inbox), 10), [t[0].id()]);
+    for limit in [1, 2, 10] {
+        assert_eq!(
+            f.ids(TaskQuery::view(SmartView::Trash), limit),
+            [t[1].id(), t[2].id(), t[3].id()],
+            "Papierkorb, limit {limit}"
+        );
+    }
+    assert_eq!(f.search("Papierkorbtest", 10), ["Task 0"]);
+    let page = f
+        .page(TaskQuery::view(SmartView::Trash), None, 1)
+        .expect("page");
+    assert_eq!(page.items[0].trashed_at, Some(Timestamp::from_millis(30)));
 }
 
 /// Die Zusammenfassung entspricht `TaskSummary::from(&task)`.

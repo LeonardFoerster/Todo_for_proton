@@ -237,6 +237,51 @@ fn note_op_encoding_matches_golden_file() {
     assert_eq!(decode_ops(&golden).unwrap(), note_sample());
 }
 
+/// Papierkorb für Tasks (ADR-031): `Trashed` jetzt auch an einer Task. Eigene Datei, die
+/// älteren Goldens bleiben unverändert.
+fn task_trash_sample() -> Vec<Op> {
+    let device: DeviceId = id("0192f0c4-7a3b-7c2d-8e4f-0123456789ab");
+    let task = EntityRef::Task(id::<TaskId>("0192f0c4-7a3b-7c2d-8e4f-000000000021"));
+    let stamp = |seq: u64, kind| Op {
+        id: OpId { device, seq },
+        hlc: Hlc {
+            wall_ms: 1_760_000_000_000 + seq,
+            counter: 0,
+            device,
+        },
+        entity: task,
+        kind,
+    };
+    vec![
+        stamp(
+            1,
+            OpKind::Set {
+                field: FieldName::Trashed,
+                value: FieldValue::Trashed(Some(Timestamp::from_millis(1_760_000_000_001))),
+            },
+        ),
+        stamp(
+            2,
+            OpKind::Set {
+                field: FieldName::Trashed,
+                value: FieldValue::Trashed(None),
+            },
+        ),
+    ]
+}
+
+#[test]
+fn task_trash_op_encoding_matches_golden_file() {
+    let encoded = encode_ops(&task_trash_sample());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/ops_v1_task_trash.bin");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(&path, &encoded).unwrap();
+    }
+    let golden = std::fs::read(&path).expect("golden file missing – see module docs");
+    assert_eq!(encoded, golden, "Op-Binärformat hat sich geändert");
+    assert_eq!(decode_ops(&golden).unwrap(), task_trash_sample());
+}
+
 /// Eine App ohne Notizen kennt die neuen Varianten nicht: Dekodieren scheitert sauber (das
 /// Segment wird übersprungen), es gibt keinen Absturz. Nachgestellt durch eine Variante, die
 /// auch diese Version nicht kennt.

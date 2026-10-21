@@ -6,4 +6,8 @@ import type { TaskStatusDto } from "./TaskStatusDto";
 /**
  * Zeile einer Listenansicht (ohne Notiztext).
  */
-export type TaskSummaryDto = { id: string, listId: string, title: string, status: TaskStatusDto, priority: PriorityDto, due: DueDto | null, hasNotes: boolean, sortKey: string, completedAt: string | null, };
+export type TaskSummaryDto = { id: string, listId: string, title: string, status: TaskStatusDto, priority: PriorityDto, due: DueDto | null, hasNotes: boolean, sortKey: string, completedAt: string | null, 
+/**
+ * Im Papierkorb seit (ADR-031; nur in der Ansicht „Papierkorb“ gesetzt).
+ */
+trashedAt: string | null, };

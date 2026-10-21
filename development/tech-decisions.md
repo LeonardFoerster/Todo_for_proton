@@ -735,6 +735,34 @@ WebProcess); Start bleibt unter dem Ziel, PSS unter der harten Grenze (das 250-M
 
 ---
 
+## ADR-031 · Papierkorb für Tasks: LWW-Feld `Trashed`, Wiederherstellen mit gleicher ID
+
+**Status:** akzeptiert (2026-10-21, N6-01)
+**Kontext:** Gelöschte Tasks ließen sich nur über den Hinweis „Rückgängig“ (6 s) zurückholen, und zwar als Kopie mit
+neuer ID (`restore_tasks`, ADR-021), weil ein `Delete` endgültig ist (Tombstone, „Delete gewinnt“). Danach waren sie
+weg – auf allen Geräten. Notizen haben seit ADR-029 einen Papierkorb über das LWW-Feld `Trashed`.
+**Entscheidung:**
+1. Tasks bekommen dasselbe Feld: `FieldName::Trashed` (Code 16, kein neuer Code) gehört jetzt auch zu
+   `FieldName::TASK`; `Task.trashed_at: Option<Timestamp>`. In den Papierkorb = `Set Trashed = Some(jetzt)`,
+   zurück = `Set Trashed = None` mit **gleicher ID** (kein Tombstone ⇒ Bearbeiten und Wegwerfen auf zwei Geräten
+   konfliktfrei, beides bleibt). Erneutes Wegwerfen behält den ersten Zeitpunkt (Frist).
+2. Endgültig = `Delete` (wie bisher): einzeln aus dem Papierkorb, „Papierkorb leeren“ und automatisch nach 30 Tagen
+   (`PurgeExpiredTasks`, beim Start/Fokus höchstens täglich – wie Notizen).
+3. Neue Ansicht `SmartView::Trash` (angehängt), zuletzt gelöschte zuerst, Cursor-Art `t`. Alle anderen Ansichten und
+   die Suche blenden Papierkorb-Tasks aus (`TaskQuery::matches`, SQLite `trashed_at IS NULL`, Teilindex
+   `tasks_by_trash`, Migration 0005). Zähler und Board folgen damit automatisch.
+4. `materialize_task` liest `Trashed` mit Standard `None`, wenn das Register fehlt (bestehende Tasks haben keins –
+   mit `?` verschwänden sie lokal). `DeleteTaskList` nimmt auch Papierkorb-Tasks der Liste mit in den Eingang.
+5. `delete_tasks`/`restore_tasks` bleiben (CLI, Rückwärtskompatibilität des `CoreClient`); die UI löscht über den
+   Papierkorb.
+**Konsequenzen:** Ältere App-Versionen lehnen Ops mit `Trashed` an einer Task ab und überspringen das Segment
+(„App aktualisieren“, ADR-016); neue Tasks tragen das Feld schon im `Create`. Alle Geräte gemeinsam aktualisieren.
+Golden `ops_v1_task_trash.bin`; Property-Test um Papierkorb an/aus erweitert; Szenario
+`trash_and_concurrent_edit_both_survive`. Nebenbei behoben (FIX-13): `CoreApi` leitete `search_tasks` nicht an das
+Repository weiter und suchte per O(n)-Standard statt FTS5.
+
+---
+
 ## Spikes
 
 | ID | Frage | Ergebnis entscheidet | Stand |

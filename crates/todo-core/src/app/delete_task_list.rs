@@ -14,7 +14,7 @@ pub struct DeleteTaskListInput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteTaskListOutput {
-    /// Anzahl der Tasks, die in die Inbox verschoben wurden.
+    /// Anzahl der Tasks, die in die Inbox verschoben wurden (ohne solche im Papierkorb).
     pub moved_tasks: usize,
 }
 
@@ -48,9 +48,15 @@ impl DeleteTaskList {
 
         let mut last_key = repo.last_sort_key(inbox.id()).await?;
         let to_move = collect_all(repo, &TaskQuery::view(SmartView::List(list.id()))).await?;
+        // Auch Tasks im Papierkorb gehören zur Liste (ADR-031) – sonst zeigten sie danach ins Leere.
+        let trashed: Vec<_> = collect_all(repo, &TaskQuery::view(SmartView::Trash))
+            .await?
+            .into_iter()
+            .filter(|t| t.list_id == list.id())
+            .collect();
 
         let mut changes = ChangeSet::new();
-        for summary in &to_move {
+        for summary in to_move.iter().chain(&trashed) {
             let mut task = repo
                 .get_task(summary.id)
                 .await?

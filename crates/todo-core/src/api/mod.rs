@@ -41,6 +41,10 @@ use crate::{
         SetNoteKind, SetNoteKindInput, TrashNoteItems, TrashNoteItemsInput, UpdateNoteBody,
         UpdateNoteBodyInput, NOTE_BULK_LIMIT_MAX,
     },
+    app::{
+        EmptyTaskTrash, PurgeExpiredTasks, PurgeTasks, PurgeTasksInput, TrashTasks,
+        TrashTasksInput, UntrashTasks, UntrashTasksInput,
+    },
     domain::{
         DeviceId, Note, NoteFolder, NoteFolderId, NoteId, SortKey, Task, TaskId, TaskList,
         TaskListId, TaskParts,
@@ -307,6 +311,60 @@ impl CoreApi {
         Ok(dtos(
             &DeleteTasks::new(self.deps.clone()).execute(input).await?,
         ))
+    }
+
+    /// Legt Tasks in den Papierkorb (ADR-031); liefert die tatsächlich geänderten (für Rückgängig
+    /// per [`Self::untrash_tasks`], gleiche IDs).
+    ///
+    /// # Errors
+    /// `Validation` (ID, Obergrenze).
+    pub async fn trash_tasks(&self, ids: Vec<String>) -> CoreResult<Vec<TaskDto>> {
+        let input = TrashTasksInput {
+            ids: task_ids(&ids)?,
+        };
+        Ok(dtos(
+            &TrashTasks::new(self.deps.clone()).execute(input).await?,
+        ))
+    }
+
+    /// Holt Tasks aus dem Papierkorb zurück (gleiche ID, alter Platz); liefert die geänderten.
+    ///
+    /// # Errors
+    /// `Validation` (ID, Obergrenze).
+    pub async fn untrash_tasks(&self, ids: Vec<String>) -> CoreResult<Vec<TaskDto>> {
+        let input = UntrashTasksInput {
+            ids: task_ids(&ids)?,
+        };
+        Ok(dtos(
+            &UntrashTasks::new(self.deps.clone()).execute(input).await?,
+        ))
+    }
+
+    /// Löscht Tasks aus dem Papierkorb endgültig (andere werden übersprungen); Zahl gelöschter.
+    ///
+    /// # Errors
+    /// `Validation` (ID, Obergrenze).
+    pub async fn purge_tasks(&self, ids: Vec<String>) -> CoreResult<u32> {
+        let input = PurgeTasksInput {
+            ids: task_ids(&ids)?,
+        };
+        PurgeTasks::new(self.deps.clone()).execute(input).await
+    }
+
+    /// Leert den Papierkorb der Tasks.
+    ///
+    /// # Errors
+    /// Fehler des Repositories.
+    pub async fn empty_task_trash(&self) -> CoreResult<u32> {
+        EmptyTaskTrash::new(self.deps.clone()).execute().await
+    }
+
+    /// Löscht Tasks, die seit mehr als 30 Tagen im Papierkorb liegen (beim Start, höchstens täglich).
+    ///
+    /// # Errors
+    /// Fehler des Repositories.
+    pub async fn purge_expired_tasks(&self) -> CoreResult<u32> {
+        PurgeExpiredTasks::new(self.deps.clone()).execute().await
     }
 
     /// Verschiebt alle als Block (bisherige Anzeigereihenfolge) an `target`; ohne `listId` in die
@@ -861,6 +919,11 @@ impl TaskRepository for NotifyingRepository {
 
     async fn last_sort_key(&self, list_id: TaskListId) -> CoreResult<Option<SortKey>> {
         self.inner.last_sort_key(list_id).await
+    }
+
+    // FIX-13: weiterleiten, sonst liefe die O(n)-Standardsuche statt des FTS5-Index (ADR-027).
+    async fn search_tasks(&self, query: &SearchQuery) -> CoreResult<Vec<TaskSummary>> {
+        self.inner.search_tasks(query).await
     }
 
     async fn commit(&self, changes: ChangeSet) -> CoreResult<CommitReceipt> {

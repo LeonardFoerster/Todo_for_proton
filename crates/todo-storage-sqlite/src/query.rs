@@ -21,12 +21,15 @@ pub(crate) enum Position {
     ByCompletion(Timestamp, TaskId),
     /// Heute/Geplant: Sortierzeitpunkt der Fälligkeit (ADR-026), dann `sort_key`, `id`.
     ByDue(Timestamp, SortKey, TaskId),
+    /// Papierkorb (ADR-031): `trashed_at` absteigend, dann `id` aufsteigend.
+    ByTrashed(Timestamp, TaskId),
 }
 
 /// Cursor-Kennung der Sortierart einer Ansicht (ein Cursor gehört zu genau einer).
 fn cursor_kind(view: &SmartView) -> &'static str {
     match view {
         SmartView::Completed => "c",
+        SmartView::Trash => "t",
         SmartView::Today(_) | SmartView::Upcoming(_) => "d",
         _ => "s",
     }
@@ -46,6 +49,9 @@ impl Position {
             SmartView::Completed => {
                 Self::ByCompletion(summary.completed_at.unwrap_or(Timestamp::EPOCH), summary.id)
             }
+            SmartView::Trash => {
+                Self::ByTrashed(summary.trashed_at.unwrap_or(Timestamp::EPOCH), summary.id)
+            }
             SmartView::Today(day) | SmartView::Upcoming(day) => Self::ByDue(
                 summary
                     .due
@@ -63,6 +69,7 @@ impl Position {
             Self::BySortKey(key, id) => format!("s:{key}:{id}"),
             Self::ByCompletion(at, id) => format!("c:{}:{id}", at.as_millis()),
             Self::ByDue(at, key, id) => format!("d:{}:{key}:{id}", at.as_millis()),
+            Self::ByTrashed(at, id) => format!("t:{}:{id}", at.as_millis()),
         }
     }
 
@@ -82,6 +89,7 @@ impl Position {
             ["s", k, i] => Ok(Self::BySortKey(key(k)?, id(i)?)),
             ["c", at, i] => Ok(Self::ByCompletion(millis(at)?, id(i)?)),
             ["d", at, k, i] => Ok(Self::ByDue(millis(at)?, key(k)?, id(i)?)),
+            ["t", at, i] => Ok(Self::ByTrashed(millis(at)?, id(i)?)),
             _ => Err(invalid()),
         }
     }
@@ -121,7 +129,14 @@ pub(crate) fn list_tasks_sql(
             conditions.push("status = ?");
             params.push(Value::Integer(encode_status(TaskStatus::Done)));
         }
+        SmartView::Trash => {}
     }
+    // Papierkorb nur in seiner Ansicht (ADR-031, wie `TaskQuery::matches`).
+    conditions.push(if query.view == SmartView::Trash {
+        "trashed_at IS NOT NULL"
+    } else {
+        "trashed_at IS NULL"
+    });
     if let Some(status) = query.status {
         conditions.push("status = ?");
         params.push(Value::Integer(encode_status(status)));
@@ -143,6 +158,12 @@ pub(crate) fn list_tasks_sql(
             params.push(Value::Integer(at.as_millis()));
             params.push(Value::Text(id.to_string()));
         }
+        Some(Position::ByTrashed(at, id)) => {
+            conditions.push("(trashed_at < ? OR (trashed_at = ? AND id > ?))");
+            params.push(Value::Integer(at.as_millis()));
+            params.push(Value::Integer(at.as_millis()));
+            params.push(Value::Text(id.to_string()));
+        }
         Some(Position::ByDue(at, key, id)) => {
             let (SmartView::Today(day) | SmartView::Upcoming(day)) = query.view else {
                 unreachable!("ByDue nur für Heute/Geplant (decode prüft die Art)")
@@ -159,6 +180,7 @@ pub(crate) fn list_tasks_sql(
 
     let order = match query.view {
         SmartView::Completed => "completed_at DESC, id".to_owned(),
+        SmartView::Trash => "trashed_at DESC, id".to_owned(),
         SmartView::Today(day) | SmartView::Upcoming(day) => {
             // Parameter des ORDER BY stehen im SQL nach denen des WHERE, vor LIMIT.
             params.push(Value::Integer(encode_date(day.date())));
@@ -201,7 +223,8 @@ fn like_pattern(term: &str) -> String {
 pub(crate) fn search_tasks_sql(terms: &[String], limit: u32) -> (String, Vec<Value>) {
     let (long, short): (Vec<&String>, Vec<&String>) =
         terms.iter().partition(|t| t.chars().count() >= TRIGRAM);
-    let mut conditions: Vec<String> = Vec::new();
+    // Papierkorb wird nicht durchsucht (ADR-031).
+    let mut conditions: Vec<String> = vec!["trashed_at IS NULL".into()];
     let mut params: Vec<Value> = Vec::new();
     if !long.is_empty() {
         conditions.push("rowid IN (SELECT rowid FROM tasks_fts WHERE tasks_fts MATCH ?)".into());

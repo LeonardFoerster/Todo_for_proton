@@ -6,4 +6,8 @@ import type { TaskStatusDto } from "./TaskStatusDto";
 /**
  * Vollständige Task (Detailansicht).
  */
-export type TaskDto = { id: string, listId: string, title: string, notes: string, status: TaskStatusDto, priority: PriorityDto, due: DueDto | null, sortKey: string, createdAt: string, updatedAt: string, completedAt: string | null, };
+export type TaskDto = { id: string, listId: string, title: string, notes: string, status: TaskStatusDto, priority: PriorityDto, due: DueDto | null, sortKey: string, createdAt: string, updatedAt: string, completedAt: string | null, 
+/**
+ * Im Papierkorb seit (ADR-031).
+ */
+trashedAt: string | null, };

@@ -192,11 +192,15 @@ pub enum SmartView {
     All,
     /// Erledigte Tasks aller Listen, neueste zuerst.
     Completed,
+    /// Tasks im Papierkorb (ADR-031), zuletzt gelöschte zuerst. Alle anderen Ansichten (und die
+    /// Suche) blenden sie aus.
+    Trash,
 }
 
 /// Abfrage für [`TaskRepository::list_tasks`]: eine Ansicht plus optionale UND-Filter.
 ///
-/// Sortierung: [`SmartView::Completed`] nach `completed_at` absteigend; [`SmartView::Today`] und
+/// Sortierung: [`SmartView::Completed`] nach `completed_at` absteigend, [`SmartView::Trash`] nach
+/// `trashed_at` absteigend; [`SmartView::Today`] und
 /// [`SmartView::Upcoming`] nach Fälligkeit ([`Due::sort_instant`](crate::domain::Due::sort_instant)
 /// zum Tag der Ansicht, ADR-026), dann `sort_key`; alle anderen nach `sort_key` aufsteigend; bei
 /// Gleichstand jeweils nach `id`.
@@ -241,8 +245,12 @@ impl TaskQuery {
             SmartView::Upcoming(day) => task.due().is_some_and(|d| !d.is_due_by(&day)),
             SmartView::All => true,
             SmartView::Completed => task.is_done(),
+            SmartView::Trash => true,
         };
+        // Papierkorb nur in seiner Ansicht (ADR-031).
+        let trash_ok = task.is_trashed() == (self.view == SmartView::Trash);
         in_view
+            && trash_ok
             && self.status.is_none_or(|s| task.status() == s)
             && self.tag.is_none_or(|t| task.tags().contains(&t))
     }
@@ -353,6 +361,7 @@ pub struct TaskSummary {
     pub has_notes: bool,
     pub sort_key: SortKey,
     pub completed_at: Option<Timestamp>,
+    pub trashed_at: Option<Timestamp>,
 }
 
 impl From<&Task> for TaskSummary {
@@ -367,6 +376,7 @@ impl From<&Task> for TaskSummary {
             has_notes: !task.notes().is_empty(),
             sort_key: task.sort_key().clone(),
             completed_at: task.completed_at(),
+            trashed_at: task.trashed_at(),
         }
     }
 }

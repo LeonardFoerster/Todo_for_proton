@@ -106,12 +106,15 @@ enum Position {
     ByCompletion(Reverse<Timestamp>, TaskId),
     /// „Heute"/„Geplant": Fälligkeit (ADR-026), dann wie gewohnt.
     ByDue(Timestamp, SortKey, TaskId),
+    /// Papierkorb (ADR-031): zuletzt gelöschte zuerst.
+    ByTrashed(Reverse<Timestamp>, TaskId),
 }
 
 /// Cursor-Kennung der Sortierart einer Ansicht (ein Cursor gehört zu genau einer).
 fn cursor_kind(view: &SmartView) -> &'static str {
     match view {
         SmartView::Completed => "c",
+        SmartView::Trash => "t",
         SmartView::Today(_) | SmartView::Upcoming(_) => "d",
         _ => "s",
     }
@@ -122,6 +125,10 @@ impl Position {
         match view {
             SmartView::Completed => Self::ByCompletion(
                 Reverse(task.completed_at().unwrap_or(Timestamp::EPOCH)),
+                task.id(),
+            ),
+            SmartView::Trash => Self::ByTrashed(
+                Reverse(task.trashed_at().unwrap_or(Timestamp::EPOCH)),
                 task.id(),
             ),
             SmartView::Today(day) | SmartView::Upcoming(day) => Self::ByDue(
@@ -139,6 +146,7 @@ impl Position {
             Self::BySortKey(key, id) => format!("s:{key}:{id}"),
             Self::ByCompletion(Reverse(at), id) => format!("c:{}:{id}", at.as_millis()),
             Self::ByDue(at, key, id) => format!("d:{}:{key}:{id}", at.as_millis()),
+            Self::ByTrashed(Reverse(at), id) => format!("t:{}:{id}", at.as_millis()),
         }
     }
 
@@ -155,6 +163,7 @@ impl Position {
             ["s", k, i] => Ok(Self::BySortKey(key(k)?, id(i)?)),
             ["c", at, i] => Ok(Self::ByCompletion(Reverse(millis(at)?), id(i)?)),
             ["d", at, k, i] => Ok(Self::ByDue(millis(at)?, key(k)?, id(i)?)),
+            ["t", at, i] => Ok(Self::ByTrashed(Reverse(millis(at)?), id(i)?)),
             _ => Err(invalid()),
         }
     }

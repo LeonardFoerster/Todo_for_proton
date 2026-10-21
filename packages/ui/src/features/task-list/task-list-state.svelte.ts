@@ -28,6 +28,7 @@ export function toSummary(t: TaskDto): TaskSummaryDto {
     hasNotes: t.notes.length > 0,
     sortKey: t.sortKey,
     completedAt: t.completedAt,
+    trashedAt: t.trashedAt,
   };
 }
 

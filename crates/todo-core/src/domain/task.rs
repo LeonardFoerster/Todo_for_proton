@@ -41,6 +41,8 @@ pub struct Task {
     created_at: Timestamp,
     updated_at: Timestamp,
     completed_at: Option<Timestamp>,
+    /// Im Papierkorb seit (ADR-031); `None` = nicht gelöscht.
+    trashed_at: Option<Timestamp>,
 }
 
 /// Alle Felder einer gespeicherten Task, zum Wiederherstellen per [`Task::from_parts`]
@@ -60,6 +62,7 @@ pub struct TaskParts {
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
     pub completed_at: Option<Timestamp>,
+    pub trashed_at: Option<Timestamp>,
 }
 
 impl Task {
@@ -92,6 +95,7 @@ impl Task {
             created_at: parts.created_at,
             updated_at: parts.updated_at,
             completed_at: parts.completed_at,
+            trashed_at: parts.trashed_at,
         })
     }
 
@@ -122,6 +126,7 @@ impl Task {
             created_at: now,
             updated_at: now,
             completed_at: None,
+            trashed_at: None,
         })
     }
 
@@ -193,6 +198,17 @@ impl Task {
     #[must_use]
     pub fn completed_at(&self) -> Option<Timestamp> {
         self.completed_at
+    }
+
+    /// Seit wann die Task im Papierkorb liegt (ADR-031).
+    #[must_use]
+    pub fn trashed_at(&self) -> Option<Timestamp> {
+        self.trashed_at
+    }
+
+    #[must_use]
+    pub fn is_trashed(&self) -> bool {
+        self.trashed_at.is_some()
     }
 
     /// Ändert den Titel (gleiche Regeln wie in [`Task::new`]).
@@ -269,6 +285,19 @@ impl Task {
         self.status = TaskStatus::Open;
         self.completed_at = None;
         self.touch(clock);
+    }
+
+    /// Legt die Task in den Papierkorb (`Some(Zeitpunkt)`) oder holt sie zurück (`None`). Ein schon
+    /// gesetzter Zeitpunkt bleibt beim erneuten Wegwerfen erhalten (Frist läuft ab dem ersten Mal).
+    pub fn set_trashed(&mut self, at: Option<Timestamp>, clock: &(impl Clock + ?Sized)) {
+        let next = match (self.trashed_at, at) {
+            (Some(old), Some(_)) => Some(old),
+            (_, next) => next,
+        };
+        if next != self.trashed_at {
+            self.trashed_at = next;
+            self.touch(clock);
+        }
     }
 
     fn touch(&mut self, clock: &(impl Clock + ?Sized)) {
@@ -504,6 +533,7 @@ mod tests {
             created_at: t.created_at(),
             updated_at: t.updated_at(),
             completed_at: t.completed_at(),
+            trashed_at: t.trashed_at(),
         }
     }
 
@@ -526,9 +556,28 @@ mod tests {
         assert_eq!(Task::from_parts(parts.clone()).unwrap(), t);
         parts.tags = vec![TagId::new()];
         parts.parent_id = Some(TaskId::new());
+        parts.trashed_at = Some(Timestamp::from_millis(77));
         let restored = Task::from_parts(parts.clone()).unwrap();
         assert_eq!(restored.tags(), parts.tags.as_slice());
         assert_eq!(restored.parent_id(), parts.parent_id);
+        assert_eq!(restored.trashed_at(), parts.trashed_at);
+    }
+
+    #[test]
+    fn trash_keeps_the_first_time_and_restores() {
+        let clock = clock();
+        let mut t = task(&clock);
+        t.set_trashed(Some(Timestamp::from_millis(10)), &clock);
+        t.set_trashed(Some(Timestamp::from_millis(20)), &clock);
+        assert_eq!(t.trashed_at(), Some(Timestamp::from_millis(10)));
+        assert!(t.is_trashed());
+        let before = t.updated_at();
+        t.set_trashed(None, &clock);
+        assert!(!t.is_trashed());
+        assert!(t.updated_at() > before);
+        let snapshot = t.clone();
+        t.set_trashed(None, &clock);
+        assert_eq!(t, snapshot, "schon zurück = no-op");
     }
 
     #[test]

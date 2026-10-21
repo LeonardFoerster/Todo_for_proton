@@ -189,6 +189,8 @@ pub struct TaskDto {
     pub created_at: String,
     pub updated_at: String,
     pub completed_at: Option<String>,
+    /// Im Papierkorb seit (ADR-031).
+    pub trashed_at: Option<String>,
 }
 
 impl From<&Task> for TaskDto {
@@ -205,6 +207,7 @@ impl From<&Task> for TaskDto {
             created_at: iso(task.created_at()),
             updated_at: iso(task.updated_at()),
             completed_at: task.completed_at().map(iso),
+            trashed_at: task.trashed_at().map(iso),
         }
     }
 }
@@ -229,6 +232,8 @@ impl TryFrom<&TaskDto> for TaskParts {
             created_at: parse_iso(&dto.created_at)?,
             updated_at: parse_iso(&dto.updated_at)?,
             completed_at: dto.completed_at.as_deref().map(parse_iso).transpose()?,
+            // Wiederhergestellt wird nie in den Papierkorb.
+            trashed_at: None,
         })
     }
 }
@@ -247,6 +252,8 @@ pub struct TaskSummaryDto {
     pub has_notes: bool,
     pub sort_key: String,
     pub completed_at: Option<String>,
+    /// Im Papierkorb seit (ADR-031; nur in der Ansicht „Papierkorb“ gesetzt).
+    pub trashed_at: Option<String>,
 }
 
 impl From<&TaskSummary> for TaskSummaryDto {
@@ -261,6 +268,7 @@ impl From<&TaskSummary> for TaskSummaryDto {
             has_notes: s.has_notes,
             sort_key: s.sort_key.to_string(),
             completed_at: s.completed_at.map(iso),
+            trashed_at: s.trashed_at.map(iso),
         }
     }
 }
@@ -425,6 +433,8 @@ pub enum ViewDto {
     },
     All,
     Completed,
+    /// Papierkorb (ADR-031).
+    Trash,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -451,6 +461,7 @@ impl TryFrom<&TaskQueryDto> for TaskQuery {
             ViewDto::Upcoming { day } => SmartView::Upcoming(day.try_into()?),
             ViewDto::All => SmartView::All,
             ViewDto::Completed => SmartView::Completed,
+            ViewDto::Trash => SmartView::Trash,
         };
         Ok(Self {
             view,

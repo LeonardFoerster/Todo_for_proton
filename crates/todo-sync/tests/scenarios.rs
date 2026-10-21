@@ -106,6 +106,48 @@ fn delete_beats_concurrent_edit() {
     assert_converged(&[&a, &b]);
 }
 
+/// Papierkorb (ADR-031): A legt in den Papierkorb, B bearbeitet später → beide Änderungen bleiben
+/// (LWW-Feld statt Tombstone); A holt sie zurück → wieder sichtbar, mit dem Titel von B. Endgültig
+/// löschen auf B ist dann wieder „Delete gewinnt“.
+#[test]
+fn trash_and_concurrent_edit_both_survive() {
+    let world = World::new();
+    let a = world.device("a");
+    let b = world.device("b");
+    let task = a.add("Steuer");
+    a.sync();
+    b.sync();
+
+    block_on(a.api.trash_tasks(vec![task.id.clone()])).expect("trash");
+    b.clock.advance(60_000);
+    b.rename(&task.id, "Steuer 2025");
+
+    b.sync();
+    a.sync();
+    b.sync();
+    for device in [&a, &b] {
+        let t = device.task(&task.id).expect("noch da");
+        assert_eq!(t.title, "Steuer 2025");
+        assert!(t.trashed_at.is_some(), "im Papierkorb");
+        assert!(device.all().is_empty());
+        assert_eq!(device.trash().len(), 1);
+    }
+    assert_converged(&[&a, &b]);
+
+    block_on(a.api.untrash_tasks(vec![task.id.clone()])).expect("untrash");
+    a.sync();
+    b.sync();
+    assert_eq!(b.titles(), ["Steuer 2025"]);
+    assert_converged(&[&a, &b]);
+
+    block_on(b.api.trash_tasks(vec![task.id.clone()])).expect("trash");
+    assert_eq!(block_on(b.api.empty_task_trash()).expect("empty"), 1);
+    b.sync();
+    a.sync();
+    assert_eq!(a.task(&task.id), None);
+    assert_converged(&[&a, &b]);
+}
+
 /// Szenario 3: Beide verschieben verschiedene Tasks in derselben Liste (an dieselbe Stelle → gleiche
 /// Sort-Keys) → identische Reihenfolge auf beiden.
 #[test]

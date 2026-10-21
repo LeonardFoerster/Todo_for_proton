@@ -83,6 +83,7 @@ pub fn task_fields(task: &Task) -> FieldMap {
             FieldName::CreatedAt,
             FieldValue::Timestamp(task.created_at()),
         ),
+        (FieldName::Trashed, FieldValue::Trashed(task.trashed_at())),
     ])
 }
 
@@ -284,6 +285,7 @@ mod tests {
             created_at: task.created_at(),
             updated_at: task.updated_at(),
             completed_at: None,
+            trashed_at: None,
         };
         parts.updated_at = Timestamp::from_millis(999_999);
         let touched = Task::from_parts(parts).unwrap();

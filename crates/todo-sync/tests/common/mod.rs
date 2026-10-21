@@ -162,6 +162,23 @@ impl Device {
         .items
     }
 
+    /// Tasks im Papierkorb (ADR-031), zuletzt gelöschte zuerst.
+    pub fn trash(&self) -> Vec<TaskSummaryDto> {
+        block_on(self.api.list_tasks(
+            TaskQueryDto {
+                view: ViewDto::Trash,
+                status: None,
+                tag: None,
+            },
+            PageRequestDto {
+                cursor: None,
+                limit: 500,
+            },
+        ))
+        .expect("list trash")
+        .items
+    }
+
     /// Alle Tasks seitenweise (für mehr als 500).
     pub fn all_pages(&self) -> Vec<Vec<TaskSummaryDto>> {
         let mut pages = Vec::new();
@@ -230,6 +247,11 @@ pub fn assert_converged(devices: &[&Device]) {
     let first = devices[0];
     for other in &devices[1..] {
         assert_eq!(first.all(), other.all(), "Tasks unterscheiden sich");
+        assert_eq!(
+            first.trash(),
+            other.trash(),
+            "Papierkorb unterscheidet sich"
+        );
         let names = |d: &Device| -> Vec<(String, String, bool)> {
             d.lists()
                 .into_iter()

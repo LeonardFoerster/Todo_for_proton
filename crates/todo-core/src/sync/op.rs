@@ -130,8 +130,8 @@ impl FieldName {
         Self::Trashed,
     ];
 
-    /// Felder einer Task.
-    pub const TASK: [Self; 10] = [
+    /// Felder einer Task (`Trashed` seit ADR-031).
+    pub const TASK: [Self; 11] = [
         Self::ListId,
         Self::ParentId,
         Self::Title,
@@ -142,6 +142,7 @@ impl FieldName {
         Self::Tags,
         Self::SortKey,
         Self::CreatedAt,
+        Self::Trashed,
     ];
 
     /// Felder einer Liste.

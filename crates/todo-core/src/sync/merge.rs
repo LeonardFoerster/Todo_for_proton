@@ -189,6 +189,9 @@ pub fn materialize_task(id: TaskId, registers: &Registers) -> Option<Task> {
         created_at: created_at(registers)?,
         updated_at: updated_at(registers),
         completed_at,
+        // Seit ADR-031; ältere Tasks haben kein Register → nicht im Papierkorb (nie `?`, sonst
+        // verschwände jede bestehende Task beim nächsten Materialisieren).
+        trashed_at: trashed(registers).flatten(),
     };
     Task::from_parts(parts).ok()
 }
@@ -638,6 +641,8 @@ mod tests {
             Title(usize, String),
             Priority(usize, u8),
             Done(usize, bool),
+            /// Papierkorb an/aus (ADR-031).
+            Trash(usize, bool),
             Delete(usize),
         }
 
@@ -648,6 +653,7 @@ mod tests {
                 4 => (entity.clone(), "[a-c]{1,2}").prop_map(|(e, s)| Action::Title(e, s)),
                 2 => (entity.clone(), 0u8..4).prop_map(|(e, p)| Action::Priority(e, p)),
                 2 => (entity.clone(), any::<bool>()).prop_map(|(e, d)| Action::Done(e, d)),
+                2 => (entity.clone(), any::<bool>()).prop_map(|(e, t)| Action::Trash(e, t)),
                 1 => entity.prop_map(Action::Delete),
             ]
         }
@@ -695,6 +701,13 @@ mod tests {
                             OpKind::Set {
                                 field: FieldName::Status,
                                 value: FieldValue::Status(done.then_some(now)),
+                            },
+                        ),
+                        Action::Trash(e, trashed) => (
+                            ids[*e],
+                            OpKind::Set {
+                                field: FieldName::Trashed,
+                                value: FieldValue::Trashed(trashed.then_some(now)),
                             },
                         ),
                         Action::Delete(e) => (ids[*e], OpKind::Delete),

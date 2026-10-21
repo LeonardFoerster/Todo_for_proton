@@ -28,6 +28,7 @@ mod reopen_task;
 mod restore_tasks;
 mod set_dues;
 mod trash_notes;
+mod trash_tasks;
 mod update_note_body;
 mod update_task;
 
@@ -68,6 +69,10 @@ pub use restore_tasks::{RestoreTasks, RestoreTasksInput};
 pub use set_dues::{SetDues, SetDuesInput};
 pub use trash_notes::{
     RestoreNoteItems, RestoreNoteItemsInput, TrashNoteItems, TrashNoteItemsInput,
+};
+pub use trash_tasks::{
+    EmptyTaskTrash, PurgeExpiredTasks, PurgeTasks, PurgeTasksInput, TrashTasks, TrashTasksInput,
+    UntrashTasks, UntrashTasksInput, TASK_TRASH_RETENTION_MS,
 };
 pub use update_note_body::{
     DiscardEmptyNote, DiscardEmptyNoteInput, UpdateNoteBody, UpdateNoteBodyInput,
@@ -139,7 +144,7 @@ pub(crate) async fn load_task(repo: &dyn TaskRepository, id: TaskId) -> CoreResu
 }
 
 /// Höchstzahl an Tasks pro Sammel-Aufruf (`CompleteTasks`, `DeleteTasks`, `MoveTasks`,
-/// `RestoreTasks`, `SetDues`).
+/// `RestoreTasks`, `SetDues`, Papierkorb).
 pub const BULK_LIMIT_MAX: usize = 2_000;
 
 /// Prüft die Obergrenze und entfernt doppelte IDs (erstes Vorkommen bleibt).
@@ -219,6 +224,9 @@ mod send_tests {
             },
         }));
         assert_send(EmptyNoteTrash::new(deps.clone()).execute());
+        assert_send(TrashTasks::new(deps.clone()).execute(TrashTasksInput { ids: Vec::new() }));
+        assert_send(EmptyTaskTrash::new(deps.clone()).execute());
+        assert_send(PurgeExpiredTasks::new(deps.clone()).execute());
         assert_send(PurgeExpiredNotes::new(deps.clone()).execute());
         assert_send(ListNoteTrash::new(deps.clone()).execute());
         assert_send(ImportNotes::new(deps).execute(ImportNotesInput {

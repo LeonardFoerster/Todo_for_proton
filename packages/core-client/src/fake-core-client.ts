@@ -176,6 +176,7 @@ export class FakeCoreClient implements CoreClient {
         createdAt: at,
         updatedAt: at,
         completedAt: null,
+        trashedAt: null,
       };
       const row = { task, order: this.lastOrder(listId) + 1 };
       this.rows.set(task.id, row);
@@ -644,5 +645,6 @@ function summary(t: TaskDto): TaskSummaryDto {
     hasNotes: t.notes.length > 0,
     sortKey: t.sortKey,
     completedAt: t.completedAt,
+    trashedAt: t.trashedAt,
   };
 }
