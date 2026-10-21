@@ -32,6 +32,7 @@ export function toSummary(t: TaskDto): TaskSummaryDto {
     recurring: t.recurrence != null,
     checklistDone: t.checklist.filter((i) => i.done).length,
     checklistTotal: t.checklist.length,
+    tags: [...t.tags],
   };
 }
 

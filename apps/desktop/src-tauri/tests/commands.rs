@@ -253,7 +253,22 @@ fn only_writing_commands_trigger_a_sync() {
         json!({ "id": list["id"], "name": "Büro" }),
         1,
     );
-    let a = expect("create_task", json!({ "input": { "title": "a" } }), 1);
+    // Tags (ADR-035): Lesen löst nichts aus, Anlegen/Umbenennen/Löschen genau einmal.
+    let tag = expect("ensure_tag", json!({ "name": "#Uni" }), 1);
+    assert_eq!(tag["name"], "Uni");
+    expect("list_tags", json!({}), 0);
+    expect(
+        "rename_tag",
+        json!({ "id": tag["id"], "name": "Studium" }),
+        1,
+    );
+    let a = expect(
+        "create_task",
+        json!({ "input": { "title": "a", "tags": [tag["id"]] } }),
+        1,
+    );
+    assert_eq!(a["tags"], json!([tag["id"]]));
+    assert_eq!(expect("delete_tag", json!({ "id": tag["id"] }), 1), 1);
     let b = expect("create_task", json!({ "input": { "title": "b" } }), 1);
     expect(
         "update_task",

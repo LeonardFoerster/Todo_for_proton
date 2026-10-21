@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use rusqlite::{named_params, Connection, OptionalExtension, TransactionBehavior};
 use todo_core::{
     domain::{
-        DeviceId, Note, NoteFolder, NoteFolderId, NoteId, RevisionId, SortKey, Task, TaskId,
-        TaskList, TaskListId,
+        DeviceId, Note, NoteFolder, NoteFolderId, NoteId, RevisionId, SortKey, Tag, TagId, Task,
+        TaskId, TaskList, TaskListId,
     },
     ports::{Change, ChangeSet, EntityRef},
     sync::{
@@ -20,9 +20,9 @@ use todo_core::{
 use crate::{
     error::{corrupt, storage},
     mapping::{
-        folder_id, note_id, read_folder, read_list, read_note, read_sort_key, read_task,
-        write_folder, write_list, write_note, write_task, FOLDER_COLUMNS, LIST_COLUMNS,
-        NOTE_COLUMNS, TASK_COLUMNS,
+        folder_id, note_id, read_folder, read_list, read_note, read_sort_key, read_tag, read_task,
+        write_folder, write_list, write_note, write_tag, write_task, FOLDER_COLUMNS, LIST_COLUMNS,
+        NOTE_COLUMNS, TAG_COLUMNS, TASK_COLUMNS,
     },
 };
 
@@ -39,6 +39,7 @@ const KIND_TASK: i64 = 0;
 const KIND_LIST: i64 = 1;
 const KIND_NOTE: i64 = 2;
 const KIND_FOLDER: i64 = 3;
+const KIND_TAG: i64 = 4;
 
 /// `outbox_ops.slot` für Revise- und Create-Ops (Set: Feld-Code).
 const SLOT_REVISE: i64 = -1;
@@ -271,6 +272,9 @@ fn read_entity(row: &rusqlite::Row<'_>, at: usize) -> CoreResult<EntityRef> {
         )),
         KIND_NOTE => Ok(EntityRef::Note(note_id(&id)?)),
         KIND_FOLDER => Ok(EntityRef::NoteFolder(folder_id(&id)?)),
+        KIND_TAG => Ok(EntityRef::Tag(
+            TagId::parse(&id).map_err(|e| corrupt("tag id", e))?,
+        )),
         other => Err(corrupt("entity kind", other)),
     }
 }
@@ -286,6 +290,7 @@ fn entity_key(entity: EntityRef) -> (String, i64) {
         EntityRef::TaskList(id) => (id.to_string(), KIND_LIST),
         EntityRef::Note(id) => (id.to_string(), KIND_NOTE),
         EntityRef::NoteFolder(id) => (id.to_string(), KIND_FOLDER),
+        EntityRef::Tag(id) => (id.to_string(), KIND_TAG),
     }
 }
 
@@ -772,12 +777,26 @@ impl ReplicaStore for SqliteReplica<'_> {
         write_list(self.conn, list)
     }
 
+    fn tag(&mut self, id: TagId) -> CoreResult<Option<Tag>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(&format!("SELECT {TAG_COLUMNS} FROM tags WHERE id = ?1"))
+            .map_err(storage)?;
+        let mut rows = stmt.query([id.to_string()]).map_err(storage)?;
+        rows.next().map_err(storage)?.map(read_tag).transpose()
+    }
+
+    fn put_tag(&mut self, tag: &Tag) -> CoreResult<()> {
+        write_tag(self.conn, tag)
+    }
+
     fn remove(&mut self, entity: EntityRef) -> CoreResult<()> {
         let (table, id) = match entity {
             EntityRef::Task(id) => ("tasks", id.to_string()),
             EntityRef::TaskList(id) => ("task_lists", id.to_string()),
             EntityRef::Note(id) => ("notes", id.to_string()),
             EntityRef::NoteFolder(id) => ("note_folders", id.to_string()),
+            EntityRef::Tag(id) => ("tags", id.to_string()),
         };
         self.conn
             .prepare_cached(&format!("DELETE FROM {table} WHERE id = ?1"))

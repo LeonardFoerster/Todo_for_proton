@@ -16,4 +16,8 @@ recurrence?: RecurrenceDto | null,
 /**
  * Ersetzt die ganze Checkliste (ADR-034); leere `id` = neuer Punkt.
  */
-checklist?: Array<ChecklistItemDto> | null, };
+checklist?: Array<ChecklistItemDto> | null, 
+/**
+ * Ersetzt die Tags (IDs, ADR-035).
+ */
+tags?: Array<string> | null, };

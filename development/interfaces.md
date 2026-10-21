@@ -499,6 +499,9 @@ export interface CoreClient {
   // P0-02, ADR-021: ein Aufruf = ein Commit = ein onChange; unbekannte IDs übersprungen
   // N4, ADR-028: Serie bleibt offen, rückt ab `today` vor; Verlaufseintrag (deterministische ID) in `tasks` hinten
   completeTasks(ids: string[], done: boolean, today?: LocalDayDto): Promise<CompleteResultDto>; // {tasks, occurrences}
+  // N8, ADR-035: Tags – Namen ohne `#`, ID aus dem Namen abgeleitet; Tasks tragen IDs (`tags`, ≤ 20)
+  listTags(): Promise<TagDto[]>; ensureTag(name: string): Promise<TagDto>;
+  renameTag(id: string, name: string): Promise<TagDto>; deleteTag(id: string): Promise<number>;
   skipOccurrence(id: string, today?: LocalDayDto): Promise<TaskDto>;  // nur vorrücken, kein Verlauf
   undoOccurrence(o: OccurrenceDto): Promise<TaskDto>;                  // {seriesId, occurrenceId|null, previousDue}
   deleteTasks(ids: string[]): Promise<TaskDto[]>;                    // Zustand vor dem Löschen

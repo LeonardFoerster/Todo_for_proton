@@ -27,8 +27,8 @@ use tauri::State;
 use todo_core::api::{
     dto::{
         CompleteResultDto, CreateTaskDto, LocalDayDto, MoveListTargetDto, MoveTargetDto,
-        OccurrenceDto, PageDto, PageRequestDto, TaskDto, TaskDueDto, TaskListDto, TaskPatchDto,
-        TaskQueryDto, TaskSummaryDto,
+        OccurrenceDto, PageDto, PageRequestDto, TagDto, TaskDto, TaskDueDto, TaskListDto,
+        TaskPatchDto, TaskQueryDto, TaskSummaryDto,
     },
     note_dto::{
         ImportReportDto, NoteDto, NoteFolderDto, NoteHitDto, NoteItemDto, NoteKindDto,
@@ -73,6 +73,36 @@ pub async fn rename_task_list(
     let list = state.api.rename_task_list(id, name).await?;
     state.sync.local_change();
     Ok(list)
+}
+
+// --- Tags (ADR-035) ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn list_tags(state: State<'_, AppState>) -> Result<Vec<TagDto>> {
+    Ok(state.api.list_tags().await?)
+}
+
+/// Findet oder legt an (`#` vorn fällt weg).
+#[tauri::command]
+pub async fn ensure_tag(state: State<'_, AppState>, name: String) -> Result<TagDto> {
+    let tag = state.api.ensure_tag(name).await?;
+    state.sync.local_change();
+    Ok(tag)
+}
+
+#[tauri::command]
+pub async fn rename_tag(state: State<'_, AppState>, id: String, name: String) -> Result<TagDto> {
+    let tag = state.api.rename_tag(id, name).await?;
+    state.sync.local_change();
+    Ok(tag)
+}
+
+/// Liefert die Zahl der Tasks, die ihn trugen.
+#[tauri::command]
+pub async fn delete_tag(state: State<'_, AppState>, id: String) -> Result<u32> {
+    let n = state.api.delete_tag(id).await?;
+    state.sync.local_change();
+    Ok(n)
 }
 
 #[tauri::command]

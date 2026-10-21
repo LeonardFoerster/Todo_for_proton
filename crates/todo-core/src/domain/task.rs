@@ -1,8 +1,8 @@
 //! Die zentrale Entity `Task`.
 
 use super::{
-    check_checklist, text::normalize_name, ChecklistItem, Due, Recurrence, SortKey, TagId, TaskId,
-    TaskListId, Timestamp,
+    check_checklist, check_task_tags, text::normalize_name, ChecklistItem, Due, Recurrence,
+    SortKey, TagId, TaskId, TaskListId, Timestamp,
 };
 use crate::{ports::Clock, CoreError, CoreResult};
 
@@ -254,6 +254,19 @@ impl Task {
         check_checklist(&items)?;
         if items != self.checklist {
             self.checklist = items;
+            self.touch(clock);
+        }
+        Ok(())
+    }
+
+    /// Setzt die Tags (Reihenfolge wie übergeben, ADR-035).
+    ///
+    /// # Errors
+    /// `CoreError::Validation` bei mehr als 20 oder doppelten Tags.
+    pub fn set_tags(&mut self, tags: Vec<TagId>, clock: &(impl Clock + ?Sized)) -> CoreResult<()> {
+        check_task_tags(&tags)?;
+        if tags != self.tags {
+            self.tags = tags;
             self.touch(clock);
         }
         Ok(())

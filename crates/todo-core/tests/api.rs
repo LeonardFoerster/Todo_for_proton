@@ -83,6 +83,7 @@ fn full_flow_inbox_create_move_complete_list() {
             lists: vec![inbox.id.clone()],
             notes: Vec::new(),
             note_folders: Vec::new(),
+            tags: Vec::new(),
         }]
     );
     assert_eq!(block_on(api.ensure_inbox()).unwrap(), inbox, "idempotent");
@@ -121,6 +122,7 @@ fn full_flow_inbox_create_move_complete_list() {
             lists: vec![],
             notes: Vec::new(),
             note_folders: Vec::new(),
+            tags: Vec::new(),
         }]
     );
 
@@ -240,6 +242,7 @@ fn update_due_today_view_and_deletes() {
             lists: vec![work.id.clone()],
             notes: Vec::new(),
             note_folders: Vec::new(),
+            tags: Vec::new(),
         }]
     );
     assert_eq!(titles(&api, ViewDto::Inbox), ["Bericht"]);
@@ -284,4 +287,82 @@ fn invalid_input_maps_to_validation() {
         Err(CoreError::Validation(_))
     ));
     assert!(events.take().is_empty(), "kein Event bei Fehler");
+}
+
+/// Tags (ADR-035) über die Fassade: anlegen per Name, zuweisen, im Export mitnehmen und in einem
+/// leeren Profil über den Namen wieder zuordnen.
+#[test]
+fn tags_assign_filter_and_survive_export_import() {
+    let (api, events) = api();
+    block_on(api.ensure_inbox()).unwrap();
+    let uni = block_on(api.ensure_tag("#Uni".into())).unwrap();
+    assert_eq!(uni.name, "Uni");
+    let task = block_on(api.create_task(CreateTaskDto {
+        title: "Blatt 3".into(),
+        tags: Some(vec![uni.id.clone()]),
+        ..CreateTaskDto::default()
+    }))
+    .unwrap();
+    assert_eq!(task.tags, std::slice::from_ref(&uni.id));
+    let other = block_on(api.create_task(CreateTaskDto {
+        title: "Milch".into(),
+        ..CreateTaskDto::default()
+    }))
+    .unwrap();
+    let tagged = block_on(api.list_tasks(
+        TaskQueryDto {
+            view: ViewDto::All,
+            status: None,
+            tag: Some(uni.id.clone()),
+        },
+        PageRequestDto {
+            cursor: None,
+            limit: 10,
+        },
+    ))
+    .unwrap();
+    assert_eq!(
+        tagged
+            .items
+            .iter()
+            .map(|t| t.id.clone())
+            .collect::<Vec<_>>(),
+        std::slice::from_ref(&task.id)
+    );
+    assert_eq!(tagged.items[0].tags, std::slice::from_ref(&uni.id));
+    assert!(events.take().iter().any(
+        |e| matches!(e, CoreEvent::Changed { tags, .. } if tags == std::slice::from_ref(&uni.id))
+    ));
+    block_on(api.update_task(
+        other.id.clone(),
+        TaskPatchDto {
+            tags: Some(vec![uni.id.clone()]),
+            ..TaskPatchDto::default()
+        },
+    ))
+    .unwrap();
+
+    let export = block_on(api.export_data()).unwrap();
+    assert_eq!(export.tags.len(), 1);
+    let (fresh, _) = self::api();
+    let report = block_on(fresh.import_data(export)).unwrap();
+    assert_eq!(report.tasks_created, 2);
+    let tags = block_on(fresh.list_tags()).unwrap();
+    assert_eq!(
+        tags.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+        ["Uni"]
+    );
+    let imported = block_on(fresh.list_tasks(
+        TaskQueryDto {
+            view: ViewDto::All,
+            status: None,
+            tag: Some(tags[0].id.clone()),
+        },
+        PageRequestDto {
+            cursor: None,
+            limit: 10,
+        },
+    ))
+    .unwrap();
+    assert_eq!(imported.items.len(), 2);
 }

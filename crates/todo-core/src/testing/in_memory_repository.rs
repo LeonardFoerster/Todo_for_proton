@@ -8,8 +8,8 @@ use std::{
 
 use crate::{
     domain::{
-        DeviceId, Note, NoteFolder, NoteFolderId, NoteId, RevisionId, SortKey, Task, TaskId,
-        TaskList, TaskListId, Timestamp,
+        tag_key, DeviceId, Note, NoteFolder, NoteFolderId, NoteId, RevisionId, SortKey, Tag, TagId,
+        Task, TaskId, TaskList, TaskListId, Timestamp,
     },
     ports::{
         check_page_limit, decode_tree_cursor, encode_tree_cursor, Change, ChangeSet, CommitReceipt,
@@ -29,6 +29,7 @@ struct State {
     lists: BTreeMap<TaskListId, TaskList>,
     notes: BTreeMap<NoteId, Note>,
     folders: BTreeMap<NoteFolderId, NoteFolder>,
+    tags: BTreeMap<TagId, Tag>,
     // Sync-Buchhaltung
     clock: OpClock,
     entities: BTreeMap<EntityRef, EntityState>,
@@ -68,6 +69,7 @@ impl InMemoryTaskRepository {
                 lists: BTreeMap::new(),
                 notes: BTreeMap::new(),
                 folders: BTreeMap::new(),
+                tags: BTreeMap::new(),
                 clock: OpClock::new(HlcState::new(device), 0),
                 entities: BTreeMap::new(),
                 revisions: BTreeMap::new(),
@@ -194,6 +196,12 @@ fn apply(state: &mut State, change: Change) {
         }
         Change::Delete(EntityRef::NoteFolder(id)) => {
             state.folders.remove(&id);
+        }
+        Change::UpsertTag(tag) => {
+            state.tags.insert(tag.id(), tag);
+        }
+        Change::Delete(EntityRef::Tag(id)) => {
+            state.tags.remove(&id);
         }
     }
 }
@@ -326,6 +334,16 @@ impl TaskRepository for InMemoryTaskRepository {
         let mut lists: Vec<TaskList> = self.state().lists.values().cloned().collect();
         lists.sort_by(|a, b| (a.sort_key(), a.id()).cmp(&(b.sort_key(), b.id())));
         Ok(lists)
+    }
+
+    async fn get_tag(&self, id: TagId) -> CoreResult<Option<Tag>> {
+        Ok(self.state().tags.get(&id).cloned())
+    }
+
+    async fn list_tags(&self) -> CoreResult<Vec<Tag>> {
+        let mut tags: Vec<Tag> = self.state().tags.values().cloned().collect();
+        tags.sort_by_cached_key(|t| (tag_key(t.name()), t.id()));
+        Ok(tags)
     }
 
     async fn list_tasks(
@@ -654,6 +672,15 @@ impl ReplicaStore for State {
 
     fn note_folder(&mut self, id: NoteFolderId) -> CoreResult<Option<NoteFolder>> {
         Ok(self.folders.get(&id).cloned())
+    }
+
+    fn tag(&mut self, id: TagId) -> CoreResult<Option<Tag>> {
+        Ok(self.tags.get(&id).cloned())
+    }
+
+    fn put_tag(&mut self, tag: &Tag) -> CoreResult<()> {
+        apply(self, Change::UpsertTag(tag.clone()));
+        Ok(())
     }
 
     fn put_note(&mut self, note: &Note) -> CoreResult<()> {

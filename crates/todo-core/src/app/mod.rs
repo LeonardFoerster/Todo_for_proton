@@ -29,6 +29,7 @@ mod rename_task_list;
 mod reopen_task;
 mod restore_tasks;
 mod set_dues;
+mod tags;
 mod trash_notes;
 mod trash_tasks;
 mod update_note_body;
@@ -55,7 +56,7 @@ pub use edit_note::{RenameNote, RenameNoteInput, SetNoteKind, SetNoteKindInput};
 pub use ensure_inbox::EnsureInbox;
 pub use export_data::{
     DataSnapshot, ExportData, ExportNote, ExportNotes, ImportData, ImportDataInput,
-    ImportDataReport, ImportList, IMPORT_TASK_CHUNK,
+    ImportDataReport, ImportList, ImportTag, IMPORT_TASK_CHUNK,
 };
 pub use import_notes::{
     ImportNoteFile, ImportNotes, ImportNotesInput, ImportReport, ImportSkip, IMPORT_CHUNK,
@@ -76,6 +77,7 @@ pub use rename_task_list::{RenameTaskList, RenameTaskListInput};
 pub use reopen_task::{ReopenTask, ReopenTaskInput};
 pub use restore_tasks::{RestoreTasks, RestoreTasksInput};
 pub use set_dues::{SetDues, SetDuesInput};
+pub use tags::{DeleteTag, EnsureTag, RenameTag, RenameTagInput};
 pub use trash_notes::{
     RestoreNoteItems, RestoreNoteItemsInput, TrashNoteItems, TrashNoteItemsInput,
 };
@@ -252,6 +254,7 @@ mod send_tests {
         assert_send(ImportData::new(deps.clone()).execute(ImportDataInput {
             lists: Vec::new(),
             tasks: Vec::new(),
+            tags: Vec::new(),
         }));
         assert_send(PurgeExpiredTasks::new(deps.clone()).execute());
         assert_send(PurgeExpiredNotes::new(deps.clone()).execute());

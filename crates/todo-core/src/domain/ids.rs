@@ -180,6 +180,19 @@ impl TaskId {
     }
 }
 
+impl TagId {
+    /// Deterministische ID (UUIDv5, ADR-035) aus dem Namensschlüssel ([`super::tag_key`]): Zwei
+    /// Geräte, die offline „#uni“ anlegen, bekommen **einen** Tag.
+    #[must_use]
+    pub fn derived(parts: &[&[u8]]) -> Self {
+        let name: Vec<u8> = parts.concat();
+        Self(Uuid::new_v5(&TAG_ID_NAMESPACE, &name))
+    }
+}
+
+/// Fester Namensraum für [`TagId::derived`]. **Nie ändern** (sonst doppeln sich Tags).
+const TAG_ID_NAMESPACE: Uuid = Uuid::from_u128(0x7461_672d_6e61_6d65_0000_0000_0000_0001);
+
 /// Fester Namensraum für [`TaskId::derived`]. **Nie ändern** (sonst doppeln sich Verlaufseinträge).
 const TASK_ID_NAMESPACE: Uuid = Uuid::from_u128(0x7461_736b_2d6f_6363_7572_0000_0000_0001);
 

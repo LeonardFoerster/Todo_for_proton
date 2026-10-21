@@ -6,8 +6,9 @@ use rusqlite::{named_params, Connection, Row};
 use todo_core::{
     domain::{
         ChecklistItem, ChecklistItemId, Due, NaiveDate, Note, NoteFolder, NoteFolderId,
-        NoteFolderParts, NoteId, NoteKind, NoteParts, Priority, RevisionId, SortKey, TagId, Task,
-        TaskId, TaskList, TaskListId, TaskListParts, TaskParts, TaskStatus, Timestamp,
+        NoteFolderParts, NoteId, NoteKind, NoteParts, Priority, RevisionId, SortKey, Tag, TagId,
+        TagParts, Task, TaskId, TaskList, TaskListId, TaskListParts, TaskParts, TaskStatus,
+        Timestamp,
     },
     ports::{NoteSummary, NoteTreeItem, TaskSummary},
     CoreResult,
@@ -20,11 +21,18 @@ pub(crate) const TASK_COLUMNS: &str = "id, list_id, parent_id, title, notes, sta
 
 pub(crate) const LIST_COLUMNS: &str = "id, name, sort_key, created_at, updated_at, is_inbox";
 
+pub(crate) const TAG_COLUMNS: &str = "id, name, created_at, updated_at";
+
+const UPSERT_TAG: &str = "\
+    INSERT INTO tags (id, name, created_at, updated_at) VALUES (:id, :name, :created_at, :updated_at)
+    ON CONFLICT (id) DO UPDATE SET
+        name = excluded.name, created_at = excluded.created_at, updated_at = excluded.updated_at";
+
 /// Spalten für [`TaskSummary`] – ohne Notiztext, nur ob es einen gibt.
 pub(crate) const SUMMARY_COLUMNS: &str = "id, list_id, title, status, priority, due_date, due_at, \
      due_tz, notes <> '' AS has_notes, sort_key, completed_at, trashed_at, \
      (recurrence IS NOT NULL AND (due_date IS NOT NULL OR due_at IS NOT NULL)) AS recurring, \
-     checklist_done, checklist_total";
+     checklist_done, checklist_total, tags";
 
 pub(crate) const NOTE_COLUMNS: &str = "id, folder_id, name, auto_name, kind, body, body_rev, \
      sort_key, created_at, modified_at, trashed_at";
@@ -109,6 +117,30 @@ pub(crate) fn write_task(conn: &Connection, task: &Task) -> CoreResult<()> {
     })
     .map_err(storage)?;
     Ok(())
+}
+
+/// Legt den Tag an oder ersetzt ihn.
+pub(crate) fn write_tag(conn: &Connection, tag: &Tag) -> CoreResult<()> {
+    let mut stmt = conn.prepare_cached(UPSERT_TAG).map_err(storage)?;
+    stmt.execute(named_params! {
+        ":id": tag.id().to_string(),
+        ":name": tag.name(),
+        ":created_at": tag.created_at().as_millis(),
+        ":updated_at": tag.updated_at().as_millis(),
+    })
+    .map_err(storage)?;
+    Ok(())
+}
+
+/// Liest eine Zeile mit [`TAG_COLUMNS`].
+pub(crate) fn read_tag(row: &Row<'_>) -> CoreResult<Tag> {
+    let parts = TagParts {
+        id: TagId::parse(&get::<String>(row, 0)?).map_err(|e| corrupt("tag id", e))?,
+        name: get(row, 1)?,
+        created_at: Timestamp::from_millis(get(row, 2)?),
+        updated_at: Timestamp::from_millis(get(row, 3)?),
+    };
+    Tag::from_parts(parts).map_err(|e| corrupt("tag", e))
 }
 
 /// Legt die Liste an oder ersetzt sie vollständig.
@@ -324,6 +356,7 @@ pub(crate) fn read_summary(row: &Row<'_>) -> CoreResult<TaskSummary> {
         recurring: get(row, 12)?,
         checklist_done: get(row, 13)?,
         checklist_total: get(row, 14)?,
+        tags: decode_tags(&get::<String>(row, 15)?)?,
     })
 }
 

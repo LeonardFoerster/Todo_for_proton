@@ -6,10 +6,13 @@ use std::collections::{HashMap, HashSet};
 
 use super::{
     collect_all, notes::all_items, CreateTaskList, CreateTaskListInput, Deps, EnsureInbox,
-    RestoreTasks, RestoreTasksInput, TrashTasks, TrashTasksInput,
+    EnsureTag, RestoreTasks, RestoreTasksInput, TrashTasks, TrashTasksInput,
 };
 use crate::{
-    domain::{NoteFolderId, NoteKind, Task, TaskId, TaskList, TaskListId, TaskParts, Timestamp},
+    domain::{
+        NoteFolderId, NoteKind, Tag, TagId, Task, TaskId, TaskList, TaskListId, TaskParts,
+        Timestamp,
+    },
     ports::{NoteTreeItem, SmartView, TaskQuery, TaskRepository},
     CoreError, CoreResult,
 };
@@ -22,6 +25,7 @@ pub const IMPORT_TASK_CHUNK: usize = 500;
 pub struct DataSnapshot {
     pub lists: Vec<TaskList>,
     pub tasks: Vec<Task>,
+    pub tags: Vec<Tag>,
 }
 
 /// Liest den vollständigen Datenstand für den Export.
@@ -56,7 +60,8 @@ impl ExportData {
         for chunk in ids.chunks(super::BULK_LIMIT_MAX) {
             tasks.extend(repo.get_tasks(chunk).await?);
         }
-        Ok(DataSnapshot { lists, tasks })
+        let tags = repo.list_tags().await?;
+        Ok(DataSnapshot { lists, tasks, tags })
     }
 }
 
@@ -73,6 +78,15 @@ pub struct ImportDataInput {
     pub lists: Vec<ImportList>,
     /// Tasks mit `list_id` aus `lists`; `trashed_at` gesetzt = landet wieder im Papierkorb.
     pub tasks: Vec<TaskParts>,
+    /// Tags des Exports; zugeordnet über den Namen (ADR-035), Tasks bekommen die neuen IDs.
+    pub tags: Vec<ImportTag>,
+}
+
+/// Ein Tag aus dem Export (alte ID, Name).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportTag {
+    pub id: TagId,
+    pub name: String,
 }
 
 /// Ergebnis eines Imports.
@@ -149,8 +163,21 @@ impl ImportData {
             }
         }
 
+        let mut tag_map: HashMap<TagId, TagId> = HashMap::new();
+        for tag in &input.tags {
+            let found = EnsureTag::new(self.deps.clone()).execute(&tag.name).await?;
+            tag_map.insert(tag.id, found.id());
+        }
+
         let mut fresh = Vec::new();
         for parts in input.tasks {
+            // Unbekannte Tags (ohne Eintrag im Export) fallen weg.
+            let tags = parts
+                .tags
+                .iter()
+                .filter_map(|t| tag_map.get(t).copied())
+                .collect();
+            let parts = TaskParts { tags, ..parts };
             let list_id = *target.get(&parts.list_id).ok_or_else(|| {
                 CoreError::Validation(format!(
                     "task {}: list {} not in the export",
@@ -355,6 +382,7 @@ mod tests {
         let report = block_on(ImportData::new(target.clone()).execute(ImportDataInput {
             lists: lists.clone(),
             tasks: tasks.clone(),
+            tags: Vec::new(),
         }))
         .unwrap();
         assert_eq!(
@@ -386,9 +414,12 @@ mod tests {
         assert_eq!(bericht.priority(), Priority::High);
         assert_eq!(bericht.created_at(), a.created_at());
 
-        let again =
-            block_on(ImportData::new(target.clone()).execute(ImportDataInput { lists, tasks }))
-                .unwrap();
+        let again = block_on(ImportData::new(target.clone()).execute(ImportDataInput {
+            lists,
+            tasks,
+            tags: Vec::new(),
+        }))
+        .unwrap();
         assert_eq!(
             again,
             ImportDataReport {
@@ -412,6 +443,7 @@ mod tests {
         let err = block_on(ImportData::new(deps).execute(ImportDataInput {
             lists: Vec::new(),
             tasks,
+            tags: Vec::new(),
         }))
         .unwrap_err();
         assert!(

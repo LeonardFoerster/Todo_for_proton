@@ -16,7 +16,8 @@ use serde::{Deserialize, Serialize};
 use super::{FieldMap, FieldName, FieldValue, Hlc, Op, OpKind};
 use crate::domain::{
     Due, Note, NoteFolder, NoteFolderId, NoteFolderParts, NoteId, NoteParts, Priority, SortKey,
-    TagId, Task, TaskId, TaskList, TaskListId, TaskListParts, TaskParts, TaskStatus, Timestamp,
+    Tag, TagId, TagParts, Task, TaskId, TaskList, TaskListId, TaskListParts, TaskParts, TaskStatus,
+    Timestamp,
 };
 
 /// Ein Feldwert mit der HLC der Op, die ihn gesetzt hat.
@@ -215,6 +216,18 @@ pub fn materialize_list(id: TaskListId, registers: &Registers) -> Option<TaskLis
         },
     };
     TaskList::from_parts(parts).ok()
+}
+
+/// Wie [`materialize_task`] für Tags (ADR-035).
+#[must_use]
+pub fn materialize_tag(id: TagId, registers: &Registers) -> Option<Tag> {
+    Tag::from_parts(TagParts {
+        id,
+        name: text(registers, FieldName::Name)?,
+        created_at: created_at(registers)?,
+        updated_at: updated_at(registers),
+    })
+    .ok()
 }
 
 /// Wie [`materialize_task`] für Notiz-Ordner. `parent` = wirksamer Elternordner nach den

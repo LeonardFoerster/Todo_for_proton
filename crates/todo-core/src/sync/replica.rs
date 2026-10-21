@@ -12,14 +12,14 @@
 use std::collections::BTreeMap;
 
 use super::{
-    conflict_copy_id, materialize_list, materialize_note, materialize_note_folder,
+    conflict_copy_id, materialize_list, materialize_note, materialize_note_folder, materialize_tag,
     materialize_task, merge, merge::folder, merge::wall, ops_for, ConflictLoser, EntityState,
     FieldName, Op, OpClock, OpKind, Registers, Resolution, Revision, RevisionSet,
 };
 use crate::{
     domain::{
         note_tree, DeviceId, Note, NoteFolder, NoteFolderId, NoteId, NoteName, RevisionId, SortKey,
-        Task, TaskId, TaskList, TaskListId, Timestamp, NOTE_NAME_MAX_CHARS,
+        Tag, TagId, Task, TaskId, TaskList, TaskListId, Timestamp, NOTE_NAME_MAX_CHARS,
     },
     ports::{Change, ChangeSet, Clock, EntityRef},
     CoreResult,
@@ -206,6 +206,9 @@ pub trait ReplicaStore {
     fn note_folder(&mut self, id: NoteFolderId) -> CoreResult<Option<NoteFolder>>;
     /// # Errors
     /// Speicherfehler.
+    fn tag(&mut self, id: TagId) -> CoreResult<Option<Tag>>;
+    /// # Errors
+    /// Speicherfehler.
     fn put_task(&mut self, task: &Task) -> CoreResult<()>;
     /// # Errors
     /// Speicherfehler.
@@ -216,6 +219,9 @@ pub trait ReplicaStore {
     /// # Errors
     /// Speicherfehler.
     fn put_note_folder(&mut self, folder: &NoteFolder) -> CoreResult<()>;
+    /// # Errors
+    /// Speicherfehler.
+    fn put_tag(&mut self, tag: &Tag) -> CoreResult<()>;
     /// # Errors
     /// Speicherfehler.
     fn remove(&mut self, entity: EntityRef) -> CoreResult<()>;
@@ -559,6 +565,27 @@ pub fn apply_remote<S: ReplicaStore + ?Sized>(
         list_set_changed |= current.is_some() != target.is_some();
         match &target {
             Some(list) => store.put_list(list)?,
+            None => store.remove(*entity)?,
+        }
+        receipt.changed.push(*entity);
+    }
+    // Tags (ADR-035): eigenständig; Tasks verweisen nur per ID.
+    for (entity, ops) in &groups {
+        let EntityRef::Tag(id) = *entity else {
+            continue;
+        };
+        let Some(state) = merged(store, *entity, ops)? else {
+            continue;
+        };
+        let target = match &state {
+            EntityState::Live(registers) => materialize_tag(id, registers),
+            EntityState::Deleted(_) => None,
+        };
+        if store.tag(id)? == target {
+            continue;
+        }
+        match &target {
+            Some(tag) => store.put_tag(tag)?,
             None => store.remove(*entity)?,
         }
         receipt.changed.push(*entity);

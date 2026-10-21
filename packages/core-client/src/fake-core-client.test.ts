@@ -56,8 +56,8 @@ describe("FakeCoreClient", () => {
     await core.completeTask(a.id, true); // keine Änderung → kein Event
     await Promise.resolve();
     expect(events).toEqual([
-      { tasks: [a.id], lists: [], notes: [], noteFolders: [] },
-      { tasks: [a.id], lists: [], notes: [], noteFolders: [] },
+      { tasks: [a.id], lists: [], notes: [], noteFolders: [], tags: [] },
+      { tasks: [a.id], lists: [], notes: [], noteFolders: [], tags: [] },
     ]);
     off();
     await core.deleteTask(a.id);
@@ -176,7 +176,7 @@ describe("FakeCoreClient", () => {
       const { core, flush, of } = await bulkSetup();
       await core.moveTasks(of("eb"), { before: of("a")[0] });
       expect((await titles(core)).join("")).toBe("beacdf");
-      expect(await flush()).toEqual([{ tasks: of("be"), lists: [], notes: [], noteFolders: [] }]);
+      expect(await flush()).toEqual([{ tasks: of("be"), lists: [], notes: [], noteFolders: [], tags: [] }]);
       await core.moveTasks(of("fb"), { after: of("c")[0], before: of("d")[0] });
       expect((await titles(core)).join("")).toBe("eacbfd");
       await core.moveTasks(of("ea"), {});
@@ -201,7 +201,7 @@ describe("FakeCoreClient", () => {
       const done = await core.completeTasks([...of("abc"), "unknown", ...of("b")], true);
       expect(done.tasks.map((t) => t.title)).toEqual(["b", "c"]);
       expect(done.occurrences).toEqual([]);
-      expect(await flush()).toEqual([{ tasks: of("bc"), lists: [], notes: [], noteFolders: [] }]);
+      expect(await flush()).toEqual([{ tasks: of("bc"), lists: [], notes: [], noteFolders: [], tags: [] }]);
       expect(await core.completeTasks(of("bc"), true)).toEqual({ tasks: [], occurrences: [] });
       expect(await flush()).toEqual([]);
       expect((await core.completeTasks(of("abc"), false)).tasks.every((t) => t.completedAt === null)).toBe(true);
@@ -215,13 +215,13 @@ describe("FakeCoreClient", () => {
       const deleted = await core.deleteTasks([...of("ec"), "unknown"]);
       expect(deleted.map((t) => t.title)).toEqual(["e", "c"]);
       expect((await titles(core)).join("")).toBe("abdf");
-      expect(await flush()).toEqual([{ tasks: of("ec"), lists: [], notes: [], noteFolders: [] }]);
+      expect(await flush()).toEqual([{ tasks: of("ec"), lists: [], notes: [], noteFolders: [], tags: [] }]);
 
       const restored = await core.restoreTasks(deleted);
       expect(restored.map((t) => t.id)).not.toContain(of("c")[0]);
       expect((await titles(core)).join("")).toBe("abcdef");
       expect(restored[1]).toMatchObject({ title: "c", status: "done", createdAt: deleted[1].createdAt });
-      expect(await flush()).toEqual([{ tasks: restored.map((t) => t.id), lists: [], notes: [], noteFolders: [] }]);
+      expect(await flush()).toEqual([{ tasks: restored.map((t) => t.id), lists: [], notes: [], noteFolders: [], tags: [] }]);
     });
 
     it("restores into the inbox when the list is gone", async () => {
@@ -249,9 +249,9 @@ describe("FakeCoreClient", () => {
     expect(await names()).toBe("Inbox,B,C,A");
     await Promise.resolve();
     expect(events).toEqual([
-      { tasks: [], lists: [c.id], notes: [], noteFolders: [] },
-      { tasks: [], lists: [c.id], notes: [], noteFolders: [] },
-      { tasks: [], lists: [a.id], notes: [], noteFolders: [] },
+      { tasks: [], lists: [c.id], notes: [], noteFolders: [], tags: [] },
+      { tasks: [], lists: [c.id], notes: [], noteFolders: [], tags: [] },
+      { tasks: [], lists: [a.id], notes: [], noteFolders: [], tags: [] },
     ]);
     const inbox = (await core.listTaskLists())[0];
     await expect(core.moveTaskList(inbox.id, {})).rejects.toMatchObject({ kind: "validation" });
@@ -341,5 +341,25 @@ describe("FakeCoreClient", () => {
     expect(last.tasks[0].status).toBe("done");
     expect((await core.updateTask(s.id, { due: null })).recurrence).toBeNull();
     await expect(core.skipOccurrence(s.id)).rejects.toMatchObject({ kind: "validation" });
+  });
+});
+
+describe("FakeCoreClient: Tags (ADR-035)", () => {
+  it("ensures by name, renames, filters and untags on delete", async () => {
+    const { core } = await setup();
+    const uni = await core.ensureTag("#Uni");
+    expect(uni.name).toBe("Uni");
+    expect((await core.ensureTag("uni")).id).toBe(uni.id);
+    const bio = await core.ensureTag("bio");
+    await expect(core.renameTag(bio.id, "UNI")).rejects.toMatchObject({ kind: "validation" });
+    expect((await core.listTags()).map((t) => t.name)).toEqual(["bio", "Uni"]);
+    const a = await core.createTask({ title: "A", tags: [uni.id] });
+    await core.createTask({ title: "B" });
+    await expect(core.updateTask(a.id, { tags: ["nope"] })).rejects.toMatchObject({ kind: "validation" });
+    expect(await titles(core, { view: { kind: "all" }, tag: uni.id })).toEqual(["A"]);
+    expect((await core.listTasks({ view: { kind: "all" } }, { limit: 10 })).items[0].tags).toEqual([uni.id]);
+    expect(await core.deleteTag(uni.id)).toBe(1);
+    expect((await core.getTask(a.id)).tags).toEqual([]);
+    expect((await core.ensureTag("uni")).id).not.toBe(uni.id);
   });
 });

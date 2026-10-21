@@ -18,6 +18,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0005_task_trash.sql"),
     include_str!("../migrations/0006_recurrence.sql"),
     include_str!("../migrations/0007_checklist.sql"),
+    include_str!("../migrations/0008_tags.sql"),
 ];
 
 /// Bringt das Schema auf den neuesten Stand. Mehrfacher Aufruf ist harmlos.
@@ -100,6 +101,7 @@ mod tests {
                 "outbox_ops",
                 "remote_cursors",
                 "sync_meta",
+                "tags",
                 "task_lists",
                 "tasks",
                 "tasks_fts",
@@ -253,8 +255,11 @@ mod tests {
         );
         conn.execute("INSERT INTO tombstones VALUES ('n', 2, x'04')", [])
             .unwrap();
+        // Seit 0008 auch Tags (4); unbekannte Arten bleiben verboten.
+        conn.execute("INSERT INTO tombstones VALUES ('t', 4, x'04')", [])
+            .unwrap();
         assert!(conn
-            .execute("INSERT INTO tombstones VALUES ('x', 4, x'04')", [])
+            .execute("INSERT INTO tombstones VALUES ('x', 5, x'04')", [])
             .is_err());
     }
 }

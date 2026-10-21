@@ -867,6 +867,29 @@ Fälligkeit. Das bestehende `parent_id` bleibt ungenutzt.
 **Konsequenzen:** Ältere Apps kennen Code 18 nicht und überspringen solche Segmente (wie bei ADR-028/031) –
 „alle Geräte aktualisieren". Die Suche zählt Punkttreffer wie Notiztreffer.
 
+## ADR-035 · Tags als eigene Entity mit aus dem Namen abgeleiteter ID
+
+**Status:** akzeptiert (2026-10-21, N8-02)
+**Kontext:** `Task.tags` (Feld `Tags`, LWW auf die Menge) gab es seit P1 ohne Tags selbst. N8 will `#tag` im Fenster
+„Neue Task", eine Ansicht je Tag, Umbenennen und Löschen.
+**Entscheidung:**
+1. `Tag { id, name }` als synchronisierte Entity: `EntityRef::Tag` (angehängt), Felder `Name` und `CreatedAt`,
+   Löschen als Tombstone. Name = ein Wort ohne `#` (Leerzeichen werden `-`), höchstens 50 Zeichen, eindeutig ohne
+   Rücksicht auf Groß/Klein (lokal geprüft).
+2. **ID aus dem Namen** (UUIDv5 über den kleingeschriebenen Namen, eigener Namensraum): Zwei Geräte, die offline
+   „#uni" anlegen, erzeugen denselben Tag – keine Duplikate wie bei gleichnamigen Listen (ADR-020). Ist die
+   abgeleitete ID schon vergeben (Tombstone eines gelöschten Tags oder ein umbenannter Tag), nimmt `ensure_tag` die
+   nächste Variante (`name|1`, …). Umbenennen behält die ID.
+3. Tasks tragen höchstens 20 Tag-IDs (bestehendes Feld `Tags`). Beim Setzen müssen die Tags existieren; Löschen eines
+   Tags nimmt ihn in **einem** Commit von allen Tasks (auch erledigten und im Papierkorb). Ein Gerät, das offline
+   einen inzwischen gelöschten Tag zuweist, hinterlässt eine verwaiste ID – die UI zeigt nur bekannte Tags.
+4. API: `list_tags`, `ensure_tag(name)`, `rename_tag`, `delete_tag`; `TaskDto.tags`/`TaskSummaryDto.tags` (IDs),
+   `CreateTaskDto.tags`, `TaskPatchDto.tags`, Filter `TaskQueryDto.tag`; Ereignis `Changed.tags`. Export enthält die
+   Tags (Name); der Import ordnet sie über den Namen zu.
+5. SQLite: Migration 0008 (Tabelle `tags`, `entity_kind` 4 in Registern und Tombstones).
+**Konsequenzen:** Ältere Apps kennen `EntityRef::Tag` nicht und überspringen solche Segmente – „alle Geräte
+aktualisieren". Tags zusammenführen (gleichnamig nach Umbenennen) bleibt eine spätere Aktion.
+
 ---
 
 ## Spikes

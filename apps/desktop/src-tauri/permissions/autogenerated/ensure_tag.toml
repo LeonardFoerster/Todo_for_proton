@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-ensure-tag"
+description = "Enables the ensure_tag command without any pre-configured scope."
+commands.allow = ["ensure_tag"]
+
+[[permission]]
+identifier = "deny-ensure-tag"
+description = "Denies the ensure_tag command without any pre-configured scope."
+commands.deny = ["ensure_tag"]

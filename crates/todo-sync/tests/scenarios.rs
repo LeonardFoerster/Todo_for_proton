@@ -447,3 +447,71 @@ fn skip_and_complete_of_the_same_occurrence_converge() {
     }
     assert_converged(&[&a, &b]);
 }
+
+/// Tags (ADR-035): Beide legen offline „#Uni“ an → nach dem Sync **ein** Tag (abgeleitete ID).
+#[test]
+fn same_tag_created_offline_on_two_devices_is_one_tag() {
+    let world = World::new();
+    let a = world.device("a");
+    let b = world.device("b");
+    a.sync();
+    b.sync();
+    let ta = block_on(a.api.ensure_tag("Uni".into())).unwrap();
+    b.clock.advance(50);
+    let tb = block_on(b.api.ensure_tag("#uni".into())).unwrap();
+    assert_eq!(ta.id, tb.id);
+    a.sync();
+    b.sync();
+    a.sync();
+    for device in [&a, &b] {
+        let tags = block_on(device.api.list_tags()).unwrap();
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].name, "uni", "später geschrieben gewinnt");
+    }
+    assert_converged(&[&a, &b]);
+}
+
+/// A benennt einen Tag um, B weist ihn offline einer Task zu → beides bleibt.
+#[test]
+fn tag_rename_and_concurrent_assignment_both_survive() {
+    let world = World::new();
+    let a = world.device("a");
+    let b = world.device("b");
+    let tag = block_on(a.api.ensure_tag("uni".into())).unwrap();
+    let task = a.add("Blatt 3");
+    a.sync();
+    b.sync();
+
+    block_on(a.api.rename_tag(tag.id.clone(), "studium".into())).unwrap();
+    b.clock.advance(50);
+    b.update(
+        &task.id,
+        TaskPatchDto {
+            tags: Some(vec![tag.id.clone()]),
+            ..TaskPatchDto::default()
+        },
+    );
+    a.sync();
+    b.sync();
+    a.sync();
+    for device in [&a, &b] {
+        let tags = block_on(device.api.list_tags()).unwrap();
+        assert_eq!(
+            tags.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+            ["studium"]
+        );
+        assert_eq!(
+            device.task(&task.id).unwrap().tags,
+            std::slice::from_ref(&tag.id)
+        );
+    }
+    assert_converged(&[&a, &b]);
+
+    // Löschen auf B nimmt den Tag überall von der Task.
+    assert_eq!(block_on(b.api.delete_tag(tag.id.clone())).unwrap(), 1);
+    b.sync();
+    a.sync();
+    assert!(block_on(a.api.list_tags()).unwrap().is_empty());
+    assert!(a.task(&task.id).unwrap().tags.is_empty());
+    assert_converged(&[&a, &b]);
+}

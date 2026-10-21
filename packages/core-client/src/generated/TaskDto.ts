@@ -20,4 +20,8 @@ recurrence: RecurrenceDto | null,
 /**
  * Checkliste (N8, ADR-034), in Anzeigereihenfolge.
  */
-checklist: Array<ChecklistItemDto>, };
+checklist: Array<ChecklistItemDto>, 
+/**
+ * Tag-IDs (ADR-035); Namen über `list_tags`.
+ */
+tags: Array<string>, };

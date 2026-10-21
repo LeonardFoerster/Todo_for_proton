@@ -18,6 +18,7 @@ import type {
   RecurrenceDto,
   SessionDto,
   SyncStatusDto,
+  TagDto,
   TaskDto,
   TaskDueDto,
   TaskListDto,
@@ -55,6 +56,7 @@ interface Row {
 export class FakeCoreClient implements CoreClient {
   private lists = new Map<string, TaskListDto>();
   private rows = new Map<string, Row>();
+  private tags = new Map<string, TagDto>();
   private changeListeners = new Set<(e: ChangedEventDto) => void>();
   private statusListeners = new Set<(s: SyncStatusDto) => void>();
   private session: SessionDto | null = null;
@@ -73,7 +75,7 @@ export class FakeCoreClient implements CoreClient {
     this.now = options.now ?? (() => new Date());
     this.notes = new FakeNotes({
       run: (fn) => this.run(fn),
-      emit: (notes, noteFolders) => this.emitEvent({ tasks: [], lists: [], notes, noteFolders }),
+      emit: (notes, noteFolders) => this.emitEvent({ tasks: [], lists: [], notes, noteFolders, tags: [] }),
       now: () => this.now(),
       newId: () => this.newId(),
     });
@@ -163,6 +165,67 @@ export class FakeCoreClient implements CoreClient {
       return moved.filter((r) => r.task.trashedAt == null).length;
     });
 
+  // --- Tags (ADR-035) ------------------------------------------------------------------------
+
+  listTags = () =>
+    this.run(() => [...this.tags.values()].sort((a, b) => cmp(a.name.toLowerCase(), b.name.toLowerCase()) || cmp(a.id, b.id)).map((t) => ({ ...t })));
+
+  ensureTag = (name: string) =>
+    this.run(() => {
+      const clean = tagName(name);
+      const found = [...this.tags.values()].find((t) => t.name.toLowerCase() === clean.toLowerCase());
+      if (found) return { ...found };
+      // Wie der Core: ID aus dem Namen (Fake: lesbar statt UUIDv5).
+      let id = `tag:${clean.toLowerCase()}`;
+      for (let n = 1; this.tags.has(id) || this.deletedTags.has(id); n++) id = `tag:${clean.toLowerCase()}|${n}`;
+      const tag = { id, name: clean };
+      this.tags.set(id, tag);
+      this.emit([], [], [id]);
+      return { ...tag };
+    });
+
+  renameTag = (id: string, name: string) =>
+    this.run(() => {
+      const tag = this.tags.get(id);
+      if (!tag) throw new CoreClientError("notFound", `tag ${id}`);
+      const clean = tagName(name);
+      if ([...this.tags.values()].some((t) => t.id !== id && t.name.toLowerCase() === clean.toLowerCase())) {
+        throw new CoreClientError("validation", `tag ${JSON.stringify(clean)} already exists`);
+      }
+      if (tag.name !== clean) {
+        tag.name = clean;
+        this.emit([], [], [id]);
+      }
+      return { ...tag };
+    });
+
+  deleteTag = (id: string) =>
+    this.run(() => {
+      if (!this.tags.delete(id)) return 0;
+      this.deletedTags.add(id);
+      const rows = [...this.rows.values()].filter((r) => r.task.tags.includes(id));
+      for (const row of rows) {
+        row.task.tags = row.task.tags.filter((t) => t !== id);
+        this.touch(row);
+      }
+      this.emit(
+        rows.map((r) => r.task.id),
+        [],
+        [id],
+      );
+      return rows.length;
+    });
+
+  private deletedTags = new Set<string>();
+
+  /** Wie `check_task_tags` + „jeder Tag existiert“ im Core. */
+  private validTags(tags: string[]): string[] {
+    if (tags.length > 20) throw new CoreClientError("validation", "a task can have at most 20 tags");
+    if (new Set(tags).size !== tags.length) throw new CoreClientError("validation", "duplicate tag");
+    for (const t of tags) if (!this.tags.has(t)) throw new CoreClientError("validation", `unknown tag ${t}`);
+    return [...tags];
+  }
+
   // --- Tasks ---------------------------------------------------------------------------------
 
   createTask = (input: CreateTaskDto) =>
@@ -185,6 +248,7 @@ export class FakeCoreClient implements CoreClient {
         trashedAt: null,
         recurrence: null,
         checklist: [],
+        tags: this.validTags(input.tags ?? []),
       };
       if (input.recurrence) this.applyRule(task, input.recurrence);
       const row = { task, order: this.lastOrder(listId) + 1 };
@@ -211,6 +275,7 @@ export class FakeCoreClient implements CoreClient {
         else this.applyRule(next, patch.recurrence);
       }
       if (patch.checklist != null) next.checklist = this.validChecklist(patch.checklist);
+      if (patch.tags != null) next.tags = this.validTags(patch.tags);
       if (JSON.stringify(next) !== JSON.stringify(t)) {
         row.task = next;
         this.touch(row);
@@ -492,7 +557,8 @@ export class FakeCoreClient implements CoreClient {
                     : t.status === "done";
         // Papierkorb nur in seiner Ansicht (ADR-031).
         const trashOk = (t.trashedAt != null) === (view.kind === "trash");
-        return inView && trashOk && (query.status == null || t.status === query.status);
+        const tagOk = query.tag == null || t.tags.includes(query.tag);
+        return inView && trashOk && tagOk && (query.status == null || t.status === query.status);
       });
       rows =
         view.kind === "trash"
@@ -609,8 +675,8 @@ export class FakeCoreClient implements CoreClient {
     return fn();
   }
 
-  private emit(tasks: string[], lists: string[]) {
-    this.emitEvent({ tasks, lists, notes: [], noteFolders: [] });
+  private emit(tasks: string[], lists: string[], tags: string[] = []) {
+    this.emitEvent({ tasks, lists, notes: [], noteFolders: [], tags });
   }
 
   private emitEvent(event: ChangedEventDto) {
@@ -806,5 +872,11 @@ function summary(t: TaskDto): TaskSummaryDto {
     recurring: t.recurrence != null,
     checklistDone: t.checklist.filter((i) => i.done).length,
     checklistTotal: t.checklist.length,
+    tags: [...t.tags],
   };
+}
+
+/** Wie `normalize_tag_name`: `#` vorn weg, Leerzeichen zu `-`, 1–50 Zeichen. */
+function tagName(input: string): string {
+  return validName(input.trim().replace(/^#+/, ""), 50, "tag name").split(/\s+/).join("-");
 }

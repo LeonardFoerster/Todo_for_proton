@@ -442,7 +442,8 @@ acceptance`.
 
 ## N8 · Checklisten + Tags
 
-### [ ] N8-01 · ADR-034 + Checkliste an der Task
+### [x] N8-01 · ADR-034 + Checkliste an der Task — 2026-10-21 · 77b2ab1
+> Notiz: Verschieben per `Alt+↑/↓` und Griff; das nächste Vorkommen einer Serie beginnt ohne Haken.
 **Schritte:** Feld `Checklist` (neuer Code, Liste aus `{id, text, done}`, LWW auf die ganze Liste wie Tags in v1, max.
 100 Punkte), Standard leer beim Materialisieren; API/DTO; Detail-Panel: Punkte hinzufügen/abhaken/umbenennen/löschen/
 ziehen, `Enter` neuer Punkt; Zeile/Karte: „2/5“; Suche findet Punkttext.

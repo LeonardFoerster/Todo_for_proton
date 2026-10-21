@@ -14,4 +14,8 @@ listId?: string | null, notes?: string | null, priority?: PriorityDto | null, du
 /**
  * Wiederholung; ohne `due` wird das erste Vorkommen ab heute die Fälligkeit.
  */
-recurrence?: RecurrenceDto | null, };
+recurrence?: RecurrenceDto | null, 
+/**
+ * Tag-IDs (ADR-035); Namen vorher mit `ensure_tag` anlegen.
+ */
+tags?: Array<string> | null, };

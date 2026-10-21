@@ -374,6 +374,56 @@ fn checklist_op_encoding_matches_golden_file() {
     assert_eq!(decode_ops(&golden).unwrap(), checklist_sample());
 }
 
+/// Tags (ADR-035): `EntityRef::Tag` (angehängt) mit Name und Anlagezeit; Löschen als Tombstone.
+fn tag_sample() -> Vec<Op> {
+    let device: DeviceId = id("0192f0c4-7a3b-7c2d-8e4f-0123456789ab");
+    let tag = EntityRef::Tag(id::<TagId>("0192f0c4-7a3b-7c2d-8e4f-000000000051"));
+    let stamp = |seq: u64, kind| Op {
+        id: OpId { device, seq },
+        hlc: Hlc {
+            wall_ms: 1_760_000_000_000 + seq,
+            counter: 0,
+            device,
+        },
+        entity: tag,
+        kind,
+    };
+    vec![
+        stamp(
+            1,
+            OpKind::Create {
+                fields: FieldMap::from([
+                    (FieldName::Name, FieldValue::Text("uni".into())),
+                    (
+                        FieldName::CreatedAt,
+                        FieldValue::Timestamp(Timestamp::from_millis(7)),
+                    ),
+                ]),
+            },
+        ),
+        stamp(
+            2,
+            OpKind::Set {
+                field: FieldName::Name,
+                value: FieldValue::Text("studium".into()),
+            },
+        ),
+        stamp(3, OpKind::Delete),
+    ]
+}
+
+#[test]
+fn tag_op_encoding_matches_golden_file() {
+    let encoded = encode_ops(&tag_sample());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/ops_v1_tags.bin");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(&path, &encoded).unwrap();
+    }
+    let golden = std::fs::read(&path).expect("golden file missing – see module docs");
+    assert_eq!(encoded, golden, "Op-Binärformat hat sich geändert");
+    assert_eq!(decode_ops(&golden).unwrap(), tag_sample());
+}
+
 /// Eine App ohne Notizen kennt die neuen Varianten nicht: Dekodieren scheitert sauber (das
 /// Segment wird übersprungen), es gibt keinen Absturz. Nachgestellt durch eine Variante, die
 /// auch diese Version nicht kennt.

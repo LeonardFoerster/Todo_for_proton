@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use super::{MaybeSend, MaybeSync, NoteRepository};
 use crate::{
     domain::{
-        DeviceId, Due, LocalDay, Note, NoteFolder, NoteFolderId, NoteId, Priority, SortKey, TagId,
-        Task, TaskId, TaskList, TaskListId, TaskStatus, Timestamp,
+        DeviceId, Due, LocalDay, Note, NoteFolder, NoteFolderId, NoteId, Priority, SortKey, Tag,
+        TagId, Task, TaskId, TaskList, TaskListId, TaskStatus, Timestamp,
     },
     sync::{EntityState, NoteConflict, Op, RemoteBatch, RemoteReceipt},
     CoreError, CoreResult,
@@ -27,6 +27,8 @@ pub enum EntityRef {
     TaskList(TaskListId),
     Note(NoteId),
     NoteFolder(NoteFolderId),
+    /// Seit ADR-035.
+    Tag(TagId),
 }
 
 /// Eine einzelne Domain-Änderung.
@@ -41,6 +43,8 @@ pub enum Change {
     UpsertNote(Note),
     /// Notiz-Ordner anlegen oder ersetzen.
     UpsertNoteFolder(NoteFolder),
+    /// Tag anlegen oder ersetzen (ADR-035).
+    UpsertTag(Tag),
     /// Entity entfernen. Unbekannte IDs sind kein Fehler (idempotent, wichtig für den Sync).
     Delete(EntityRef),
 }
@@ -54,6 +58,7 @@ impl Change {
             Self::UpsertList(list) => EntityRef::TaskList(list.id()),
             Self::UpsertNote(note) => EntityRef::Note(note.id()),
             Self::UpsertNoteFolder(folder) => EntityRef::NoteFolder(folder.id()),
+            Self::UpsertTag(tag) => EntityRef::Tag(tag.id()),
             Self::Delete(entity) => *entity,
         }
     }
@@ -98,6 +103,12 @@ impl ChangeSet {
     }
 
     #[must_use]
+    pub fn upsert_tag(mut self, tag: Tag) -> Self {
+        self.changes.push(Change::UpsertTag(tag));
+        self
+    }
+
+    #[must_use]
     pub fn delete(mut self, entity: EntityRef) -> Self {
         self.changes.push(Change::Delete(entity));
         self
@@ -125,6 +136,7 @@ impl ChangeSet {
                     Change::UpsertTask(task) => Some(task.updated_at()),
                     Change::UpsertList(list) => Some(list.updated_at()),
                     Change::UpsertNote(note) => Some(note.modified_at()),
+                    Change::UpsertTag(tag) => Some(tag.updated_at()),
                     Change::UpsertNoteFolder(_) | Change::Delete(_) => None,
                 })
                 .max()
@@ -372,6 +384,8 @@ pub struct TaskSummary {
     /// Checkliste (N8): erledigte / alle Punkte.
     pub checklist_done: u16,
     pub checklist_total: u16,
+    /// Tags (ADR-035), in der Reihenfolge der Task.
+    pub tags: Vec<TagId>,
 }
 
 impl From<&Task> for TaskSummary {
@@ -392,6 +406,7 @@ impl From<&Task> for TaskSummary {
             checklist_done: u16::try_from(task.checklist().iter().filter(|i| i.is_done()).count())
                 .unwrap_or(u16::MAX),
             checklist_total: u16::try_from(task.checklist().len()).unwrap_or(u16::MAX),
+            tags: task.tags().to_vec(),
         }
     }
 }
@@ -422,6 +437,12 @@ pub trait TaskRepository: NoteRepository + MaybeSend + MaybeSync {
 
     /// Alle Listen, sortiert nach `sort_key` (dann `id`). Wenige Einträge, daher ohne Paginierung.
     async fn list_task_lists(&self) -> CoreResult<Vec<TaskList>>;
+
+    /// Lädt einen Tag; `None`, wenn er nicht existiert (ADR-035).
+    async fn get_tag(&self, id: TagId) -> CoreResult<Option<Tag>>;
+
+    /// Alle Tags, nach Name (Groß/Klein egal, dann `id`). Wenige Einträge, ohne Paginierung.
+    async fn list_tags(&self) -> CoreResult<Vec<Tag>>;
 
     /// Eine Seite Tasks gemäß `query` (Sortierung siehe [`TaskQuery`]).
     ///

@@ -90,6 +90,8 @@ pub struct ChangedEventDto {
     pub lists: Vec<String>,
     pub notes: Vec<String>,
     pub note_folders: Vec<String>,
+    /// Tags (ADR-035).
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

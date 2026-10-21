@@ -18,4 +18,8 @@ recurring: boolean,
 /**
  * Checkliste (N8): erledigte / alle Punkte („2/5“; 0 Punkte = keine Anzeige).
  */
-checklistDone: number, checklistTotal: number, };
+checklistDone: number, checklistTotal: number, 
+/**
+ * Tag-IDs (ADR-035).
+ */
+tags: Array<string>, };

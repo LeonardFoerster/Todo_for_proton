@@ -12,6 +12,7 @@ mod note_name;
 pub mod note_tree;
 mod recurrence;
 mod sort_key;
+mod tag;
 mod task;
 mod task_list;
 mod text;
@@ -33,6 +34,9 @@ pub use recurrence::{
     Frequency, Recurrence, RecurrenceAnchor, WeekdaySet, RECURRENCE_INTERVAL_MAX,
 };
 pub use sort_key::SortKey;
+pub use tag::{
+    check_task_tags, normalize_tag_name, tag_key, Tag, TagParts, TAG_NAME_MAX_CHARS, TASK_TAGS_MAX,
+};
 pub use task::{Priority, Task, TaskParts, TaskStatus, TASK_TITLE_MAX_CHARS};
 pub use task_list::{TaskList, TaskListParts, INBOX_NAME, TASK_LIST_NAME_MAX_CHARS};
 pub use timestamp::Timestamp;

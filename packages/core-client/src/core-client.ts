@@ -25,6 +25,7 @@ import type {
   PageRequestDto,
   SessionDto,
   SyncStatusDto,
+  TagDto,
   TaskDto,
   TaskDueDto,
   TaskListDto,
@@ -130,6 +131,16 @@ export interface CoreClient {
   moveTaskList(id: string, target: MoveListTargetDto): Promise<TaskListDto>;
   /** Liefert die Anzahl der in die Inbox verschobenen Tasks. */
   deleteTaskList(id: string): Promise<number>;
+
+  // Tags (ADR-035): Namen ohne `#`, Groß/Klein egal eindeutig; Tasks tragen IDs.
+  /** Alle Tags nach Name. */
+  listTags(): Promise<TagDto[]>;
+  /** Findet den Tag mit diesem Namen oder legt ihn an. */
+  ensureTag(name: string): Promise<TagDto>;
+  /** Fehler `validation`, wenn der Name schon vergeben ist. */
+  renameTag(id: string, name: string): Promise<TagDto>;
+  /** Nimmt ihn von allen Tasks; liefert deren Zahl. */
+  deleteTag(id: string): Promise<number>;
 
   createTask(input: CreateTaskDto): Promise<TaskDto>;
   getTask(id: string): Promise<TaskDto>;

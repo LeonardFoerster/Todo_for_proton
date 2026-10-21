@@ -156,6 +156,9 @@ impl FieldName {
     /// Felder einer Liste.
     pub const TASK_LIST: [Self; 4] = [Self::Name, Self::SortKey, Self::CreatedAt, Self::IsInbox];
 
+    /// Felder eines Tags (ADR-035).
+    pub const TAG: [Self; 2] = [Self::Name, Self::CreatedAt];
+
     /// Felder einer Notiz (der Inhalt ist kein Feld, sondern Revisionen).
     pub const NOTE: [Self; 7] = [
         Self::ParentFolder,
@@ -215,6 +218,7 @@ impl FieldName {
             EntityRef::TaskList(_) => Self::TASK_LIST.contains(&self),
             EntityRef::Note(_) => Self::NOTE.contains(&self),
             EntityRef::NoteFolder(_) => Self::NOTE_FOLDER.contains(&self),
+            EntityRef::Tag(_) => Self::TAG.contains(&self),
         }
     }
 

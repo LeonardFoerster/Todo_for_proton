@@ -7,8 +7,8 @@ use super::{
     note_dto::NoteKindDto,
 };
 use crate::{
-    app::{DataSnapshot, ExportNote, ImportDataReport, ImportList},
-    domain::{TaskListId, TaskParts, Timestamp},
+    app::{DataSnapshot, ExportNote, ImportDataReport, ImportList, ImportTag},
+    domain::{TagId, TaskListId, TaskParts, Timestamp},
     CoreError, CoreResult,
 };
 
@@ -27,6 +27,17 @@ pub struct ExportDto {
     pub exported_at: String,
     pub lists: Vec<ExportListDto>,
     pub tasks: Vec<TaskDto>,
+    /// Tags (ADR-035, seit N8); ältere Exporte haben keine.
+    #[serde(default)]
+    pub tags: Vec<ExportTagDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct ExportTagDto {
+    pub id: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,6 +71,14 @@ impl ExportDto {
                 })
                 .collect(),
             tasks: snapshot.tasks.iter().map(TaskDto::from).collect(),
+            tags: snapshot
+                .tags
+                .iter()
+                .map(|t| ExportTagDto {
+                    id: t.id().to_string(),
+                    name: t.name().to_owned(),
+                })
+                .collect(),
         }
     }
 
@@ -67,7 +86,7 @@ impl ExportDto {
     ///
     /// # Errors
     /// `CoreError::Validation` bei fremdem Format, neuerer Version oder ungültigen Feldern.
-    pub fn into_import(self) -> CoreResult<(Vec<ImportList>, Vec<TaskParts>)> {
+    pub fn into_import(self) -> CoreResult<(Vec<ImportList>, Vec<TaskParts>, Vec<ImportTag>)> {
         if self.format != EXPORT_FORMAT {
             return Err(CoreError::Validation(format!(
                 "not a tasks export (format {:?})",
@@ -102,7 +121,17 @@ impl ExportDto {
                 })
             })
             .collect::<CoreResult<_>>()?;
-        Ok((lists, tasks))
+        let tags = self
+            .tags
+            .iter()
+            .map(|t| {
+                Ok(ImportTag {
+                    id: TagId::parse(&t.id).map_err(|e| CoreError::Validation(e.to_string()))?,
+                    name: t.name.clone(),
+                })
+            })
+            .collect::<CoreResult<_>>()?;
+        Ok((lists, tasks, tags))
     }
 }
 

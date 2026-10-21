@@ -27,12 +27,12 @@ use self::{
 use crate::{
     app::{
         check_bulk_len, CompleteTask, CompleteTaskInput, CompleteTasks, CompleteTasksInput,
-        CreateTask, CreateTaskInput, CreateTaskList, CreateTaskListInput, DeleteTask,
+        CreateTask, CreateTaskInput, CreateTaskList, CreateTaskListInput, DeleteTag, DeleteTask,
         DeleteTaskInput, DeleteTaskList, DeleteTaskListInput, DeleteTasks, DeleteTasksInput, Deps,
-        EnsureInbox, MoveTask, MoveTaskInput, MoveTaskList, MoveTaskListInput, MoveTasks,
-        MoveTasksInput, RenameTaskList, RenameTaskListInput, ReopenTask, ReopenTaskInput,
-        RestoreTasks, RestoreTasksInput, SetDues, SetDuesInput, TaskPatch, UpdateTask,
-        UpdateTaskInput,
+        EnsureInbox, EnsureTag, MoveTask, MoveTaskInput, MoveTaskList, MoveTaskListInput,
+        MoveTasks, MoveTasksInput, RenameTag, RenameTagInput, RenameTaskList, RenameTaskListInput,
+        ReopenTask, ReopenTaskInput, RestoreTasks, RestoreTasksInput, SetDues, SetDuesInput,
+        TaskPatch, UpdateTask, UpdateTaskInput,
     },
     app::{
         CreateNote, CreateNoteFolder, CreateNoteFolderInput, CreateNoteInput, DiscardEmptyNote,
@@ -50,8 +50,8 @@ use crate::{
     app::{ExportData, ExportNotes, ImportData, ImportDataInput},
     app::{SkipOccurrence, SkipOccurrenceInput, UndoOccurrence, UndoOccurrenceInput},
     domain::{
-        DeviceId, Note, NoteFolder, NoteFolderId, NoteId, SortKey, Task, TaskId, TaskList,
-        TaskListId, TaskParts,
+        DeviceId, Note, NoteFolder, NoteFolderId, NoteId, SortKey, Tag, TagId, Task, TaskId,
+        TaskList, TaskListId, TaskParts,
     },
     ports::{
         ChangeSet, Clock, CommitReceipt, EntityRef, FolderItemsQuery, MaybeSend, MaybeSync,
@@ -71,6 +71,8 @@ pub enum CoreEvent {
         lists: Vec<String>,
         notes: Vec<String>,
         note_folders: Vec<String>,
+        /// Seit ADR-035.
+        tags: Vec<String>,
     },
     /// Beim Zusammenlegen nebenläufiger Bearbeitungen entstanden Konfliktkopien (ADR-029).
     NoteConflicts { conflicts: Vec<NoteConflictDto> },
@@ -224,8 +226,59 @@ impl CoreApi {
                 .as_ref()
                 .map(TryInto::try_into)
                 .transpose()?,
+            tags: input
+                .tags
+                .as_deref()
+                .map(dto::tag_ids)
+                .transpose()?
+                .unwrap_or_default(),
         };
         Ok((&CreateTask::new(self.deps.clone()).execute(input).await?).into())
+    }
+
+    // --- Tags (ADR-035) -------------------------------------------------------------------------
+
+    /// Alle Tags, nach Name.
+    ///
+    /// # Errors
+    /// Fehler des Speichers.
+    pub async fn list_tags(&self) -> CoreResult<Vec<dto::TagDto>> {
+        Ok(self
+            .deps
+            .repo
+            .list_tags()
+            .await?
+            .iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    /// Tag mit diesem Namen (Groß/Klein egal) finden oder anlegen; `#` vorn fällt weg.
+    ///
+    /// # Errors
+    /// `Validation` (Name).
+    pub async fn ensure_tag(&self, name: String) -> CoreResult<dto::TagDto> {
+        Ok((&EnsureTag::new(self.deps.clone()).execute(&name).await?).into())
+    }
+
+    /// # Errors
+    /// `NotFound`, `Validation` (ungültiger oder schon vergebener Name).
+    pub async fn rename_tag(&self, id: String, name: String) -> CoreResult<dto::TagDto> {
+        let id = dto::tag_ids(&[id])?[0];
+        Ok((&RenameTag::new(self.deps.clone())
+            .execute(RenameTagInput { id, name })
+            .await?)
+            .into())
+    }
+
+    /// Löscht den Tag und nimmt ihn von allen Tasks; liefert die Zahl betroffener Tasks.
+    ///
+    /// # Errors
+    /// `Validation` (ID).
+    pub async fn delete_tag(&self, id: String) -> CoreResult<u32> {
+        let id = dto::tag_ids(&[id])?[0];
+        let n = DeleteTag::new(self.deps.clone()).execute(id).await?;
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
     }
 
     /// Vollständige Task (inkl. Notizen) für die Detailansicht.
@@ -263,6 +316,7 @@ impl CoreApi {
                 .as_deref()
                 .map(dto::checklist_from_dto)
                 .transpose()?,
+            tags: patch.tags.as_deref().map(dto::tag_ids).transpose()?,
         };
         let input = UpdateTaskInput {
             id: task_id(&id)?,
@@ -544,9 +598,9 @@ impl CoreApi {
         &self,
         export: export_dto::ExportDto,
     ) -> CoreResult<export_dto::ImportDataReportDto> {
-        let (lists, tasks) = export.into_import()?;
+        let (lists, tasks, tags) = export.into_import()?;
         Ok(ImportData::new(self.deps.clone())
-            .execute(ImportDataInput { lists, tasks })
+            .execute(ImportDataInput { lists, tasks, tags })
             .await?
             .into())
     }
@@ -947,14 +1001,15 @@ fn emit(sinks: &Sinks, changed: &[EntityRef]) {
     if changed.is_empty() {
         return;
     }
-    let (mut tasks, mut lists, mut notes, mut note_folders) =
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut tasks, mut lists, mut notes, mut note_folders, mut tags) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for entity in changed {
         match entity {
             EntityRef::Task(id) => tasks.push(id.to_string()),
             EntityRef::TaskList(id) => lists.push(id.to_string()),
             EntityRef::Note(id) => notes.push(id.to_string()),
             EntityRef::NoteFolder(id) => note_folders.push(id.to_string()),
+            EntityRef::Tag(id) => tags.push(id.to_string()),
         }
     }
     let event = CoreEvent::Changed {
@@ -962,6 +1017,7 @@ fn emit(sinks: &Sinks, changed: &[EntityRef]) {
         lists,
         notes,
         note_folders,
+        tags,
     };
     let sinks = sinks
         .read()
@@ -1035,6 +1091,14 @@ impl TaskRepository for NotifyingRepository {
 
     async fn list_task_lists(&self) -> CoreResult<Vec<TaskList>> {
         self.inner.list_task_lists().await
+    }
+
+    async fn get_tag(&self, id: TagId) -> CoreResult<Option<Tag>> {
+        self.inner.get_tag(id).await
+    }
+
+    async fn list_tags(&self) -> CoreResult<Vec<Tag>> {
+        self.inner.list_tags().await
     }
 
     async fn list_tasks(
@@ -1197,6 +1261,7 @@ mod sync_tests {
                 lists: Vec::new(),
                 notes: Vec::new(),
                 note_folders: Vec::new(),
+                tags: Vec::new(),
             }]
         );
         assert_eq!(inbox.id, TaskListId::INBOX.to_string());
@@ -1275,6 +1340,7 @@ mod bulk_tests {
             lists: Vec::new(),
             notes: Vec::new(),
             note_folders: Vec::new(),
+            tags: Vec::new(),
         }]
     }
 
@@ -1547,6 +1613,7 @@ mod note_tests {
                 lists: Vec::new(),
                 notes: vec![note.id.clone()],
                 note_folders: Vec::new(),
+                tags: Vec::new(),
             }]
         );
         let page = block_on(api.list_note_items(

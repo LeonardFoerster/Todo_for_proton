@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     domain::{
         ChecklistItem, ChecklistItemId, Due, Frequency, LocalDay, NaiveDate, Priority, Recurrence,
-        RecurrenceAnchor, SortKey, TagId, Task, TaskId, TaskList, TaskListId, TaskParts,
+        RecurrenceAnchor, SortKey, Tag, TagId, Task, TaskId, TaskList, TaskListId, TaskParts,
         TaskStatus, Timestamp, WeekdaySet,
     },
     ports::{Page, SmartView, TaskQuery, TaskSummary},
@@ -196,6 +196,37 @@ pub struct TaskDto {
     pub recurrence: Option<RecurrenceDto>,
     /// Checkliste (N8, ADR-034), in Anzeigereihenfolge.
     pub checklist: Vec<ChecklistItemDto>,
+    /// Tag-IDs (ADR-035); Namen über `list_tags`.
+    pub tags: Vec<String>,
+}
+
+/// Ein Tag (ADR-035).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TagDto {
+    pub id: String,
+    /// Ohne `#`.
+    pub name: String,
+}
+
+impl From<&Tag> for TagDto {
+    fn from(tag: &Tag) -> Self {
+        Self {
+            id: tag.id().to_string(),
+            name: tag.name().to_owned(),
+        }
+    }
+}
+
+/// Tag-IDs von außen.
+///
+/// # Errors
+/// `CoreError::Validation` bei einer ungültigen ID.
+pub fn tag_ids(ids: &[String]) -> CoreResult<Vec<TagId>> {
+    ids.iter()
+        .map(|id| TagId::parse(id).map_err(|e| CoreError::Validation(e.to_string())))
+        .collect()
 }
 
 /// Punkt einer Checkliste. Beim Schreiben bekommt ein Punkt mit leerer `id` eine neue.
@@ -260,12 +291,13 @@ impl From<&Task> for TaskDto {
                 .iter()
                 .map(ChecklistItemDto::from)
                 .collect(),
+            tags: task.tags().iter().map(ToString::to_string).collect(),
         }
     }
 }
 
 /// Für `restore_tasks`: alle Felder zurück in Domain-Form (Prüfung der Invarianten erst in
-/// [`Task::from_parts`]). Unterteilungen und Tags kennt das DTO noch nicht – leer.
+/// [`Task::from_parts`]). Unterteilungen kennt das DTO nicht – leer.
 impl TryFrom<&TaskDto> for TaskParts {
     type Error = CoreError;
 
@@ -279,7 +311,7 @@ impl TryFrom<&TaskDto> for TaskParts {
             status: dto.status.into(),
             priority: dto.priority.into(),
             due: dto.due.clone().map(TryInto::try_into).transpose()?,
-            tags: Vec::new(),
+            tags: tag_ids(&dto.tags)?,
             sort_key: SortKey::parse(&dto.sort_key)?,
             created_at: parse_iso(&dto.created_at)?,
             updated_at: parse_iso(&dto.updated_at)?,
@@ -313,6 +345,8 @@ pub struct TaskSummaryDto {
     /// Checkliste (N8): erledigte / alle Punkte („2/5“; 0 Punkte = keine Anzeige).
     pub checklist_done: u16,
     pub checklist_total: u16,
+    /// Tag-IDs (ADR-035).
+    pub tags: Vec<String>,
 }
 
 impl From<&TaskSummary> for TaskSummaryDto {
@@ -331,6 +365,7 @@ impl From<&TaskSummary> for TaskSummaryDto {
             recurring: s.recurring,
             checklist_done: s.checklist_done,
             checklist_total: s.checklist_total,
+            tags: s.tags.iter().map(ToString::to_string).collect(),
         }
     }
 }
@@ -376,6 +411,10 @@ pub struct CreateTaskDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional = nullable))]
     pub recurrence: Option<RecurrenceDto>,
+    /// Tag-IDs (ADR-035); Namen vorher mit `ensure_tag` anlegen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub tags: Option<Vec<String>>,
 }
 
 /// Zu ändernde Felder; fehlend = unverändert. `due: null` entfernt die Fälligkeit,
@@ -412,6 +451,10 @@ pub struct TaskPatchDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional = nullable))]
     pub checklist: Option<Vec<ChecklistItemDto>>,
+    /// Ersetzt die Tags (IDs, ADR-035).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub tags: Option<Vec<String>>,
 }
 
 /// Unterscheidet bei `Option<Option<T>>` „Feld fehlt" (`None`) von „Feld ist null" (`Some(None)`).

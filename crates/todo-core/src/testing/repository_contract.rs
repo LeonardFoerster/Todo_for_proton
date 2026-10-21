@@ -57,6 +57,7 @@ macro_rules! repository_contract_tests {
             trash_view_hides_trashed_everywhere_else,
             recurrence_roundtrips,
             checklist_roundtrips_counts_and_is_searched,
+            tags_roundtrip_sort_by_name_and_filter_tasks,
             summary_matches_task,
             sync_device_id_is_stable,
             commit_writes_ops_to_outbox,
@@ -141,6 +142,7 @@ pub fn run_all<R: TaskRepository>(make: impl Fn() -> R) {
     trash_view_hides_trashed_everywhere_else(make());
     recurrence_roundtrips(make());
     checklist_roundtrips_counts_and_is_searched(make());
+    tags_roundtrip_sort_by_name_and_filter_tasks(make());
     summary_matches_task(make());
     sync_device_id_is_stable(make());
     commit_writes_ops_to_outbox(make());
@@ -919,6 +921,54 @@ pub fn checklist_roundtrips_counts_and_is_searched<R: TaskRepository>(repo: R) {
     }))
     .expect("search")
     .is_empty());
+}
+
+/// Tags (ADR-035): gespeichert, nach Name sortiert (Groß/Klein egal), löschbar; die Zeile trägt
+/// die Tags der Task.
+pub fn tags_roundtrip_sort_by_name_and_filter_tasks<R: TaskRepository>(repo: R) {
+    use crate::domain::{Tag, TagId};
+    let f = setup(repo);
+    let b = Tag::new(TagId::new(), "bio", &f.clock).expect("tag");
+    let a = Tag::new(TagId::new(), "Analysis", &f.clock).expect("tag");
+    let z = Tag::new(TagId::new(), "zoo", &f.clock).expect("tag");
+    block_on(
+        f.repo.commit(
+            ChangeSet::new()
+                .upsert_tag(b.clone())
+                .upsert_tag(a.clone())
+                .upsert_tag(z.clone()),
+        ),
+    )
+    .expect("commit");
+    assert_eq!(
+        block_on(f.repo.list_tags()).expect("tags"),
+        [a.clone(), b.clone(), z.clone()]
+    );
+    assert_eq!(
+        block_on(f.repo.get_tag(b.id())).expect("get"),
+        Some(b.clone())
+    );
+    let mut t = f.add_tasks(f.inbox.id(), 2);
+    t[0].set_tags(vec![b.id(), a.id()], &f.clock).expect("tags");
+    f.save(&t);
+    let page = f.page(all(), None, 10).expect("page");
+    assert_eq!(page.items[0].tags, [b.id(), a.id()]);
+    let tagged = TaskQuery {
+        view: SmartView::All,
+        status: None,
+        tag: Some(a.id()),
+    };
+    let page = f.page(tagged, None, 10).expect("page");
+    assert_eq!(
+        page.items.iter().map(|s| s.id).collect::<Vec<_>>(),
+        [t[0].id()]
+    );
+    block_on(
+        f.repo
+            .commit(ChangeSet::new().delete(EntityRef::Tag(z.id()))),
+    )
+    .expect("delete");
+    assert_eq!(block_on(f.repo.list_tags()).expect("tags").len(), 2);
 }
 
 /// Die Zusammenfassung entspricht `TaskSummary::from(&task)`.
