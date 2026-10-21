@@ -9,6 +9,7 @@ mod note;
 mod note_folder;
 mod note_name;
 pub mod note_tree;
+mod recurrence;
 mod sort_key;
 mod task;
 mod task_list;
@@ -22,6 +23,9 @@ pub use note::{
 };
 pub use note_folder::{NoteFolder, NoteFolderParts};
 pub use note_name::{NoteName, NOTE_NAME_MAX_CHARS, UNTITLED_NOTE_NAME};
+pub use recurrence::{
+    Frequency, Recurrence, RecurrenceAnchor, WeekdaySet, RECURRENCE_INTERVAL_MAX,
+};
 pub use sort_key::SortKey;
 pub use task::{Priority, Task, TaskParts, TaskStatus, TASK_TITLE_MAX_CHARS};
 pub use task_list::{TaskList, TaskListParts, INBOX_NAME, TASK_LIST_NAME_MAX_CHARS};

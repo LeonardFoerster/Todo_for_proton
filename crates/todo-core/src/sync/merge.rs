@@ -192,6 +192,8 @@ pub fn materialize_task(id: TaskId, registers: &Registers) -> Option<Task> {
         // Seit ADR-031; ältere Tasks haben kein Register → nicht im Papierkorb (nie `?`, sonst
         // verschwände jede bestehende Task beim nächsten Materialisieren).
         trashed_at: trashed(registers).flatten(),
+        // Seit ADR-028; fehlt bei älteren Tasks → keine Wiederholung (nie `?`, s. o.).
+        recurrence: recurrence(registers).flatten(),
     };
     Task::from_parts(parts).ok()
 }
@@ -277,6 +279,13 @@ pub fn materialize_note(id: NoteId, registers: &Registers) -> Option<NoteParts> 
 pub fn folder(registers: &Registers) -> Option<Option<NoteFolderId>> {
     match value(registers, FieldName::ParentFolder)? {
         FieldValue::Folder(folder) => Some(*folder),
+        _ => None,
+    }
+}
+
+fn recurrence(registers: &Registers) -> Option<Option<crate::domain::Recurrence>> {
+    match value(registers, FieldName::Recurrence)? {
+        FieldValue::Recurrence(r) => Some(r.clone()),
         _ => None,
     }
 }
@@ -643,6 +652,8 @@ mod tests {
             Done(usize, bool),
             /// Papierkorb an/aus (ADR-031).
             Trash(usize, bool),
+            /// Wiederholung täglich/keine (ADR-028).
+            Rule(usize, bool),
             Delete(usize),
         }
 
@@ -654,6 +665,7 @@ mod tests {
                 2 => (entity.clone(), 0u8..4).prop_map(|(e, p)| Action::Priority(e, p)),
                 2 => (entity.clone(), any::<bool>()).prop_map(|(e, d)| Action::Done(e, d)),
                 2 => (entity.clone(), any::<bool>()).prop_map(|(e, t)| Action::Trash(e, t)),
+                2 => (entity.clone(), any::<bool>()).prop_map(|(e, r)| Action::Rule(e, r)),
                 1 => entity.prop_map(Action::Delete),
             ]
         }
@@ -708,6 +720,17 @@ mod tests {
                             OpKind::Set {
                                 field: FieldName::Trashed,
                                 value: FieldValue::Trashed(trashed.then_some(now)),
+                            },
+                        ),
+                        Action::Rule(e, on) => (
+                            ids[*e],
+                            OpKind::Set {
+                                field: FieldName::Recurrence,
+                                value: FieldValue::Recurrence(on.then(|| {
+                                    crate::domain::Recurrence::every(
+                                        crate::domain::Frequency::Daily,
+                                    )
+                                })),
                             },
                         ),
                         Action::Delete(e) => (ids[*e], OpKind::Delete),

@@ -86,7 +86,9 @@ pub use update_task::{TaskPatch, UpdateTask, UpdateTaskInput};
 
 use crate::{
     domain::{SortKey, Task, TaskId},
-    ports::{Clock, PageRequest, TaskQuery, TaskRepository, TaskSummary, PAGE_LIMIT_MAX},
+    ports::{
+        Clock, PageRequest, TaskQuery, TaskRepository, TaskSummary, TimeZones, PAGE_LIMIT_MAX,
+    },
     CoreError, CoreResult,
 };
 
@@ -96,6 +98,8 @@ use crate::{
 pub struct Deps {
     pub repo: Arc<dyn TaskRepository>,
     pub clock: Arc<dyn Clock>,
+    /// Zeitzonen für Serien mit Uhrzeit (N4); ohne Port gehen nur ganztägige Serien.
+    pub zones: Option<Arc<dyn TimeZones>>,
     order: Arc<Mutex<()>>,
 }
 
@@ -105,8 +109,16 @@ impl Deps {
         Self {
             repo,
             clock,
+            zones: None,
             order: Arc::default(),
         }
+    }
+
+    /// Mit Zeitzonen (Serien mit Uhrzeit, N4).
+    #[must_use]
+    pub fn with_zones(mut self, zones: Arc<dyn TimeZones>) -> Self {
+        self.zones = Some(zones);
+        self
     }
 
     /// Serialisiert Use-Cases, die eine Reihenfolge lesen und darauf neue Sort-Keys committen

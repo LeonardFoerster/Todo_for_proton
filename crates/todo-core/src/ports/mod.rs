@@ -27,6 +27,7 @@ mod clock;
 mod note_repository;
 mod remote_store;
 mod repository;
+mod time_zones;
 
 pub use auth::{AuthError, AuthFlowId, AuthProvider, AuthStep, SessionInfo};
 pub use cipher::{Cipher, KeyStore, SecretBytes};
@@ -45,6 +46,9 @@ pub use repository::{
     Change, ChangeSet, CommitReceipt, EntityRef, Page, PageRequest, SearchQuery, SmartView,
     TaskQuery, TaskRepository, TaskSummary, PAGE_LIMIT_MAX, SEARCH_TEXT_MAX_CHARS,
 };
+#[cfg(any(test, feature = "test-support"))]
+pub use time_zones::FixedOffsetZones;
+pub use time_zones::TimeZones;
 
 /// `Send` auf nativen Zielen, leer auf wasm32.
 #[cfg(not(target_arch = "wasm32"))]

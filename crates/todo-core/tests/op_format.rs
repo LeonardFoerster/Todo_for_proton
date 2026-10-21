@@ -282,6 +282,52 @@ fn task_trash_op_encoding_matches_golden_file() {
     assert_eq!(decode_ops(&golden).unwrap(), task_trash_sample());
 }
 
+/// Wiederkehrende Tasks (ADR-028): Feld `Recurrence` (Code 17). Eigene Datei.
+fn recurrence_sample() -> Vec<Op> {
+    let device: DeviceId = id("0192f0c4-7a3b-7c2d-8e4f-0123456789ab");
+    let task = EntityRef::Task(id::<TaskId>("0192f0c4-7a3b-7c2d-8e4f-000000000031"));
+    let stamp = |seq: u64, value| Op {
+        id: OpId { device, seq },
+        hlc: Hlc {
+            wall_ms: 1_760_000_000_000 + seq,
+            counter: 0,
+            device,
+        },
+        entity: task,
+        kind: OpKind::Set {
+            field: FieldName::Recurrence,
+            value,
+        },
+    };
+    vec![
+        stamp(
+            1,
+            FieldValue::Recurrence(Some(
+                "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TH;ANCHOR=COMPLETION;UNTIL=2026-12-20"
+                    .parse()
+                    .unwrap(),
+            )),
+        ),
+        stamp(
+            2,
+            FieldValue::Recurrence(Some("FREQ=MONTHLY;BYMONTHDAY=31".parse().unwrap())),
+        ),
+        stamp(3, FieldValue::Recurrence(None)),
+    ]
+}
+
+#[test]
+fn recurrence_op_encoding_matches_golden_file() {
+    let encoded = encode_ops(&recurrence_sample());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/ops_v1_recurrence.bin");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(&path, &encoded).unwrap();
+    }
+    let golden = std::fs::read(&path).expect("golden file missing – see module docs");
+    assert_eq!(encoded, golden, "Op-Binärformat hat sich geändert");
+    assert_eq!(decode_ops(&golden).unwrap(), recurrence_sample());
+}
+
 /// Eine App ohne Notizen kennt die neuen Varianten nicht: Dekodieren scheitert sauber (das
 /// Segment wird übersprungen), es gibt keinen Absturz. Nachgestellt durch eine Variante, die
 /// auch diese Version nicht kennt.

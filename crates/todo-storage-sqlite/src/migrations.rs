@@ -16,6 +16,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0003_search.sql"),
     include_str!("../migrations/0004_notes.sql"),
     include_str!("../migrations/0005_task_trash.sql"),
+    include_str!("../migrations/0006_recurrence.sql"),
 ];
 
 /// Bringt das Schema auf den neuesten Stand. Mehrfacher Aufruf ist harmlos.

@@ -1,6 +1,6 @@
 //! Die zentrale Entity `Task`.
 
-use super::{text::normalize_name, Due, SortKey, TagId, TaskId, TaskListId, Timestamp};
+use super::{text::normalize_name, Due, Recurrence, SortKey, TagId, TaskId, TaskListId, Timestamp};
 use crate::{ports::Clock, CoreError, CoreResult};
 
 /// Maximale Titellänge in Unicode-Zeichen.
@@ -43,6 +43,9 @@ pub struct Task {
     completed_at: Option<Timestamp>,
     /// Im Papierkorb seit (ADR-031); `None` = nicht gelöscht.
     trashed_at: Option<Timestamp>,
+    /// Wiederholung (N4, ADR-028): Die Task ist dann eine Serie, `due` ihr nächstes Vorkommen.
+    /// Ohne `due` wirkungslos (kann nach einem Merge vorkommen – kein Grund, die Task zu verwerfen).
+    recurrence: Option<Recurrence>,
 }
 
 /// Alle Felder einer gespeicherten Task, zum Wiederherstellen per [`Task::from_parts`]
@@ -63,6 +66,7 @@ pub struct TaskParts {
     pub updated_at: Timestamp,
     pub completed_at: Option<Timestamp>,
     pub trashed_at: Option<Timestamp>,
+    pub recurrence: Option<Recurrence>,
 }
 
 impl Task {
@@ -96,6 +100,7 @@ impl Task {
             updated_at: parts.updated_at,
             completed_at: parts.completed_at,
             trashed_at: parts.trashed_at,
+            recurrence: parts.recurrence,
         })
     }
 
@@ -127,6 +132,7 @@ impl Task {
             updated_at: now,
             completed_at: None,
             trashed_at: None,
+            recurrence: None,
         })
     }
 
@@ -211,6 +217,17 @@ impl Task {
         self.trashed_at.is_some()
     }
 
+    #[must_use]
+    pub fn recurrence(&self) -> Option<&Recurrence> {
+        self.recurrence.as_ref()
+    }
+
+    /// Wirksame Serie: Regel **und** Fälligkeit.
+    #[must_use]
+    pub fn is_recurring(&self) -> bool {
+        self.recurrence.is_some() && self.due.is_some()
+    }
+
     /// Ändert den Titel (gleiche Regeln wie in [`Task::new`]).
     ///
     /// # Errors
@@ -285,6 +302,39 @@ impl Task {
         self.status = TaskStatus::Open;
         self.completed_at = None;
         self.touch(clock);
+    }
+
+    /// Setzt oder entfernt die Wiederholung. Die Regel muss schon verankert sein
+    /// ([`Recurrence::anchored`]); das macht der Use-Case, der die lokale Zone kennt.
+    ///
+    /// # Errors
+    /// `CoreError::Validation`, wenn eine Regel ohne Fälligkeit gesetzt wird oder ihr Ende vor dem
+    /// Tag der Fälligkeit liegt (`due_day` = lokaler Tag der Fälligkeit, vom Aufrufer).
+    pub fn set_recurrence(
+        &mut self,
+        recurrence: Option<Recurrence>,
+        due_day: Option<super::NaiveDate>,
+        clock: &(impl Clock + ?Sized),
+    ) -> CoreResult<()> {
+        if let Some(r) = &recurrence {
+            if self.due.is_none() {
+                return Err(CoreError::Validation(
+                    "a recurring task needs a due date".into(),
+                ));
+            }
+            if let (Some(until), Some(day)) = (r.until(), due_day) {
+                if until < day {
+                    return Err(CoreError::Validation(
+                        "recurrence ends before the first occurrence".into(),
+                    ));
+                }
+            }
+        }
+        if recurrence != self.recurrence {
+            self.recurrence = recurrence;
+            self.touch(clock);
+        }
+        Ok(())
     }
 
     /// Legt die Task in den Papierkorb (`Some(Zeitpunkt)`) oder holt sie zurück (`None`). Ein schon
@@ -534,6 +584,7 @@ mod tests {
             updated_at: t.updated_at(),
             completed_at: t.completed_at(),
             trashed_at: t.trashed_at(),
+            recurrence: t.recurrence().cloned(),
         }
     }
 

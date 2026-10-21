@@ -249,12 +249,18 @@ auf die nächste Erinnerung, neu berechnet bei Änderungen, Fokus und Aufwachen.
 `(task, due)` in einer kleinen Datei im Datenordner; verpasste Erinnerungen beim Start/Aufwachen zusammengefasst, höchstens
 24 h zurück). Reine Planungsfunktion (nächster Zeitpunkt, fällige Meldungen) mit Unit-Tests (ganztägig, Uhrzeit,
 erledigt/Papierkorb, Zeitumstellung, Mehrfachmeldung).
-### [ ] N7-02 · Shell: Benachrichtigung, Tray, Schließen, Autostart
+### [x] N7-02 · Shell: Benachrichtigung, Tray, Schließen, Autostart — 2026-10-21 · 3c2ba6d
+> Notiz: Benachrichtigung über das XDG-Portal (ashpd `notification`) statt direktem D-Bus. Einzelinstanz über einen
+> Socket in `$XDG_RUNTIME_DIR` (Name aus dem Datenordner – Socket-Pfade sind auf ~100 Zeichen begrenzt). Fenster
+> startet versteckt und wird in `setup` gezeigt (außer `--hidden`). Messung: Binary +0,97 MB seit N5, Start 372 ms,
+> PSS 300 MB, Leerlauf-CPU 0 %.
 **Schritte:** Desktop-Benachrichtigung über D-Bus (Größe der Abhängigkeit prüfen und im Commit nennen), Klick öffnet die
 Task; Tray mit „Öffnen“, „Neue Task“, „Beenden“; Fenster schließen → verstecken, wenn „Im Hintergrund weiterlaufen“ an
 (Speichern der Notizen wie bisher); Autostart über `~/.config/autostart/…desktop` mit `--hidden`; Einstellungen in einer
 Datei der Shell, Commands zum Lesen/Setzen.
-### [ ] N7-03 · UI: Einstellungen „Erinnerungen“
+### [x] N7-03 · UI: Einstellungen „Erinnerungen“ — 2026-10-21 · 3c2ba6d
+> Notiz: Zusammen mit N7-02 committet. Selbsttests `n7rem` (Erinnerung nach 3,0 s, Verschieben meldet neu, Erledigtes
+> nicht) und `n7bg` (Schließen versteckt); Klick auf die echte Desktop-Meldung prüft der User (`prototype-acceptance.md` G).
 **Schritte:** Erinnerungen an/aus, Uhrzeit für ganztägige, Im Hintergrund weiterlaufen, Mit dem System starten; Öffnen
 einer Task aus der Meldung.
 **Fertig wenn (N7):** `just check` grün; Messung: Leerlauf-CPU ~0 %, PSS-Zuwachs im Commit; Selbsttest (Erinnerung in

@@ -84,6 +84,10 @@ pub fn task_fields(task: &Task) -> FieldMap {
             FieldValue::Timestamp(task.created_at()),
         ),
         (FieldName::Trashed, FieldValue::Trashed(task.trashed_at())),
+        (
+            FieldName::Recurrence,
+            FieldValue::Recurrence(task.recurrence().cloned()),
+        ),
     ])
 }
 
@@ -286,6 +290,7 @@ mod tests {
             updated_at: task.updated_at(),
             completed_at: None,
             trashed_at: None,
+            recurrence: None,
         };
         parts.updated_at = Timestamp::from_millis(999_999);
         let touched = Task::from_parts(parts).unwrap();

@@ -16,13 +16,14 @@ use todo_core::{
 use crate::error::{corrupt, storage};
 
 pub(crate) const TASK_COLUMNS: &str = "id, list_id, parent_id, title, notes, status, priority, \
-     due_date, due_at, due_tz, tags, sort_key, created_at, updated_at, completed_at, trashed_at";
+     due_date, due_at, due_tz, tags, sort_key, created_at, updated_at, completed_at, trashed_at, recurrence";
 
 pub(crate) const LIST_COLUMNS: &str = "id, name, sort_key, created_at, updated_at, is_inbox";
 
 /// Spalten für [`TaskSummary`] – ohne Notiztext, nur ob es einen gibt.
 pub(crate) const SUMMARY_COLUMNS: &str = "id, list_id, title, status, priority, due_date, due_at, \
-     due_tz, notes <> '' AS has_notes, sort_key, completed_at, trashed_at";
+     due_tz, notes <> '' AS has_notes, sort_key, completed_at, trashed_at, \
+     (recurrence IS NOT NULL AND (due_date IS NOT NULL OR due_at IS NOT NULL)) AS recurring";
 
 pub(crate) const NOTE_COLUMNS: &str = "id, folder_id, name, auto_name, kind, body, body_rev, \
      sort_key, created_at, modified_at, trashed_at";
@@ -53,16 +54,18 @@ const UPSERT_FOLDER: &str = "\
 
 const UPSERT_TASK: &str = "\
     INSERT INTO tasks (id, list_id, parent_id, title, notes, status, priority, due_date, due_at,
-                       due_tz, tags, sort_key, created_at, updated_at, completed_at, trashed_at)
+                       due_tz, tags, sort_key, created_at, updated_at, completed_at, trashed_at,
+                       recurrence)
     VALUES (:id, :list_id, :parent_id, :title, :notes, :status, :priority, :due_date, :due_at,
-            :due_tz, :tags, :sort_key, :created_at, :updated_at, :completed_at, :trashed_at)
+            :due_tz, :tags, :sort_key, :created_at, :updated_at, :completed_at, :trashed_at,
+            :recurrence)
     ON CONFLICT (id) DO UPDATE SET
         list_id = excluded.list_id, parent_id = excluded.parent_id, title = excluded.title,
         notes = excluded.notes, status = excluded.status, priority = excluded.priority,
         due_date = excluded.due_date, due_at = excluded.due_at, due_tz = excluded.due_tz,
         tags = excluded.tags, sort_key = excluded.sort_key, created_at = excluded.created_at,
         updated_at = excluded.updated_at, completed_at = excluded.completed_at,
-        trashed_at = excluded.trashed_at";
+        trashed_at = excluded.trashed_at, recurrence = excluded.recurrence";
 
 const UPSERT_LIST: &str = "\
     INSERT INTO task_lists (id, name, sort_key, created_at, updated_at, is_inbox)
@@ -94,6 +97,7 @@ pub(crate) fn write_task(conn: &Connection, task: &Task) -> CoreResult<()> {
         ":updated_at": task.updated_at().as_millis(),
         ":completed_at": task.completed_at().map(Timestamp::as_millis),
         ":trashed_at": task.trashed_at().map(Timestamp::as_millis),
+        ":recurrence": task.recurrence().map(ToString::to_string),
     })
     .map_err(storage)?;
     Ok(())
@@ -275,6 +279,9 @@ pub(crate) fn read_task(row: &Row<'_>) -> CoreResult<Task> {
         updated_at: Timestamp::from_millis(get(row, 13)?),
         completed_at: get::<Option<i64>>(row, 14)?.map(Timestamp::from_millis),
         trashed_at: get::<Option<i64>>(row, 15)?.map(Timestamp::from_millis),
+        recurrence: get::<Option<String>>(row, 16)?
+            .map(|s| s.parse().map_err(|e| corrupt("recurrence", e)))
+            .transpose()?,
     };
     Task::from_parts(parts).map_err(|e| corrupt("task", e))
 }
@@ -305,6 +312,7 @@ pub(crate) fn read_summary(row: &Row<'_>) -> CoreResult<TaskSummary> {
         sort_key: sort_key(&get::<String>(row, 9)?)?,
         completed_at: get::<Option<i64>>(row, 10)?.map(Timestamp::from_millis),
         trashed_at: get::<Option<i64>>(row, 11)?.map(Timestamp::from_millis),
+        recurring: get(row, 12)?,
     })
 }
 

@@ -362,6 +362,8 @@ pub struct TaskSummary {
     pub sort_key: SortKey,
     pub completed_at: Option<Timestamp>,
     pub trashed_at: Option<Timestamp>,
+    /// Wirksame Serie (Regel und Fälligkeit, N4) – Symbol in der Zeile.
+    pub recurring: bool,
 }
 
 impl From<&Task> for TaskSummary {
@@ -377,6 +379,7 @@ impl From<&Task> for TaskSummary {
             sort_key: task.sort_key().clone(),
             completed_at: task.completed_at(),
             trashed_at: task.trashed_at(),
+            recurring: task.is_recurring(),
         }
     }
 }

@@ -115,6 +115,13 @@ impl CoreApi {
         }
     }
 
+    /// Mit Zeitzonen (Serien mit Uhrzeit, N4). Vor dem ersten Aufruf setzen.
+    #[must_use]
+    pub fn with_time_zones(mut self, zones: Arc<dyn crate::ports::TimeZones>) -> Self {
+        self.deps = self.deps.with_zones(zones);
+        self
+    }
+
     /// Das Repository, wie die Use-Cases es sehen: Jeder Commit bekommt die aktuelle Zeit
     /// (HLC der Ops), jede Änderung – auch durch `apply_remote` – wird als Event gemeldet.
     /// Die Sync-Engine muss **dieses** Repository verwenden, damit die UI Remote-Änderungen sieht.

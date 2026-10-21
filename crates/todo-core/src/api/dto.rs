@@ -234,6 +234,8 @@ impl TryFrom<&TaskDto> for TaskParts {
             completed_at: dto.completed_at.as_deref().map(parse_iso).transpose()?,
             // Wiederhergestellt wird nie in den Papierkorb.
             trashed_at: None,
+            // Kennt das DTO erst mit N4-04; bis dahin ohne.
+            recurrence: None,
         })
     }
 }

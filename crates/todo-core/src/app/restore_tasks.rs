@@ -118,6 +118,7 @@ mod tests {
             updated_at: task.updated_at(),
             completed_at: task.completed_at(),
             trashed_at: task.trashed_at(),
+            recurrence: task.recurrence().cloned(),
         }
     }
 

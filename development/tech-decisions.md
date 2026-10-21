@@ -623,6 +623,39 @@ eine eigene Antwort (Standard-Implementierung oder SQLite-WASM mit FTS5).
 
 ---
 
+## ADR-028 · Wiederkehrende Tasks: Serie mit fortgeschriebener Fälligkeit + deterministische Verlaufseinträge
+
+**Status:** akzeptiert (2026-10-21, N4-01/02; freigegeben vom User mit den vorgeschlagenen Antworten)
+**Kontext:** Routinen („jeden Fr“, „monatlich am 1.“) fehlten. Sie müssen offline auf mehreren Geräten ohne Duplikate
+funktionieren. Verworfen: vorab erzeugte Instanzen bzw. beim Abhaken eine neue Task mit Zufalls-ID – beide doppeln,
+wenn zwei Geräte offline dasselbe Vorkommen abhaken.
+**Entscheidung:**
+1. **Eine Task = eine Serie.** Feld `recurrence: Option<Recurrence>`; `due` ist immer das nächste offene Vorkommen.
+   Ansichten zeigen nur dieses, zukünftige werden nicht hochgerechnet.
+2. **Regel = RRULE-Teilmenge** (`domain/recurrence.rs`): `freq` täglich/wöchentlich/monatlich/jährlich, `interval`
+   1–999, `weekdays` (nur wöchentlich, Bitmaske), `month_day` (monatlich **und** jährlich – abweichend vom Entwurf, damit
+   ein jährlicher 29.02. nach dem 28.02. wieder zum 29.02. wird; 31 → letzter Tag), `anchor` fester Rhythmus/nach
+   Erledigung, `until`. Beim Setzen „verankert“ der Use-Case implizite Teile an der Fälligkeit (Wochentag bzw.
+   Monatstag), damit nichts driftet. Textform `FREQ=…;INTERVAL=…;BYDAY=…;BYMONTHDAY=…;ANCHOR=COMPLETION;UNTIL=…` in
+   SQLite (Migration 0006), binär im Op (`FieldName::Recurrence`, Code 17; LWW auf die ganze Regel).
+3. **Verpasste Vorkommen** werden übersprungen: nächstes Vorkommen nach der alten Fälligkeit, das ≥ heute ist (heute
+   liefert der Aufrufer, `LocalDay`). „Nach Erledigung“: ab dem Tag des Abhakens.
+4. **Abhaken** = **ein** Commit: Verlaufseintrag (erledigte Kopie des Vorkommens, ohne Regel) mit **deterministischer
+   ID** `UUIDv5(Serien-ID, Datum des Vorkommens)` (Ausnahme von „UUIDv7 an allen Grenzen“) und Fortschreiben von `due`
+   (LWW). Zwei Geräte, die offline dasselbe Vorkommen abhaken, erzeugen dieselbe ID → ein Eintrag. Liegt das nächste
+   Vorkommen nach `until`, wird die Serie selbst erledigt (kein zusätzlicher Eintrag).
+5. **Uhrzeit:** Das nächste Vorkommen behält die lokale Uhrzeit in `tz`, auch über die Zeitumstellung – über den Port
+   `TimeZones` (Desktop: `jiff` mit System-tzdb, schon für N7 im Binary). Ohne Port gehen nur ganztägige Serien
+   (`Validation` bei Uhrzeit).
+6. Eine Regel **ohne Fälligkeit** ist wirkungslos, aber kein Fehler beim Laden – ein Merge (A entfernt die Fälligkeit,
+   B setzt die Regel) darf eine Task nicht verschwinden lassen. Gesetzt wird sie nur mit Fälligkeit.
+**Konsequenzen:** Ältere Apps überspringen Segmente mit Feld 17 („App aktualisieren“); alle Geräte gemeinsam
+aktualisieren. Bekannte Grenze: Hakt A offline zweimal ab und B einmal, kann LWW die `due` auf B's früheren Wert setzen
+(selten, sichtbar, erneutes Abhaken korrigiert). Golden `ops_v1_recurrence.bin`, Property-Tests für die Regel
+(Ergebnis > vorher, ≥ min, passt zur Regel, monoton) und den Merge (Regel an/aus).
+
+---
+
 ## ADR-029 · Notes: Notizen im Op-Log, Inhalt als Revisions-DAG mit deterministischem 3-Wege-Merge
 
 **Status:** akzeptiert (2026-10-20, User-Freigabe zur Umsetzung; Domain mit N5-01, Merge mit N5-02). Details:

@@ -15,8 +15,8 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use super::Hlc;
 use crate::{
     domain::{
-        DeviceId, Due, NoteFolderId, NoteKind, Priority, RevisionId, SortKey, TagId, TaskId,
-        TaskListId, Timestamp, NOTE_BODY_MAX_BYTES,
+        DeviceId, Due, NoteFolderId, NoteKind, Priority, Recurrence, RevisionId, SortKey, TagId,
+        TaskId, TaskListId, Timestamp, NOTE_BODY_MAX_BYTES,
     },
     ports::EntityRef,
     CoreError, CoreResult,
@@ -107,11 +107,13 @@ pub enum FieldName {
     AutoName,
     /// Papierkorb: `Some(seit)`; LWW wie jedes Feld, kein Tombstone.
     Trashed,
+    /// Wiederholung einer Task (N4, ADR-028); LWW auf die ganze Regel.
+    Recurrence,
 }
 
 impl FieldName {
     /// Alle Felder (für Tests und Validierung).
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::ListId,
         Self::ParentId,
         Self::Title,
@@ -128,10 +130,11 @@ impl FieldName {
         Self::NoteKind,
         Self::AutoName,
         Self::Trashed,
+        Self::Recurrence,
     ];
 
-    /// Felder einer Task (`Trashed` seit ADR-031).
-    pub const TASK: [Self; 11] = [
+    /// Felder einer Task (`Trashed` seit ADR-031, `Recurrence` seit ADR-028).
+    pub const TASK: [Self; 12] = [
         Self::ListId,
         Self::ParentId,
         Self::Title,
@@ -143,6 +146,7 @@ impl FieldName {
         Self::SortKey,
         Self::CreatedAt,
         Self::Trashed,
+        Self::Recurrence,
     ];
 
     /// Felder einer Liste.
@@ -188,6 +192,7 @@ impl FieldName {
             Self::NoteKind => 14,
             Self::AutoName => 15,
             Self::Trashed => 16,
+            Self::Recurrence => 17,
         }
     }
 
@@ -226,6 +231,7 @@ impl FieldName {
                 | (Self::ParentFolder, FieldValue::Folder(_))
                 | (Self::NoteKind, FieldValue::NoteKind(_))
                 | (Self::Trashed, FieldValue::Trashed(_))
+                | (Self::Recurrence, FieldValue::Recurrence(_))
         )
     }
 }
@@ -263,6 +269,8 @@ pub enum FieldValue {
     NoteKind(#[serde(with = "note_kind_code")] NoteKind),
     /// `Some(seit)` = im Papierkorb.
     Trashed(Option<Timestamp>),
+    /// Wiederholung (N4); kompakt: Codes, Wochentage als Bitmaske, Ende als Tageszahl.
+    Recurrence(#[serde(with = "recurrence_wire")] Option<Recurrence>),
 }
 
 impl Op {
@@ -457,6 +465,87 @@ mod due_wire {
     }
 }
 
+/// Wiederholungsregel kompakt (ADR-028): Häufigkeit und Bezug als Codes, Wochentage als Bitmaske,
+/// Ende als Tageszahl (wie bei `Due`). **Codes nie ändern.**
+mod recurrence_wire {
+    use chrono::Datelike;
+    use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+
+    use crate::domain::{Frequency, NaiveDate, Recurrence, RecurrenceAnchor, WeekdaySet};
+
+    #[derive(Serialize, Deserialize)]
+    struct Wire {
+        freq: u8,
+        interval: u16,
+        weekdays: u8,
+        month_day: Option<u8>,
+        anchor: u8,
+        until: Option<i32>,
+    }
+
+    #[allow(clippy::ref_option)] // Signatur von serde vorgegeben
+    pub(super) fn serialize<S: Serializer>(
+        r: &Option<Recurrence>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        r.as_ref()
+            .map(|r| Wire {
+                freq: match r.freq() {
+                    Frequency::Daily => 0,
+                    Frequency::Weekly => 1,
+                    Frequency::Monthly => 2,
+                    Frequency::Yearly => 3,
+                },
+                interval: r.interval(),
+                weekdays: r.weekdays().bits(),
+                month_day: r.month_day(),
+                anchor: match r.anchor() {
+                    RecurrenceAnchor::Schedule => 0,
+                    RecurrenceAnchor::Completion => 1,
+                },
+                until: r.until().map(|d| d.num_days_from_ce()),
+            })
+            .serialize(s)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Option<Recurrence>, D::Error> {
+        let Some(w) = Option::<Wire>::deserialize(d)? else {
+            return Ok(None);
+        };
+        let freq = match w.freq {
+            0 => Frequency::Daily,
+            1 => Frequency::Weekly,
+            2 => Frequency::Monthly,
+            3 => Frequency::Yearly,
+            other => return Err(de::Error::custom(format!("unknown frequency code {other}"))),
+        };
+        let anchor = match w.anchor {
+            0 => RecurrenceAnchor::Schedule,
+            1 => RecurrenceAnchor::Completion,
+            other => return Err(de::Error::custom(format!("unknown anchor code {other}"))),
+        };
+        let until = w
+            .until
+            .map(|days| {
+                NaiveDate::from_num_days_from_ce_opt(days)
+                    .ok_or_else(|| de::Error::custom(format!("invalid day number {days}")))
+            })
+            .transpose()?;
+        Recurrence::new(
+            freq,
+            w.interval,
+            WeekdaySet::from_bits(w.weekdays),
+            w.month_day,
+            anchor,
+            until,
+        )
+        .map(Some)
+        .map_err(de::Error::custom)
+    }
+}
+
 /// Sortierschlüssel als String, beim Lesen mit Formatprüfung.
 mod sort_key_str {
     use serde::{de, Deserialize, Deserializer, Serializer};
@@ -520,6 +609,14 @@ mod tests {
             (
                 FieldName::CreatedAt,
                 FieldValue::Timestamp(Timestamp::from_millis(-3)),
+            ),
+            (
+                FieldName::Recurrence,
+                FieldValue::Recurrence(Some(
+                    "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TH;ANCHOR=COMPLETION;UNTIL=2026-12-20"
+                        .parse()
+                        .unwrap(),
+                )),
             ),
         ]
     }

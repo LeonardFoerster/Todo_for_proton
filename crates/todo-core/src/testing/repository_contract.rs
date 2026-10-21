@@ -55,6 +55,7 @@ macro_rules! repository_contract_tests {
             filter_completed_newest_first,
             filter_status_and_tag,
             trash_view_hides_trashed_everywhere_else,
+            recurrence_roundtrips,
             summary_matches_task,
             sync_device_id_is_stable,
             commit_writes_ops_to_outbox,
@@ -137,6 +138,7 @@ pub fn run_all<R: TaskRepository>(make: impl Fn() -> R) {
     filter_completed_newest_first(make());
     filter_status_and_tag(make());
     trash_view_hides_trashed_everywhere_else(make());
+    recurrence_roundtrips(make());
     summary_matches_task(make());
     sync_device_id_is_stable(make());
     commit_writes_ops_to_outbox(make());
@@ -840,6 +842,29 @@ pub fn trash_view_hides_trashed_everywhere_else<R: TaskRepository>(repo: R) {
         .page(TaskQuery::view(SmartView::Trash), None, 1)
         .expect("page");
     assert_eq!(page.items[0].trashed_at, Some(Timestamp::from_millis(30)));
+}
+
+/// Wiederholung (N4): Regel kommt unverändert zurück, die Zeile meldet „wiederkehrend“ nur mit Fälligkeit.
+pub fn recurrence_roundtrips<R: TaskRepository>(repo: R) {
+    let f = setup(repo);
+    let mut t = f.add_tasks(f.inbox.id(), 2);
+    let rule: crate::domain::Recurrence =
+        "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TH;ANCHOR=COMPLETION;UNTIL=2026-12-20"
+            .parse()
+            .expect("rule");
+    t[0].set_due(Some(Due::Date(date(20))), &f.clock)
+        .expect("due");
+    t[0].set_recurrence(Some(rule.clone()), None, &f.clock)
+        .expect("rule");
+    f.save(&t);
+    let back = block_on(f.repo.get_task(t[0].id()))
+        .expect("get")
+        .expect("da");
+    assert_eq!(back.recurrence(), Some(&rule));
+    assert_eq!(back, t[0]);
+    let page = f.page(all(), None, 10).expect("page");
+    let flags: Vec<bool> = page.items.iter().map(|s| s.recurring).collect();
+    assert_eq!(flags, [true, false]);
 }
 
 /// Die Zusammenfassung entspricht `TaskSummary::from(&task)`.
