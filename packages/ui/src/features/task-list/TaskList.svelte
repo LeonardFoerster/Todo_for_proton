@@ -25,6 +25,8 @@
   import { listName, routeIcon, viewMeta } from "../../lib/views";
   import { DEFAULT_OPTIONS, isDefault, type ViewOptions } from "../../lib/view-options";
   import { sortedByDue } from "./view-match";
+  import { readFlag, writeFlag } from "../../lib/preferences";
+  import Welcome from "../onboarding/Welcome.svelte";
   import PurgeDialog from "./PurgeDialog.svelte";
   import { SelectionState } from "./selection.svelte";
   import { TaskListState, toSummary } from "./task-list-state.svelte";
@@ -44,6 +46,8 @@
     ondue?: (tasks: TaskSummaryDto[], x: number, y: number) => void;
     /** Sortierung/Filter der Ansicht (N10-01); fest je Instanz (App rendert per `{#key}`). */
     options?: ViewOptions;
+    /** Erste Schritte (N10-04): „Anmelden…“ öffnet die Einstellungen. */
+    onsettings?: () => void;
   }
 
   let {
@@ -55,7 +59,9 @@
     onnewtask,
     ondue,
     options = DEFAULT_OPTIONS,
+    onsettings,
   }: Props = $props();
+
 
   /** Zeilenhöhe: 36 px, bei Touch/schmal 44 px (P5-09). */
   const ROW = $derived(density.rowHeight);
@@ -63,6 +69,9 @@
   // Pro Ansicht eine Instanz (App rendert TaskList per {#key}); Route ist hier fest.
   // svelte-ignore state_referenced_locally
   const view = route;
+  const WELCOME_KEY = "tasks.welcome-dismissed";
+  /** Erste Schritte im leeren Eingang, bis sie ausgeblendet werden (N10-04). */
+  let showWelcome = $state(view.view === "inbox" && !readFlag(WELCOME_KEY));
   // svelte-ignore state_referenced_locally
   const opts = options;
   const rows = new TaskListState(client, () => ({ route: view, inboxId: lists.inbox?.id, day: localDay(), options: opts }));
@@ -658,7 +667,18 @@
 </script>
 
 <div class="task-list" class:dragging={drag !== null}>
-  {#if rows.loaded && rows.items.length === 0}
+  {#if rows.loaded && rows.items.length === 0 && showWelcome}
+    <div class="empty">
+      <Welcome
+        {onnewtask}
+        {onsettings}
+        ondismiss={() => {
+          showWelcome = false;
+          writeFlag(WELCOME_KEY, true);
+        }}
+      />
+    </div>
+  {:else if rows.loaded && rows.items.length === 0}
     <div class="empty">
       <span class="empty-icon"><EmptyIcon size={28} strokeWidth={1.5} aria-hidden="true" /></span>
       <p>{emptyText}</p>

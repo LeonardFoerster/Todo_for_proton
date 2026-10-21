@@ -482,7 +482,7 @@ neue Task aus der Notiz); Icon in Zeile/Karte.
 ### [x] N10-02 · Zähler über `count_tasks` (FIX-04) — 2026-10-21 · b4daf53
 > Notiz: „Heute“ zählt die Überfälligen weiter seitenweise (braucht die Fälligkeiten, ist klein); alle anderen über `COUNT(*)`.
 **Schritte:** `count_tasks(query)` in Port/SQLite/API; Seitenleiste und Unterzeile der Kopfzeile auch für Listen/Geplant.
-### [ ] N10-03 · Gleichnamige Listen zusammenführen (ADR-020)
+### [x] N10-03 · Gleichnamige Listen zusammenführen (ADR-020) — 2026-10-21 · 475db74
 **Schritte:** Aktion „Mit … zusammenführen“ im Listenmenü (Tasks verschieben, Liste löschen, ein Commit) + Hinweis nach
 dem ersten Login, wenn es gleichnamige Listen gibt.
 ### [ ] N10-04 · Erste Schritte

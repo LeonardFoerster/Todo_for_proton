@@ -1295,6 +1295,7 @@
                 onnewtask={newTask}
                 ondue={(tasks, x, y) => openDueMenu(tasks, { x, y })}
                 options={viewOptions}
+                onsettings={() => void openSettings()}
               />
             {/if}
           </div>
