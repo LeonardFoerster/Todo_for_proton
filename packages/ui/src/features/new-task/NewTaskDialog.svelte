@@ -1,28 +1,30 @@
 <script lang="ts">
   /**
    * Fenster „Neue Task“ (P3-03, als Schnelleingabe überarbeitet in P6; geöffnet über „+ Neue Task“, `N`,
-   * `Strg+N`). Oben verankert, ohne Kopf. Die Titelzeile erkennt Fälligkeit, Uhrzeit, Priorität und Liste
-   * (`parse.ts`) und markiert die Stellen im Text; die Chips darunter zeigen die Werte (gesetzt getönt mit ×,
+   * `Strg+N`). Oben verankert, ohne Kopf. Die Titelzeile erkennt Fälligkeit, Uhrzeit, Wiederholung (N4-05),
+   * Priorität und Liste (`parse.ts`) und markiert die Stellen im Text; die Chips darunter zeigen die Werte (gesetzt getönt mit ×,
    * leer nur Kontur). Ein von Hand gesetzter Chip gilt vor dem Text. Darunter randlos die Notiz.
    * `Enter` (Titel) bzw. `Strg+Enter` (Notiz) legt an – in einem Aufruf – und schließt, außer
    * „Weitere anlegen“ ist an (dann bestätigt eine Zeile im Fenster). `Esc` schließt.
    */
-  import type { DueDto, PriorityDto } from "@tasks/core-client";
+  import type { DueDto, PriorityDto, RecurrenceDto } from "@tasks/core-client";
   import { onMount, tick } from "svelte";
   import Button from "../../components/Button.svelte";
   import Dialog from "../../components/Dialog.svelte";
   import IconButton from "../../components/IconButton.svelte";
   import Menu, { type MenuItem } from "../../components/Menu.svelte";
   import { toasts } from "../../components/toasts.svelte";
-  import { CalendarDays, Check, Circle, CircleHelp, X } from "../../icons";
+  import { CalendarDays, Check, Circle, CircleHelp, Repeat, Settings, X } from "../../icons";
   import { useCoreClient } from "../../lib/context";
   import { density } from "../../lib/density.svelte";
   import { dueLabel } from "../../lib/format-date";
   import type { ListsState } from "../../lib/lists.svelte";
-  import { parseIsoDate } from "../../lib/local-day";
+  import { isoDate, parseIsoDate } from "../../lib/local-day";
+  import { describeRule, firstOnOrAfter, PRESETS, presetOf, ruleChipText } from "../../lib/recurrence";
   import { readFlag, writeFlag } from "../../lib/preferences";
   import DuePopover from "../due/DuePopover.svelte";
   import ListPicker from "../lists/ListPicker.svelte";
+  import type RecurrenceDialogType from "../recurrence/RecurrenceDialog.svelte";
   import { parseNewTask, recognizedMarks, type TextMark } from "./parse";
 
   interface Props {
@@ -55,6 +57,7 @@
   const SYNTAX = [
     "Im Titel erkannt:",
     "morgen · Fr · 24.10. · 14:00   Fälligkeit",
+    "täglich · jeden Mo · alle 2 Wochen · bis 20.12.   Wiederholung",
     "!1 hoch · !2 mittel · !3 niedrig   Priorität",
     "@Liste   Liste",
   ].join("\n");
@@ -66,6 +69,7 @@
   let picker = $state<ListPicker>();
   let prioButton = $state<HTMLButtonElement>();
   let dueButton = $state<HTMLButtonElement>();
+  let repeatButton = $state<HTMLButtonElement>();
   let busy = false;
 
   // svelte-ignore state_referenced_locally
@@ -73,6 +77,10 @@
   let notes = $state("");
   let dueOpen = $state(false);
   let prioMenu = $state<{ x: number; y: number } | null>(null);
+  let repeatMenu = $state<{ x: number; y: number } | null>(null);
+  let customRepeat = $state(false);
+  /** „Benutzerdefiniert…“ selten gebraucht – lazy geladen. */
+  let RecurrenceDialog = $state<typeof RecurrenceDialogType | null>(null);
   let keepOpen = $state(readFlag(KEEP_OPEN_KEY));
   /** Bestätigung im Fenster nach dem Anlegen mit „Weitere anlegen“. */
   let created = $state<string | null>(null);
@@ -81,10 +89,18 @@
   // Von Hand gesetzt (`undefined` = aus dem Text bzw. Vorgabe); `null` heißt „bewusst keine“.
   let manualDue = $state<DueDto | null | undefined>();
   let manualPriority = $state<PriorityDto | undefined>();
+  let manualRecurrence = $state<RecurrenceDto | null | undefined>();
   let chosenList = $state<string | undefined>();
 
   const parsed = $derived(parseNewTask(value, { lists: lists.lists }));
-  const due = $derived(manualDue !== undefined ? manualDue : (parsed.due ?? defaultDue));
+  const recurrence = $derived(manualRecurrence !== undefined ? manualRecurrence : parsed.recurrence);
+  // Regel von Hand entfernt: ein nur aus ihr abgeleiteter Tag entfällt mit.
+  const textDue = $derived(!recurrence && parsed.dueWithoutRule !== undefined ? parsed.dueWithoutRule : parsed.due);
+  const typedDue = $derived(manualDue !== undefined ? manualDue : (textDue ?? defaultDue));
+  /** Eine Serie braucht eine Fälligkeit: ohne Angabe das erste Vorkommen ab heute. */
+  const due = $derived<DueDto | null>(
+    typedDue ?? (recurrence ? { kind: "date", date: isoDate(firstOnOrAfter(recurrence, new Date())) } : null),
+  );
   const priority = $derived(manualPriority ?? parsed.priority ?? "none");
   const target = $derived(chosenList ?? parsed.listId ?? listId);
   const dueTone = $derived(due ? dueLabel(due).tone : null);
@@ -96,6 +112,7 @@
       (m) =>
         (m.kind === "due" && manualDue === undefined) ||
         (m.kind === "priority" && manualPriority === undefined) ||
+        (m.kind === "repeat" && manualRecurrence === undefined) ||
         (m.kind === "list" && chosenList === undefined),
     ),
   );
@@ -140,6 +157,47 @@
   export function openPriority() {
     const r = prioButton?.getBoundingClientRect();
     prioMenu = { x: r?.left ?? 0, y: (r?.bottom ?? 0) + 4 };
+  }
+
+  /** `Alt+W`: Wiederholungsmenü öffnen. */
+  export function openRepeat() {
+    const r = repeatButton?.getBoundingClientRect();
+    repeatMenu = { x: r?.left ?? 0, y: (r?.bottom ?? 0) + 4 };
+  }
+
+  function repeatItems(): MenuItem[] {
+    const current = recurrence ? presetOf(recurrence, due) : null;
+    return [
+      {
+        id: "none",
+        label: "Keine",
+        icon: recurrence ? Circle : Check,
+        action: () => pickRule(null),
+      },
+      ...PRESETS.map((p) => ({
+        id: p.id,
+        label: p.label,
+        icon: p.id === current ? Check : Circle,
+        action: () => pickRule(p.rule()),
+      })),
+      {
+        id: "custom",
+        label: "Benutzerdefiniert…",
+        icon: recurrence && !current ? Check : Settings,
+        action: () => void openCustomRepeat(),
+      },
+    ];
+  }
+
+  async function openCustomRepeat() {
+    RecurrenceDialog ??= (await import("../recurrence/RecurrenceDialog.svelte")).default;
+    customRepeat = true;
+  }
+
+  function pickRule(next: RecurrenceDto | null) {
+    manualRecurrence = next;
+    customRepeat = false;
+    input?.focus();
   }
 
   /** `Alt+N`: in die Notiz springen bzw. zurück in den Titel. */
@@ -202,6 +260,7 @@
     dueOpen = false;
     manualDue = undefined;
     manualPriority = undefined;
+    manualRecurrence = undefined;
     scroll = 0;
   }
 
@@ -216,6 +275,7 @@
         notes: notes.trim() ? notes : undefined,
         priority: priority === "none" ? undefined : priority,
         due: due ?? undefined,
+        recurrence: recurrence ?? undefined,
       });
       announce(title, task.listId);
       if (keepOpen) reset();
@@ -312,6 +372,25 @@
           </button>
         {/if}
       </span>
+      <span class="chip-group" class:set={!!recurrence}>
+        <button
+          bind:this={repeatButton}
+          type="button"
+          class="chip"
+          aria-haspopup="menu"
+          aria-expanded={repeatMenu !== null}
+          aria-label="Wiederholung: {recurrence ? describeRule(recurrence) : 'keine'}"
+          data-tooltip="Wiederholung   Alt+W"
+          onclick={openRepeat}
+        >
+          <Repeat size={14} strokeWidth={1.75} aria-hidden="true" />{recurrence ? ruleChipText(recurrence) : "Wiederholung"}
+        </button>
+        {#if recurrence}
+          <button type="button" class="chip-x" aria-label="Wiederholung entfernen" onclick={() => pickRule(null)}>
+            <X size={12} strokeWidth={2} aria-hidden="true" />
+          </button>
+        {/if}
+      </span>
       <span class="chip-group" class:set={priority !== "none"}>
         <button
           bind:this={prioButton}
@@ -341,6 +420,8 @@
       </span>
       <ListPicker bind:this={picker} {lists} value={target} onchange={chooseList} shortcut="Alt+L" />
     </div>
+
+    {#if recurrence}<p class="rule-hint">Wiederholt sich {describeRule(recurrence)}</p>{/if}
 
     {#if created}<p class="created" role="status"><Check size={14} strokeWidth={2} aria-hidden="true" />{created}</p>{/if}
 
@@ -385,6 +466,20 @@
   <!-- Im Dialog rendern: außerhalb läge das Menü hinter der modalen Ebene. -->
   {#if prioMenu}
     <Menu label="Priorität wählen" items={prioItems()} x={prioMenu.x} y={prioMenu.y} onclose={() => (prioMenu = null)} />
+  {/if}
+  {#if repeatMenu}
+    <Menu label="Wiederholung wählen" items={repeatItems()} x={repeatMenu.x} y={repeatMenu.y} onclose={() => (repeatMenu = null)} />
+  {/if}
+  {#if customRepeat && RecurrenceDialog}
+    <RecurrenceDialog
+      value={recurrence}
+      {due}
+      onpick={pickRule}
+      onclose={() => {
+        customRepeat = false;
+        input?.focus();
+      }}
+    />
   {/if}
 </Dialog>
 
@@ -464,6 +559,9 @@
   }
   .mark.list {
     --tint: var(--color-text-muted);
+  }
+  .mark.repeat {
+    --tint: var(--color-success);
   }
   .notes {
     display: block;
@@ -581,6 +679,11 @@
   }
   .ring.low {
     --ring: var(--color-accent);
+  }
+  .rule-hint {
+    margin: calc(-1 * var(--space-1)) 0 0;
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
   }
   .created {
     display: flex;

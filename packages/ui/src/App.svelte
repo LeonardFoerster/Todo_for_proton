@@ -678,6 +678,7 @@
       [
         ["alt+d", "Fälligkeit", () => newTaskDialog?.toggleDue()],
         ["alt+p", "Priorität", () => newTaskDialog?.openPriority()],
+        ["alt+w", "Wiederholung", () => newTaskDialog?.openRepeat()],
         ["alt+l", "Liste", () => newTaskDialog?.openListPicker()],
         ["alt+n", "Notiz", () => newTaskDialog?.toggleNotes()],
       ] as const

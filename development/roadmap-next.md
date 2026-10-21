@@ -351,7 +351,8 @@ Ansicht je Serie (mit Verknüpfungen aus N3 möglich), Erinnerungen.
 **Fertig wenn:** `just check` grün; ein Lauf einer **alten** Binärversion gegen ein Segment mit `Recurrence` zeigt
 „App aktualisieren" und kein Absturz (manuell oder Test mit unbekanntem Code). Commit `feat(sync): recurrence field`.
 
-### [ ] N4-03 · Use-Cases: Abhaken, Überspringen, Rückgängig
+### [x] N4-03 · Use-Cases: Abhaken, Überspringen, Rückgängig — 2026-10-21 · 4f9c050
+> Notiz: Mit N4-04 zusammen committet (die neue Signatur von `complete_tasks` baut nur über alle Schichten). `UndoOccurrence` bekommt die alte Fälligkeit mitgeliefert (`previous_due`); nach Rückgängig nimmt erneutes Abhaken die nächste ID-Variante (Tombstone). Szenario „A überspringt, B hakt ab“: Serie am Folgetag, Bs Verlaufseintrag bleibt.
 **Lies vorher:** `app/complete_task.rs`, `app/complete_tasks.rs` (ADR-021), `app/reopen_task.rs`,
 `app/restore_tasks.rs`, `app/update_task.rs`, ADR-024 (Reihenfolge-Sperre).
 **Schritte:**
@@ -371,7 +372,8 @@ Ansicht je Serie (mit Verknüpfungen aus N3 möglich), Erinnerungen.
    stabil.
 **Fertig wenn:** `just check` grün. Commit `feat(core): complete, skip and undo recurring tasks`.
 
-### [ ] N4-04 · API, Shell, `CoreClient`
+### [x] N4-04 · API, Shell, `CoreClient` — 2026-10-21 · 4f9c050
+> Notiz: `jiff` war schon für N7 im Binary, keine neue Abhängigkeit. `undoOccurrence(OccurrenceDto)` statt zwei IDs; `completeTask` (einzeln) rechnet mit dem UTC-Datum, die UI nimmt `completeTasks` mit `today`.
 **Lies vorher:** `api/dto.rs`, `apps/desktop/src-tauri/src/commands.rs` (Auslöser-Liste, ADR-022),
 `packages/core-client/src/core-client.ts`, `fake-core-client.ts`, `interfaces.md` §7.
 **Schritte:**

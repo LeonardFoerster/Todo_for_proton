@@ -22,6 +22,7 @@ export { default as Moon } from "@lucide/svelte/icons/moon";
 export { default as PanelLeft } from "@lucide/svelte/icons/panel-left";
 export { default as Plus } from "@lucide/svelte/icons/plus";
 export { default as RefreshCw } from "@lucide/svelte/icons/refresh-cw";
+export { default as Repeat } from "@lucide/svelte/icons/repeat";
 export { default as Settings } from "@lucide/svelte/icons/settings";
 export { default as StickyNote } from "@lucide/svelte/icons/sticky-note";
 export { default as Sun } from "@lucide/svelte/icons/sun";
