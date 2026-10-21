@@ -129,6 +129,17 @@ export interface CoreClient {
   /** Je Task eine eigene Fälligkeit (`null` = entfernen); Tasks mit diesem Wert fehlen im Ergebnis. */
   setDues(dues: TaskDueDto[]): Promise<TaskDto[]>;
 
+  // Papierkorb (ADR-031): „Löschen“ in der UI. Gleiche IDs beim Zurückholen; nur Ansicht `trash`
+  // zeigt solche Tasks, alle anderen Ansichten und die Suche blenden sie aus. Nach 30 Tagen weg.
+  /** In den Papierkorb; Ergebnis = tatsächlich geänderte (schon gelöschte fehlen). */
+  trashTasks(ids: string[]): Promise<TaskDto[]>;
+  /** Aus dem Papierkorb zurück an den alten Platz (Rückgängig, „Wiederherstellen“). */
+  untrashTasks(ids: string[]): Promise<TaskDto[]>;
+  /** Endgültig löschen – nur Tasks im Papierkorb; liefert die Zahl gelöschter. */
+  purgeTasks(ids: string[]): Promise<number>;
+  /** Papierkorb leeren; liefert die Zahl gelöschter. */
+  emptyTaskTrash(): Promise<number>;
+
   notes: NotesClient;
   auth: AuthClient;
   sync: SyncClient;

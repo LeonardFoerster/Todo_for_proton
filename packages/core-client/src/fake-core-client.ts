@@ -154,7 +154,8 @@ export class FakeCoreClient implements CoreClient {
         moved.map((r) => r.task.id),
         [id],
       );
-      return moved.length;
+      // Wie im Core: gezählt werden nur Tasks außerhalb des Papierkorbs (mitgenommen werden alle).
+      return moved.filter((r) => r.task.trashedAt == null).length;
     });
 
   // --- Tasks ---------------------------------------------------------------------------------
@@ -276,6 +277,43 @@ export class FakeCoreClient implements CoreClient {
       return before;
     });
 
+  trashTasks = (ids: string[]) =>
+    this.run(() => {
+      const at = this.iso();
+      const changed = this.existing(ids).filter((row) => row.task.trashedAt == null);
+      for (const row of changed) {
+        row.task.trashedAt = at;
+        this.touch(row);
+      }
+      return this.emitRows(changed);
+    });
+
+  untrashTasks = (ids: string[]) =>
+    this.run(() => {
+      const changed = this.existing(ids).filter((row) => row.task.trashedAt != null);
+      for (const row of changed) {
+        row.task.trashedAt = null;
+        this.touch(row);
+      }
+      return this.emitRows(changed);
+    });
+
+  purgeTasks = (ids: string[]) =>
+    this.run(() => {
+      const rows = this.existing(ids).filter((row) => row.task.trashedAt != null);
+      for (const row of rows) this.rows.delete(row.task.id);
+      this.emitRows(rows);
+      return rows.length;
+    });
+
+  emptyTaskTrash = () =>
+    this.run(() => {
+      const rows = [...this.rows.values()].filter((row) => row.task.trashedAt != null);
+      for (const row of rows) this.rows.delete(row.task.id);
+      if (rows.length > 0) this.emitRows(rows);
+      return rows.length;
+    });
+
   moveTasks = (ids: string[], target: MoveTargetDto) =>
     this.run(() => {
       const rows = this.existing(ids).sort(byOrder(this.lists));
@@ -346,13 +384,17 @@ export class FakeCoreClient implements CoreClient {
                 ? t.due != null && dueBy(t.due, view.day)
                 : view.kind === "upcoming"
                   ? t.due != null && !dueBy(t.due, view.day)
-                  : view.kind === "all"
+                  : view.kind === "all" || view.kind === "trash"
                     ? true
                     : t.status === "done";
-        return inView && (query.status == null || t.status === query.status);
+        // Papierkorb nur in seiner Ansicht (ADR-031).
+        const trashOk = (t.trashedAt != null) === (view.kind === "trash");
+        return inView && trashOk && (query.status == null || t.status === query.status);
       });
       rows =
-        view.kind === "completed"
+        view.kind === "trash"
+          ? rows.sort(byTrashed)
+          : view.kind === "completed"
           ? rows.sort(byCompleted)
           : view.kind === "today" || view.kind === "upcoming"
             ? rows.sort(byDue(view.day, byOrder(this.lists)))
@@ -372,6 +414,7 @@ export class FakeCoreClient implements CoreClient {
       const order = byOrder(this.lists);
       return [...this.rows.values()]
         .flatMap((row) => {
+          if (row.task.trashedAt != null) return [];
           const title = row.task.title.toLowerCase();
           const notes = row.task.notes.toLowerCase();
           if (!terms.every((t) => title.includes(t) || notes.includes(t))) return [];
@@ -632,6 +675,11 @@ function validDue(due: DueDto): DueDto {
 /** Heute fällig oder überfällig (wie `Due::is_due_by`). */
 function dueBy(due: DueDto, day: LocalDayDto): boolean {
   return due.kind === "date" ? due.date <= day.date : due.at < day.end;
+}
+
+/** Papierkorb: zuletzt gelöschte zuerst, dann ID (wie der Core). */
+function byTrashed(a: Row, b: Row): number {
+  return (b.task.trashedAt ?? "").localeCompare(a.task.trashedAt ?? "") || a.task.id.localeCompare(b.task.id);
 }
 
 function summary(t: TaskDto): TaskSummaryDto {

@@ -295,4 +295,23 @@ describe("FakeCoreClient", () => {
     expect(await core.searchTasks("  ", 10)).toEqual([]);
     await expect(core.searchTasks("x", 0)).rejects.toMatchObject({ kind: "validation" });
   });
+
+  it("trash hides tasks everywhere but the trash view; untrash keeps the id; purge only trashed", async () => {
+    const { core } = await setup();
+    const a = await core.createTask({ title: "A", notes: "Suchwort" });
+    const b = await core.createTask({ title: "B" });
+    expect((await core.trashTasks([a.id, a.id, "unbekannt"])).map((t) => t.id)).toEqual([a.id]);
+    expect(await core.trashTasks([a.id])).toEqual([]);
+    expect(await titles(core)).toEqual(["B"]);
+    expect(await titles(core, { view: { kind: "trash" } })).toEqual(["A"]);
+    expect(await core.searchTasks("Suchwort", 10)).toEqual([]);
+    expect((await core.untrashTasks([a.id]))[0].id).toBe(a.id);
+    expect(await titles(core)).toEqual(["A", "B"]);
+    await core.trashTasks([a.id]);
+    expect(await core.purgeTasks([a.id, b.id])).toBe(1);
+    expect(await titles(core)).toEqual(["B"]);
+    await core.trashTasks([b.id]);
+    expect(await core.emptyTaskTrash()).toBe(1);
+    expect(await titles(core, { view: { kind: "all" } })).toEqual([]);
+  });
 });

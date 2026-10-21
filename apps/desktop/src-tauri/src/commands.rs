@@ -8,6 +8,7 @@
 //!   (abhaken/öffnen), `move_task` (Liste/Reihenfolge), `delete_task`
 //! - Sammelaktionen (ein Aufruf = eine Meldung): `complete_tasks`, `delete_tasks`, `move_tasks`,
 //!   `restore_tasks`, `set_dues`
+//! - Papierkorb der Tasks (ADR-031): `trash_tasks`, `untrash_tasks`, `purge_tasks`, `empty_task_trash`
 //! - Notizen (ADR-029): `create_note`, `discard_empty_note` (nur wenn verworfen), `rename_note`,
 //!   `set_note_kind`, `move_note`, `create_note_folder`, `rename_note_folder`, `move_note_folder`,
 //!   `trash_note_items`, `restore_note_items`, `purge_note_items`, `empty_note_trash`
@@ -156,6 +157,34 @@ pub async fn delete_tasks(state: State<'_, AppState>, ids: Vec<String>) -> Resul
     let tasks = state.api.delete_tasks(ids).await?;
     state.sync.local_change();
     Ok(tasks)
+}
+
+#[tauri::command]
+pub async fn trash_tasks(state: State<'_, AppState>, ids: Vec<String>) -> Result<Vec<TaskDto>> {
+    let tasks = state.api.trash_tasks(ids).await?;
+    state.sync.local_change();
+    Ok(tasks)
+}
+
+#[tauri::command]
+pub async fn untrash_tasks(state: State<'_, AppState>, ids: Vec<String>) -> Result<Vec<TaskDto>> {
+    let tasks = state.api.untrash_tasks(ids).await?;
+    state.sync.local_change();
+    Ok(tasks)
+}
+
+#[tauri::command]
+pub async fn purge_tasks(state: State<'_, AppState>, ids: Vec<String>) -> Result<u32> {
+    let n = state.api.purge_tasks(ids).await?;
+    state.sync.local_change();
+    Ok(n)
+}
+
+#[tauri::command]
+pub async fn empty_task_trash(state: State<'_, AppState>) -> Result<u32> {
+    let n = state.api.empty_task_trash().await?;
+    state.sync.local_change();
+    Ok(n)
 }
 
 #[tauri::command]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-trash-tasks"
+description = "Enables the trash_tasks command without any pre-configured scope."
+commands.allow = ["trash_tasks"]
+
+[[permission]]
+identifier = "deny-trash-tasks"
+description = "Denies the trash_tasks command without any pre-configured scope."
+commands.deny = ["trash_tasks"]

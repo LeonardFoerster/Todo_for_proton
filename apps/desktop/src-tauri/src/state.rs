@@ -89,7 +89,7 @@ const NOTE_PURGE_INTERVAL_MS: i64 = 24 * 60 * 60 * 1000;
 
 impl AppState {
     /// Beim Start und bei Fokus aufrufen: löscht höchstens einmal täglich, was seit mehr als
-    /// 30 Tagen im Papierkorb liegt – ohne Timer im Leerlauf.
+    /// 30 Tagen im Papierkorb liegt (Notizen und Tasks) – ohne Timer im Leerlauf.
     pub fn purge_expired_notes_daily(&self) {
         let now = SystemClock.now().as_millis();
         let last = self.notes_purged_at.load(Ordering::Relaxed);
@@ -110,6 +110,15 @@ impl AppState {
                     sync.local_change();
                 }
                 Err(err) => tracing::warn!(error = %err, "purging expired notes failed"),
+            }
+            // Papierkorb der Tasks (ADR-031): gleiche Frist, gleicher Takt.
+            match api.purge_expired_tasks().await {
+                Ok(0) => {}
+                Ok(n) => {
+                    tracing::info!(tasks = n, "expired tasks purged");
+                    sync.local_change();
+                }
+                Err(err) => tracing::warn!(error = %err, "purging expired tasks failed"),
             }
         });
     }

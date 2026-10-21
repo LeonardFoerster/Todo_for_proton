@@ -186,7 +186,9 @@ als `.md`/`.txt` in ihrer Ordnerstruktur; die JSON lässt sich wieder importiere
 (`merge.rs::materialize_task`, sonst verschwinden bestehende Tasks). Ältere Apps überspringen Segmente mit neuen Feldern
 („App aktualisieren“) – alle Geräte gemeinsam aktualisieren. Contract-Tests für In-Memory **und** SQLite.
 
-### [ ] N6-01 · ADR-031 + Core: Tasks in den Papierkorb
+### [x] N6-01 · ADR-031 + Core: Tasks in den Papierkorb — 2026-10-21 · 3c01484
+> Notiz: Kein neuer Feldcode – `Trashed` (16) gilt jetzt auch für Tasks. Die Papierkorb-Methoden der `CoreApi` kamen
+> schon hier (für das Szenario `trash_and_concurrent_edit_both_survive`). FIX-13 mit erledigt.
 **Lies vorher:** `notes.md` §Papierkorb, ADR-029, `app/trash_notes.rs`, `app/purge_notes.rs`, `sync/op.rs` (`Trashed`),
 `app/delete_task_list.rs`, `ports/repository.rs` (`TaskQuery::matches`), `todo-storage-sqlite/src/query.rs`.
 **Schritte:**

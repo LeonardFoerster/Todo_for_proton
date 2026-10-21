@@ -48,6 +48,10 @@ export class TauriCoreClient implements CoreClient {
   deleteTasks: CoreClient["deleteTasks"] = (ids) => invoke("delete_tasks", { ids });
   moveTasks: CoreClient["moveTasks"] = (ids, target) => invoke("move_tasks", { ids, target });
   restoreTasks: CoreClient["restoreTasks"] = (tasks) => invoke("restore_tasks", { tasks });
+  trashTasks: CoreClient["trashTasks"] = (ids) => invoke("trash_tasks", { ids });
+  untrashTasks: CoreClient["untrashTasks"] = (ids) => invoke("untrash_tasks", { ids });
+  purgeTasks: CoreClient["purgeTasks"] = (ids) => invoke("purge_tasks", { ids });
+  emptyTaskTrash: CoreClient["emptyTaskTrash"] = () => invoke("empty_task_trash");
 
   notes: CoreClient["notes"] = {
     listFolders: () => invoke("list_note_folders"),

@@ -403,6 +403,12 @@ impl CoreApi {
     pub async fn delete_tasks(&self, ids: Vec<String>) -> CoreResult<Vec<TaskDto>>;       // Zustand vor dem Löschen
     pub async fn move_tasks(&self, ids: Vec<String>, target: MoveTargetDto) -> CoreResult<Vec<TaskDto>>; // Block
     pub async fn restore_tasks(&self, tasks: Vec<TaskDto>) -> CoreResult<Vec<TaskDto>>;  // neue IDs, alter Sort-Key
+    // Papierkorb (ADR-031): gleiche IDs, nur Ansicht `Trash` zeigt sie; endgültig nur aus dem Papierkorb
+    pub async fn trash_tasks(&self, ids: Vec<String>) -> CoreResult<Vec<TaskDto>>;
+    pub async fn untrash_tasks(&self, ids: Vec<String>) -> CoreResult<Vec<TaskDto>>;
+    pub async fn purge_tasks(&self, ids: Vec<String>) -> CoreResult<u32>;
+    pub async fn empty_task_trash(&self) -> CoreResult<u32>;
+    pub async fn purge_expired_tasks(&self) -> CoreResult<u32>;          // > 30 Tage, Shell höchstens täglich
     pub async fn set_dues(&self, dues: Vec<TaskDueDto>) -> CoreResult<Vec<TaskDto>>;     // je Task eigener Wert (ADR-026)
     pub async fn search_tasks(&self, text: String, limit: u32) -> CoreResult<Vec<TaskSummaryDto>>; // ADR-027
     pub async fn list_tasks(&self, query: TaskQueryDto, page: PageRequestDto) -> CoreResult<PageDto<TaskSummaryDto>>;
@@ -439,7 +445,8 @@ pub enum CoreEvent {
 }
 pub trait EventSink: MaybeSend + MaybeSync { fn emit(&self, event: CoreEvent); }
 
-// ViewDto (tag = "kind"): inbox | list{listId} | today{day} | upcoming{day} | all | completed
+// ViewDto (tag = "kind"): inbox | list{listId} | today{day} | upcoming{day} | all | completed | trash
+// TaskDto/TaskSummaryDto.trashedAt: string | null (ADR-031)
 // LocalDayDto { date: "YYYY-MM-DD", start: ISO, end: ISO }   – Shell berechnet in lokaler Zone
 // DueDto (tag = "kind"): date{date} | dateTime{at, tz}
 ```
@@ -488,6 +495,10 @@ export interface CoreClient {
   deleteTasks(ids: string[]): Promise<TaskDto[]>;                    // Zustand vor dem Löschen
   moveTasks(ids: string[], target: MoveTargetDto): Promise<TaskDto[]>; // Block in Anzeigereihenfolge
   restoreTasks(tasks: TaskDto[]): Promise<TaskDto[]>;                // neue IDs, alter Sort-Key
+  trashTasks(ids: string[]): Promise<TaskDto[]>;                      // Papierkorb (ADR-031), gleiche IDs
+  untrashTasks(ids: string[]): Promise<TaskDto[]>;
+  purgeTasks(ids: string[]): Promise<number>;                         // nur aus dem Papierkorb
+  emptyTaskTrash(): Promise<number>;
   setDues(dues: TaskDueDto[]): Promise<TaskDto[]>;                   // {id, due|null} je Task (ADR-026)
   searchTasks(text: string, limit: number): Promise<TaskSummaryDto[]>; // Titel + Notiz, Teilwort (ADR-027)
   notes: NotesClient; // N5-06: listFolders, listItems, get, create, updateBody(id, text, baseRev), discardIfEmpty,
