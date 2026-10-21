@@ -5,7 +5,7 @@
    */
   import type { TaskSummaryDto } from "@tasks/core-client";
   import { Hash, StickyNote } from "../../icons";
-  import type { DueLabel } from "../../lib/format-date";
+  import { trashedLabel, type DueLabel } from "../../lib/format-date";
 
   interface Props {
     task: TaskSummaryDto;
@@ -19,6 +19,8 @@
   }
 
   let { task, due, dueText = due?.text, listName, size = "row" }: Props = $props();
+  /** Im Papierkorb statt der Fälligkeit: wann gelöscht (ADR-031). */
+  const trashed = $derived(task.trashedAt ? trashedLabel(task.trashedAt) : null);
 
   const done = $derived(task.status === "done");
   const icon = $derived(size === "card" ? 12 : 14);
@@ -26,7 +28,9 @@
 
 <span class="meta {size}" class:done>
   {#if listName}<span class="list"><Hash size={12} strokeWidth={2} aria-hidden="true" />{listName}</span>{/if}
-  {#if due && dueText}<span class="due {due.tone}" title={due.long}>{dueText}</span>{/if}
+  {#if trashed}
+    <span class="trashed" title={trashed.long}>{trashed.text}</span>
+  {:else if due && dueText}<span class="due {due.tone}" title={due.long}>{dueText}</span>{/if}
   {#if task.hasNotes}
     <span class="notes" title="Hat Notizen" aria-label="Hat Notizen">
       <StickyNote size={icon} strokeWidth={1.75} aria-hidden="true" />
@@ -76,5 +80,8 @@
   .notes {
     display: grid;
     place-items: center;
+  }
+  .trashed {
+    white-space: nowrap;
   }
 </style>

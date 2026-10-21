@@ -9,7 +9,7 @@ const TODAY_DATE = new Intl.DateTimeFormat("de-DE", { weekday: "long", day: "num
  */
 export function viewSubtitle(
   route: Route,
-  counts: { inbox: number; today: number; overdue: number },
+  counts: { inbox: number; today: number; overdue: number; trash?: number },
   now: Date = new Date(),
 ): string {
   const open = (n: number) => (n > 0 ? `${formatCount(n)} offen` : "Nichts offen");
@@ -19,5 +19,9 @@ export function viewSubtitle(
     return parts.join(" · ");
   }
   if (route.view === "inbox") return open(counts.inbox);
+  if (route.view === "trash") {
+    const n = counts.trash ?? 0;
+    return n > 0 ? `${formatCount(n)} ${n === 1 ? "Task" : "Tasks"} · nach 30 Tagen endgültig gelöscht` : "";
+  }
   return "";
 }

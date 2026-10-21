@@ -9,7 +9,7 @@
   import { toasts } from "../../components/toasts.svelte";
   import { useCoreClient } from "../../lib/context";
   import type { ListsState } from "../../lib/lists.svelte";
-  import { deleteManyWithUndo, moveManyWithUndo } from "../../lib/task-actions";
+  import { trashManyWithUndo, moveManyWithUndo } from "../../lib/task-actions";
   import { listName } from "../../lib/views";
   import { BoardState, type BoardColumn as Column } from "./board-state.svelte";
   import BoardColumn, { CARD_SLOT } from "./BoardColumn.svelte";
@@ -194,7 +194,8 @@
     if (!task || !column) return;
     moveCursorAway(task.id);
     column.rows.hide([task.id]);
-    if (!(await deleteManyWithUndo(client, [task.id]))) await column.rows.unhide([task.id]);
+    if (await trashManyWithUndo(client, [task.id])) column.rows.release([task.id]);
+    else await column.rows.unhide([task.id]);
   }
 
   function open(task: TaskSummaryDto) {

@@ -9,6 +9,7 @@ export interface TaskLike {
   due: DueDto | null;
   sortKey: string;
   completedAt: string | null;
+  trashedAt: string | null;
 }
 
 export interface ViewContext {
@@ -25,6 +26,8 @@ function dueBy(due: DueDto, day: LocalDayDto): boolean {
 /** Gehört die Task zur Ansicht – ohne Statusfilter (wie `TaskQuery::matches` im Core). */
 export function inView(task: TaskLike, ctx: ViewContext): boolean {
   const { route } = ctx;
+  // Papierkorb nur in seiner Ansicht (ADR-031).
+  if ((task.trashedAt != null) !== (route.view === "trash")) return false;
   switch (route.view) {
     case "inbox":
       return task.listId === ctx.inboxId;
@@ -41,9 +44,10 @@ export function inView(task: TaskLike, ctx: ViewContext): boolean {
   }
 }
 
-/** Erfüllt die Task auch den Statusfilter der Ansicht (offen, außer in „Erledigt“)? */
+/** Erfüllt die Task auch den Statusfilter der Ansicht (offen, außer in „Erledigt“ und im Papierkorb)? */
 export function shownInView(task: TaskLike, ctx: ViewContext): boolean {
-  return inView(task, ctx) && (ctx.route.view === "completed" || task.status === "open");
+  const anyStatus = ctx.route.view === "completed" || ctx.route.view === "trash";
+  return inView(task, ctx) && (anyStatus || task.status === "open");
 }
 
 /** Heute/Geplant sind nach Fälligkeit sortiert (ADR-026). */
@@ -69,6 +73,7 @@ export function dueInstant(due: DueDto | null): number {
 export function compareInView(a: TaskLike, b: TaskLike, route: Route): number {
   const cmp = (x: string, y: string) => (x < y ? -1 : x > y ? 1 : 0);
   if (route.view === "completed") return cmp(b.completedAt ?? "", a.completedAt ?? "") || cmp(a.id, b.id);
+  if (route.view === "trash") return cmp(b.trashedAt ?? "", a.trashedAt ?? "") || cmp(a.id, b.id);
   if (sortedByDue(route)) {
     return dueInstant(a.due) - dueInstant(b.due) || cmp(a.sortKey, b.sortKey) || cmp(a.id, b.id);
   }

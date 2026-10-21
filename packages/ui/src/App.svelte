@@ -45,12 +45,13 @@
   import { formatKeys, ShortcutRegistry, type Shortcut } from "./lib/shortcuts";
   import { AppMode, type Mode } from "./lib/app-mode.svelte";
   import { density } from "./lib/density.svelte";
+  import PurgeDialog from "./features/task-list/PurgeDialog.svelte";
   import type * as NotesChunk from "./features/notes/index";
   import { SyncState } from "./lib/sync.svelte";
   import { todayPlus } from "./lib/format-date";
   import { viewSubtitle } from "./lib/subtitle";
   import { routeListId, routeTitle } from "./lib/views";
-  import { completedBefore, deleteManyWithUndo } from "./lib/task-actions";
+  import { completedBefore, trashManyWithUndo } from "./lib/task-actions";
   import CleanupCompletedDialog from "./features/task-list/CleanupCompletedDialog.svelte";
   import { addDays } from "./lib/local-day";
   import { followSystemTheme } from "./theme/theme";
@@ -106,6 +107,18 @@
   let showNewList = $state(false);
   /** „Erledigte aufräumen“ (P4-06): Menü der Ansicht und Bestätigung. */
   let completedMenu = $state<{ x: number; y: number } | null>(null);
+  /** Papierkorb (ADR-031): Menü der Kopfzeile und Bestätigung „Papierkorb leeren“. */
+  let trashMenu = $state<{ x: number; y: number } | null>(null);
+  let emptyTrashConfirm = $state(false);
+
+  async function emptyTrash() {
+    try {
+      const n = await client.emptyTaskTrash();
+      toasts.show({ message: n === 1 ? "1 Task endgültig gelöscht" : `${n} Tasks endgültig gelöscht` });
+    } catch (e) {
+      toasts.show({ message: `Nicht gelöscht: ${(e as Error).message}`, tone: "danger" });
+    }
+  }
   /** Menü der Kopfzeile im schmalen Fenster (P5-09). */
   let viewMenu = $state<{ x: number; y: number; anchor: Element } | null>(null);
   let cleanup = $state<{ ids: string[]; cutoff: Date } | null>(null);
@@ -283,7 +296,7 @@
   function confirmCleanup() {
     const ids = cleanup?.ids ?? [];
     cleanup = null;
-    if (ids.length > 0) void deleteManyWithUndo(client, ids);
+    if (ids.length > 0) void trashManyWithUndo(client, ids);
   }
 
   // --- Befehlspalette (P4-05) -----------------------------------------------------------------
@@ -352,7 +365,7 @@
     const task = taskList?.items().find((t) => t.id === id);
     openId = null;
     if (task && taskList) void taskList.deleteTask(task);
-    else void deleteManyWithUndo(client, [id]);
+    else void trashManyWithUndo(client, [id]);
   }
 
   // --- Tastatur (ui-guidelines §5) -------------------------------------------------------------
@@ -538,6 +551,9 @@
     if (route.view === "completed") {
       items.push({ label: "Aktionen für Erledigt…", icon: Ellipsis, action: () => (completedMenu = { x: at.x, y: at.y }) });
     }
+    if (route.view === "trash") {
+      items.push({ label: "Papierkorb leeren…", icon: Trash, danger: true, action: () => (emptyTrashConfirm = true) });
+    }
     return items;
   }
 
@@ -556,7 +572,7 @@
   }
 
   shortcuts.setModal(
-    () => showShortcuts || showSettings || showNewTask || !!deleteTarget || !!renameDialog || !!duePrompt || showPalette || showNewList || !!cleanup,
+    () => showShortcuts || showSettings || showNewTask || !!deleteTarget || !!renameDialog || !!duePrompt || showPalette || showNewList || !!cleanup || emptyTrashConfirm || !!taskList?.dialogOpen(),
   );
   shortcuts.setScope(() => appMode.mode);
   // Überall (beide Modi).
@@ -914,6 +930,21 @@
           ondone={() => taskList?.exitSelection()}
         >
           {#snippet actions()}
+            {#if route.view === "trash"}
+              <IconButton
+                label="Wiederherstellen"
+                icon={Undo}
+                disabled={selection.count === 0}
+                onclick={() => void taskList?.restoreSelected()}
+              />
+              <IconButton
+                label="Endgültig löschen"
+                shortcut="Entf"
+                icon={Trash}
+                disabled={selection.count === 0}
+                onclick={() => void taskList?.deleteSelected()}
+              />
+            {:else}
             <IconButton
               label="Erledigt"
               shortcut="E"
@@ -951,6 +982,7 @@
               disabled={selection.count === 0}
               onclick={() => void taskList?.deleteSelected()}
             />
+            {/if}
           {/snippet}
         </SelectionBar>
       {:else if density.narrow}
@@ -997,6 +1029,16 @@
               label="Listenaktionen"
               icon={Ellipsis}
               onclick={(e) => openListMenuAt(currentList!, e.currentTarget)}
+            />
+          {/if}
+          {#if route.view === "trash"}
+            <IconButton
+              label="Aktionen für Papierkorb"
+              icon={Ellipsis}
+              onclick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                trashMenu = { x: r.left, y: r.bottom + 4 };
+              }}
             />
           {/if}
           {#if route.view === "completed"}
@@ -1097,6 +1139,31 @@
 {#if viewMenu}
   {@const at = viewMenu}
   <Menu label="Ansicht und Aktionen" items={viewMenuItems(at)} x={at.x} y={at.y} onclose={() => (viewMenu = null)} />
+{/if}
+{#if trashMenu}
+  <Menu
+    label="Aktionen für Papierkorb"
+    items={[
+      {
+        label: "Papierkorb leeren…",
+        icon: Trash,
+        danger: true,
+        action: () => (emptyTrashConfirm = true),
+      },
+    ]}
+    x={trashMenu.x}
+    y={trashMenu.y}
+    onclose={() => (trashMenu = null)}
+  />
+{/if}
+{#if emptyTrashConfirm}
+  <PurgeDialog
+    subject={lists.counts.trash > 0
+      ? `alle ${lists.counts.trash === 1 ? "1 Task" : `${lists.counts.trash} Tasks`} im Papierkorb`
+      : "alle Tasks im Papierkorb"}
+    onconfirm={() => void emptyTrash()}
+    onclose={() => (emptyTrashConfirm = false)}
+  />
 {/if}
 {#if completedMenu}
   <Menu

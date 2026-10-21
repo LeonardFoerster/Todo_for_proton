@@ -13,8 +13,16 @@
   import type { Route } from "../../lib/router.svelte";
   import { keepTime, todayPlus } from "../../lib/format-date";
   import { groupEntries, isOverdue, type Entry } from "../../lib/groups";
-  import { completeManyWithUndo, deleteManyWithUndo, moveManyWithUndo, setDuesWithUndo } from "../../lib/task-actions";
-  import { listName, routeIcon, SMART_VIEWS } from "../../lib/views";
+  import {
+    completeManyWithUndo,
+    moveManyWithUndo,
+    purgeMany,
+    setDuesWithUndo,
+    trashManyWithUndo,
+    untrashWithToast,
+  } from "../../lib/task-actions";
+  import { listName, routeIcon, viewMeta } from "../../lib/views";
+  import PurgeDialog from "./PurgeDialog.svelte";
   import { SelectionState } from "./selection.svelte";
   import { TaskListState, toSummary } from "./task-list-state.svelte";
   import GroupHeading from "./GroupHeading.svelte";
@@ -48,8 +56,10 @@
   const showListNames = view.view !== "list" && view.view !== "inbox";
   const names = $derived(new Map(lists.lists.map((l) => [l.id, listName(l)])));
   const EmptyIcon = routeIcon(view);
-  const emptyText =
-    view.view === "list" ? "Diese Liste ist leer." : (SMART_VIEWS.find((v) => v.kind === view.view)?.empty ?? "");
+  const emptyText = view.view === "list" ? "Diese Liste ist leer." : viewMeta(view.view).empty;
+  /** Papierkorb (ADR-031): kein Abhaken, kein Detail; Löschen ist endgültig (mit Bestätigung). */
+  const inTrash = view.view === "trash";
+  let purgeConfirm = $state<TaskSummaryDto[] | null>(null);
 
   /** Mehrfachauswahl dieser Ansicht (P0); endet mit der Ansicht. */
   export const selection = new SelectionState();
@@ -133,6 +143,7 @@
   const completedLeave = view.view !== "completed";
 
   async function toggle(task: TaskSummaryDto, done: boolean) {
+    if (inTrash) return;
     if (done && completedLeave) moveCursorAway(new Set([task.id]));
     const before = rows.setDone(task.id, done);
     if (done && completedLeave) revealCursor();
@@ -154,7 +165,7 @@
 
   function open(task: TaskSummaryDto) {
     selectedId = task.id;
-    onopen?.(task.id);
+    if (!inTrash) onopen?.(task.id);
   }
 
   // --- Mehrfachauswahl -------------------------------------------------------------------------
@@ -388,15 +399,22 @@
     void focusSelected();
   }
 
-  /** Optimistisch ausblenden, löschen; bei Fehler wieder einblenden (FIX-08). */
+  /** Optimistisch ausblenden, in den Papierkorb legen; bei Fehler wieder einblenden (FIX-08). Im Papierkorb:
+   *  erst bestätigen, dann endgültig löschen. */
   async function deleteMany(targets: readonly TaskSummaryDto[]) {
     if (targets.length === 0) return;
+    if (inTrash) {
+      purgeConfirm = [...targets];
+      return;
+    }
     const ids = targets.map((t) => t.id);
     moveCursorAway(new Set(ids));
     rows.hide(ids);
     revealCursor();
-    if (await deleteManyWithUndo(client, ids)) selection.clear();
-    else await rows.unhide(ids);
+    if (await trashManyWithUndo(client, ids)) {
+      rows.release(ids);
+      selection.clear();
+    } else await rows.unhide(ids);
   }
 
   export async function deleteTask(task: TaskSummaryDto | undefined = rows.items.find((t) => t.id === selectedId)) {
@@ -405,6 +423,40 @@
 
   export async function deleteSelected() {
     await deleteMany(selectedRows());
+  }
+
+  /** Bestätigt: endgültig löschen (optimistisch ausgeblendet, bei Fehler zurück). */
+  async function purge(targets: readonly TaskSummaryDto[]) {
+    const ids = targets.map((t) => t.id);
+    moveCursorAway(new Set(ids));
+    rows.hide(ids);
+    revealCursor();
+    if ((await purgeMany(client, targets)) !== null) {
+      rows.release(ids);
+      selection.clear();
+    } else await rows.unhide(ids);
+  }
+
+  /** „Wiederherstellen“ (Papierkorb): Zeilen verlassen die Ansicht, kommen in ihrer Liste zurück. */
+  async function restore(targets: readonly TaskSummaryDto[]) {
+    if (targets.length === 0) return;
+    const ids = targets.map((t) => t.id);
+    moveCursorAway(new Set(ids));
+    rows.hide(ids);
+    revealCursor();
+    if (await untrashWithToast(client, ids)) {
+      rows.release(ids);
+      selection.clear();
+    } else await rows.unhide(ids);
+  }
+
+  /** Bestätigung „Endgültig löschen“ offen? (App sperrt dann die Kürzel.) */
+  export function dialogOpen(): boolean {
+    return purgeConfirm !== null;
+  }
+
+  export async function restoreSelected() {
+    await restore(selection.active ? selectedRows() : rows.items.filter((t) => t.id === selectedId));
   }
 
   /** Alle ausgewählten abhaken (`done`) bzw. wieder öffnen. */
@@ -464,6 +516,12 @@
 
   function bulkMenuItems(at: { x: number; y: number }): MenuItem[] {
     const n = tasks(selection.count);
+    if (inTrash) {
+      return [
+        { label: `${n} wiederherstellen`, icon: Undo, action: () => void restoreSelected() },
+        { label: `${n} endgültig löschen…`, icon: Trash, shortcut: "Entf", danger: true, action: () => void deleteSelected() },
+      ];
+    }
     const items: MenuItem[] = [];
     if (flags.hasOpen) {
       items.push({ label: `${n} erledigen`, icon: CircleCheck, shortcut: "E", action: () => void completeSelected(true) });
@@ -503,6 +561,12 @@
 
   function menuItems(task: TaskSummaryDto, at: { x: number; y: number }): MenuItem[] {
     if (selection.active && selection.has(task.id)) return bulkMenuItems(at);
+    if (inTrash) {
+      return [
+        { label: "Wiederherstellen", icon: Undo, action: () => void restore([task]) },
+        { label: "Endgültig löschen…", icon: Trash, shortcut: "Entf", danger: true, action: () => void deleteTask(task) },
+      ];
+    }
     const i = rows.items.findIndex((t) => t.id === task.id);
     const done = task.status === "done";
     return [
@@ -566,7 +630,7 @@
     <div class="empty">
       <span class="empty-icon"><EmptyIcon size={28} strokeWidth={1.5} aria-hidden="true" /></span>
       <p>{emptyText}</p>
-      {#if onnewtask && view.view !== "completed"}
+      {#if onnewtask && view.view !== "completed" && !inTrash}
         <Button icon={Plus} onclick={onnewtask} title="Neue Task (N)">Neue Task</Button>
       {/if}
     </div>
@@ -602,6 +666,7 @@
             ontoggle={toggle}
             onopen={rowClick}
             ondelete={(t) => void deleteTask(t)}
+            onrestore={inTrash ? (t) => void restore([t]) : undefined}
             ondragstart={sortable ? startDrag : undefined}
           />
         {/if}
@@ -627,6 +692,16 @@
     x={menu.x}
     y={menu.y}
     onclose={() => (menu = null)}
+  />
+{/if}
+{#if purgeConfirm}
+  <PurgeDialog
+    subject={purgeConfirm.length === 1 ? `„${shortTitle(purgeConfirm[0].title)}“` : tasks(purgeConfirm.length)}
+    onconfirm={() => {
+      const targets = purgeConfirm;
+      if (targets) void purge(targets);
+    }}
+    onclose={() => (purgeConfirm = null)}
   />
 {/if}
 {#if moveMenu}

@@ -1,9 +1,9 @@
 /** Mini-Router über den URL-Hash (`#/today`, `#/list/<id>`): Zurück/Vor funktioniert, kein SvelteKit. */
 
-export type SmartViewKind = "inbox" | "today" | "upcoming" | "all" | "completed";
+export type SmartViewKind = "inbox" | "today" | "upcoming" | "all" | "completed" | "trash";
 export type Route = { view: SmartViewKind } | { view: "list"; listId: string };
 
-const SMART: readonly SmartViewKind[] = ["inbox", "today", "upcoming", "all", "completed"];
+const SMART: readonly SmartViewKind[] = ["inbox", "today", "upcoming", "all", "completed", "trash"];
 export const DEFAULT_ROUTE: Route = { view: "inbox" };
 
 export function parseHash(hash: string): Route {

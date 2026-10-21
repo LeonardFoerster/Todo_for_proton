@@ -4,11 +4,11 @@
   import logo from "../../assets/logo.png";
   import Button from "../../components/Button.svelte";
   import IconButton from "../../components/IconButton.svelte";
-  import { ArrowLeftRight, Hash, NotebookPen, PanelLeft, Plus, Search } from "../../icons";
+  import { ArrowLeftRight, Hash, NotebookPen, PanelLeft, Plus, Search, Trash } from "../../icons";
   import { MODE_LABELS, type Mode } from "../../lib/app-mode.svelte";
   import { formatCount, type ListsState } from "../../lib/lists.svelte";
   import { routeHash, type Route } from "../../lib/router.svelte";
-  import { SMART_VIEWS } from "../../lib/views";
+  import { SMART_VIEWS, TRASH_VIEW } from "../../lib/views";
   import NewListInput from "./NewListInput.svelte";
   import SidebarItem from "./SidebarItem.svelte";
   import SyncFooter from "./SyncFooter.svelte";
@@ -246,6 +246,18 @@
       {/if}
     </ul>
   </div>
+  <!-- Papierkorb unten, wie im Modus „Notes“ (ADR-031). -->
+  <div class="footer-nav">
+    <SidebarItem
+      href={routeHash({ view: "trash" })}
+      icon={Trash}
+      label={TRASH_VIEW.label}
+      count={formatCount(lists.counts.trash)}
+      active={route.view === "trash"}
+      {collapsed}
+      {onnavigate}
+    />
+  </div>
   </div>
 
   <SyncFooter {status} {account} {collapsed} {onlogin} {onsync} {onsettings} />
@@ -450,5 +462,14 @@
     color: var(--color-text-muted);
     font-size: var(--text-sm);
     line-height: 1.4;
+  }
+  .footer-nav {
+    padding: var(--space-2);
+    border-top: 1px solid var(--color-border);
+  }
+  .collapsed .footer-nav {
+    display: flex;
+    justify-content: center;
+    border-top: 0;
   }
 </style>

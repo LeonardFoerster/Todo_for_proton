@@ -2,7 +2,7 @@
   import type { TaskSummaryDto } from "@tasks/core-client";
   import Checkbox from "../../components/Checkbox.svelte";
   import SelectBox from "../../components/SelectBox.svelte";
-  import { GripVertical, Trash } from "../../icons";
+  import { GripVertical, Trash, Undo } from "../../icons";
   import { dueLabel, dueToInputTime } from "../../lib/format-date";
   import type { DueMode } from "../../lib/groups";
   import { priorityInLabel, priorityLabel } from "./priority";
@@ -27,6 +27,8 @@
     dragging?: boolean;
     /** `time`: Der Tag steht in der Abschnittsüberschrift – nur eine Uhrzeit zeigen (P4). */
     dueMode?: DueMode;
+    /** Papierkorb (ADR-031): kein Haken; „Wiederherstellen“ statt Abhaken, Löschen ist endgültig. */
+    onrestore?: (task: TaskSummaryDto) => void;
   }
 
   let {
@@ -41,7 +43,9 @@
     ondragstart,
     dragging = false,
     dueMode = "full",
+    onrestore,
   }: Props = $props();
+  const inTrash = $derived(task.trashedAt != null);
 
   const done = $derived(task.status === "done");
   const due = $derived(task.due ? dueLabel(task.due) : null);
@@ -80,6 +84,9 @@
     </span>
   {/if}
   {#if selectable}<SelectBox {checked} />{/if}
+  {#if inTrash}
+    <span class="trash-mark" aria-hidden="true"><Trash size={16} strokeWidth={1.75} /></span>
+  {:else}
   <Checkbox
     checked={done}
     label={done ? `Wieder öffnen: ${task.title}` : `Erledigt: ${task.title}`}
@@ -88,16 +95,32 @@
     tooltip={priority || undefined}
     onchange={(value) => ontoggle(task, value)}
   />
+  {/if}
   <span class="title">{task.title}</span>
   <TaskMeta {task} {due} {dueText} {listName} />
   {#if ondelete}
     <span class="actions">
+      {#if onrestore && inTrash}
+        <button
+          type="button"
+          class="action restore"
+          tabindex="-1"
+          aria-label="Wiederherstellen"
+          data-tooltip="Wiederherstellen"
+          onclick={(e) => {
+            e.stopPropagation();
+            onrestore(task);
+          }}
+        >
+          <Undo size={16} strokeWidth={1.75} aria-hidden="true" />
+        </button>
+      {/if}
       <button
         type="button"
         class="action"
         tabindex="-1"
-        aria-label="Löschen"
-        data-tooltip="Löschen   Entf"
+        aria-label={inTrash ? "Endgültig löschen" : "Löschen"}
+        data-tooltip={inTrash ? "Endgültig löschen   Entf" : "Löschen   Entf"}
         onclick={(e) => {
           e.stopPropagation();
           ondelete(task);
@@ -232,5 +255,17 @@
   .action:hover {
     background: var(--color-bg-active);
     color: var(--color-danger);
+  }
+  .action.restore:hover {
+    color: var(--color-accent-text);
+  }
+  /* Platzhalter des Hakens im Papierkorb: gleiche Breite, damit die Titel bündig bleiben. */
+  .trash-mark {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    color: var(--color-text-muted);
   }
 </style>

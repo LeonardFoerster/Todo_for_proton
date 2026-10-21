@@ -213,6 +213,7 @@ Theme-Regeln:
 | `SelectionBar` (Aktionsleiste, P0) | ersetzt im Auswahlmodus die Kopfzeilen-Aktionen (gleiche Höhe, keine zweite Zeile): Tri-State „Alle auswählen" · Zähler „3 ausgewählt" (Live-Region) · Erledigt · Wieder öffnen · Verschieben nach… (Menü, Eingang zuerst, aktuelle Liste deaktiviert) · Löschen · „Fertig". Aktionen bei leerer Auswahl deaktiviert; Erledigt/Wieder öffnen je nach offenen/erledigten in der Auswahl |
 | `TaskMeta` (P5-03) | Meta-Angaben in Zeile und Board-Karte, gleiche Reihenfolge: `#Liste` (nur Sammelansichten) · Fälligkeit (rot nur überfällig, Akzent heute) · Notiz-Icon (`sticky-note`) |
 | Zähler der Seitenleiste (P5-06) | eine Zahl je Eintrag; mit Überfälligen als rote Pille (`--color-danger-subtle`), Aufteilung im Tooltip und im Namen („3, davon 1 überfällig") |
+| Papierkorb der Tasks (N6-03, ADR-031) | Seitenleiste unten „Papierkorb" mit Zahl (wie im Modus „Notes"); Ansicht zuletzt gelöschte zuerst, Unterzeile „n Tasks · nach 30 Tagen endgültig gelöscht"; Zeile ohne Haken (Papierkorb-Symbol), Meta „vor 3 Tagen gelöscht" (Tooltip: Restfrist), beim Überfahren „Wiederherstellen" und „Endgültig löschen"; Kontextmenü und Auswahlleiste ebenso; `Entf` und „Papierkorb leeren…" (`⋯` der Kopfzeile) fragen nach (`PurgeDialog`); kein Detail-Panel im Papierkorb |
 | `TextInput`, `Textarea` | 32 px, Rahmen `--color-border`, Fokus: Akzent-Rahmen + Focus-Ring |
 | `Menu` / Kontextmenü | Popover mit `--shadow-popover`, Tastaturnavigation, Shortcuts rechtsbündig gedimmt; über die Popover-API in der obersten Ebene (`lib/popover.ts`), damit es auch in und über modalen Dialogen bedienbar ist (P6-02) |
 | `Dialog` | für destruktive Bestätigungen, Einstellungen und Eingabefenster; Esc schließt. `bare`: ohne Kopf (Name nur über `aria-label`), `placement="top"`: fest bei 15 vh, wächst nur nach unten; unter 700 px ein Bereich, der unten aufgeht (volle Breite, max. 85 dvh) |
@@ -233,7 +234,7 @@ Icons: **Lucide** (ISC-Lizenz), einzeln als SVG importiert (Tree-Shaking), 16 px
 | Navigieren | `↑/↓` oder `J/K` |
 | Erledigt umschalten | `Leertaste` bzw. `E` |
 | Bearbeiten / Detail öffnen | `Enter` |
-| Löschen | `Entf` (mit Rückgängig-Toast, kein Dialog) |
+| Löschen = in den Papierkorb (N6-03) | `Entf` (Rückgängig im Toast, gleiche IDs; **im Papierkorb** endgültig, mit Bestätigung) |
 | Fälligkeit: heute / morgen (Uhrzeit bleibt, Rückgängig) | `T` / `Umschalt+T` (P4-04; Zeile, Karte oder Auswahl) |
 | Fälligkeit wählen… (Menü: Heute, Morgen, Nächster Montag, In einer Woche, Datum wählen…, Entfernen) | `D` (auch Auswahlleiste und Kontextmenü der Zeile) |
 | Kürzel-Übersicht | `?` |

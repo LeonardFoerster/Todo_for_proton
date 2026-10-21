@@ -78,3 +78,22 @@ function systemTimeZone(): string {
 export function todayPlus(days: number, now: Date = new Date()): DueDto {
   return { kind: "date", date: isoDate(addDays(now, days)) };
 }
+
+/** Tage bis zum automatischen Löschen im Papierkorb (wie `TASK_TRASH_RETENTION_MS` im Core). */
+export const TRASH_RETENTION_DAYS = 30;
+
+/** „heute gelöscht“, „gestern gelöscht“, „vor 3 Tagen gelöscht“ + Tooltip mit der Restfrist (ADR-031). */
+export function trashedLabel(trashedAt: string, now: Date = new Date()): { text: string; long: string } {
+  const at = new Date(trashedAt);
+  const days = Math.max(
+    0,
+    Math.round(
+      (new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() -
+        new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime()) /
+        86_400_000,
+    ),
+  );
+  const text = days === 0 ? "heute gelöscht" : days === 1 ? "gestern gelöscht" : `vor ${days} Tagen gelöscht`;
+  const left = Math.max(0, TRASH_RETENTION_DAYS - days);
+  return { text, long: left <= 1 ? "Wird demnächst endgültig gelöscht" : `Wird in ${left} Tagen endgültig gelöscht` };
+}

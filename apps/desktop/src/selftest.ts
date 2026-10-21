@@ -338,7 +338,7 @@ const p709a: Step[] = [
       (await until("S2", () => byRole("option", "S2"))).click();
       key(document.activeElement ?? document.body, "Delete");
       await until("S2 weg", () => order().join() === "S4,S3,S1");
-      await until("Toast", () => document.querySelector('[role="status"]')?.textContent?.includes("gelöscht"));
+      await until("Toast", () => document.querySelector('[role="status"]')?.textContent?.includes("Papierkorb"));
       await sleep(400);
       return order().join(" ");
     },
@@ -758,7 +758,10 @@ const row = (title: string) => until(`Zeile ${title}`, () => byRole("option", ti
 const focused = (): HTMLElement => (document.activeElement as HTMLElement | null) ?? document.body;
 
 /** Zählt Aufrufe einer Client-Methode (dieselbe Instanz wie die UI). */
-function countCalls(client: CoreClient, method: "completeTasks" | "deleteTasks" | "moveTasks" | "restoreTasks" | "getTask") {
+function countCalls(
+  client: CoreClient,
+  method: "completeTasks" | "deleteTasks" | "trashTasks" | "moveTasks" | "restoreTasks" | "getTask",
+) {
   const original = client[method] as (...args: never[]) => Promise<unknown>;
   const counter = { calls: 0, restore: () => void (client[method] = original as never) };
   client[method] = ((...args: never[]) => {
@@ -901,7 +904,8 @@ const p0sel: Step[] = [
   [
     `${SELECT_N} löschen: 1 Aufruf, sofort leer, Rückgängig an alter Stelle`,
     async (client) => {
-      const deletes = countCalls(client, "deleteTasks");
+      // Löschen = Papierkorb (ADR-031): ein `trashTasks`, Rückgängig mit gleichen IDs.
+      const deletes = countCalls(client, "trashTasks");
       const gets = countCalls(client, "getTask");
       try {
         const before = await titlesOf(client, "Auswahl");
@@ -914,7 +918,7 @@ const p0sel: Step[] = [
         const painted = performance.now() - t0;
         if (!empty) throw new Error("Liste nicht sofort leer");
         await until("Toast", () => byRole("button", "Rückgängig"));
-        if (deletes.calls !== 1) throw new Error(`${deletes.calls} deleteTasks`);
+        if (deletes.calls !== 1) throw new Error(`${deletes.calls} trashTasks`);
         (await until("Rückgängig", () => byRole("button", "Rückgängig"))).click();
         await until("zurück", () => visibleTitles(3) === "W001,W002,W003", 8000);
         const after = await titlesOf(client, "Auswahl");

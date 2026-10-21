@@ -36,35 +36,57 @@ function failed(what: string, e: unknown) {
 }
 
 /**
- * Löscht in **einem** Aufruf je 2 000 Tasks (Core schreibt Tombstones) und bietet „Rückgängig“ an: Das legt alle
- * Tasks mit allen Feldern in einem Aufruf neu an – mit neuen IDs, an ihrer alten Stelle (alter
- * Sort-Key, ADR-021). Liefert die gelöschten Tasks bzw. `null` bei Fehler (Toast ist gezeigt,
- * nichts ist gelöscht).
+ * „Löschen“ in der UI (ADR-031): legt je 2 000 Tasks in einem Aufruf in den Papierkorb und bietet
+ * „Rückgängig“ an – das holt genau diese Tasks mit **gleichen IDs** an ihren alten Platz zurück.
+ * Liefert die geänderten Tasks bzw. `null` bei Fehler (Toast ist gezeigt, nichts ist geändert).
  */
-export async function deleteManyWithUndo(
-  client: CoreClient,
-  ids: readonly string[],
-  onRestored?: (tasks: TaskDto[]) => void,
-): Promise<TaskDto[] | null> {
-  let deleted: TaskDto[];
+export async function trashManyWithUndo(client: CoreClient, ids: readonly string[]): Promise<TaskDto[] | null> {
+  let trashed: TaskDto[];
   try {
-    deleted = await inChunks(ids, (chunk) => client.deleteTasks(chunk));
+    trashed = await inChunks(ids, (chunk) => client.trashTasks(chunk));
   } catch (e) {
     failed("Nicht gelöscht", e);
     return null;
   }
-  if (deleted.length === 0) return deleted;
+  if (trashed.length === 0) return trashed;
   toasts.show({
-    message: `${subject(deleted)} gelöscht`,
+    message: `${subject(trashed)} in den Papierkorb gelegt`,
     actionLabel: "Rückgängig",
     timeoutMs: 6000,
     onAction: () =>
-      void inChunks(deleted, (chunk) => client.restoreTasks(chunk)).then(
-        (restored) => onRestored?.(restored),
-        (e: unknown) => failed("Wiederherstellen fehlgeschlagen", e),
-      ),
+      void untrashMany(client, trashed.map((t) => t.id)),
   });
-  return deleted;
+  return trashed;
+}
+
+/** Aus dem Papierkorb zurückholen (Rückgängig, „Wiederherstellen“); Fehler als Toast. */
+export async function untrashMany(client: CoreClient, ids: readonly string[]): Promise<TaskDto[] | null> {
+  try {
+    return await inChunks(ids, (chunk) => client.untrashTasks(chunk));
+  } catch (e) {
+    failed("Wiederherstellen fehlgeschlagen", e);
+    return null;
+  }
+}
+
+/** „Wiederherstellen“ im Papierkorb mit Bestätigung im Toast. */
+export async function untrashWithToast(client: CoreClient, ids: readonly string[]): Promise<TaskDto[] | null> {
+  const restored = await untrashMany(client, ids);
+  if (restored && restored.length > 0) toasts.show({ message: `${subject(restored)} wiederhergestellt` });
+  return restored;
+}
+
+/** Endgültig löschen (nur aus dem Papierkorb, nach Bestätigung); Fehler als Toast. */
+export async function purgeMany(client: CoreClient, tasks: readonly { id: string; title: string }[]): Promise<number | null> {
+  let n = 0;
+  try {
+    for (const chunk of chunks(tasks)) n += await client.purgeTasks(chunk.map((t) => t.id));
+  } catch (e) {
+    failed("Nicht gelöscht", e);
+    return null;
+  }
+  if (n > 0) toasts.show({ message: `${n === 1 && tasks.length === 1 ? subject(tasks) : `${n} ${n === 1 ? "Task" : "Tasks"}`} endgültig gelöscht` });
+  return n;
 }
 
 /**

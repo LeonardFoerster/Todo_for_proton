@@ -204,7 +204,7 @@ als `.md`/`.txt` in ihrer Ordnerstruktur; die JSON lässt sich wieder importiere
 **Fertig wenn:** `just check` grün; Szenario „A legt in den Papierkorb, B bearbeitet“ konvergiert (Bearbeitung bleibt,
 Task im Papierkorb).
 
-### [ ] N6-02 · API, Shell, Client
+### [x] N6-02 · API, Shell, Client — 2026-10-21 · 84227f0
 **Schritte:** DTOs (`trashedAt`, `ViewDto::trash`), Commands `trash_tasks`, `untrash_tasks`, `purge_tasks`,
 `empty_task_trash` (+ Auslöser-Liste, Capabilities, IPC-Test), tägliches Aufräumen zusammen mit den Notizen
 (`purge_expired_notes_daily`); `CoreClient`, Tauri-Client, Fake (gleiche Semantik), `view-match.ts`.

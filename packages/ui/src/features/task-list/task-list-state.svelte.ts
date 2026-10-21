@@ -299,6 +299,14 @@ export class TaskListState {
     this.removeMany(ids);
   }
 
+  /**
+   * Ausblenden beenden, ohne neu zu laden: Die Änderung ist gespeichert und hält die Zeilen selbst
+   * draußen (Papierkorb, ADR-031) – „Rückgängig“ (gleiche IDs) bringt sie dann per Event zurück.
+   */
+  release(ids: readonly string[]): void {
+    for (const id of ids) this.hidden.delete(id);
+  }
+
   /** Wieder einblenden (Löschen fehlgeschlagen). */
   async unhide(ids: readonly string[]): Promise<void> {
     for (const id of ids) this.hidden.delete(id);

@@ -12,8 +12,13 @@ const PAGE = 500;
  */
 export class ListsState {
   lists = $state.raw<TaskListDto[]>([]);
-  /** Zähler der Seitenleiste; `overdue` = davon in „Heute“ überfällig (P4-02). */
-  counts = $state<{ inbox: number; today: number; overdue: number }>({ inbox: 0, today: 0, overdue: 0 });
+  /** Zähler der Seitenleiste; `overdue` = davon in „Heute“ überfällig (P4-02), `trash` = Papierkorb (ADR-031). */
+  counts = $state<{ inbox: number; today: number; overdue: number; trash: number }>({
+    inbox: 0,
+    today: 0,
+    overdue: 0,
+    trash: 0,
+  });
   loaded = $state(false);
 
   private recount: ReturnType<typeof setTimeout> | null = null;
@@ -107,11 +112,12 @@ export class ListsState {
   async refreshCounts() {
     // eslint-disable-next-line svelte/prefer-svelte-reactivity -- Momentaufnahme fürs Zählen, nicht reaktiv
     const now = new Date();
-    const [inbox, today] = await Promise.all([
+    const [inbox, today, trash] = await Promise.all([
       this.count(routeQuery({ view: "inbox" })),
       this.count(routeQuery({ view: "today" }), (t) => t.due != null && isOverdue(t.due, now)),
+      this.count(routeQuery({ view: "trash" })),
     ]);
-    this.counts = { inbox: inbox.n, today: today.n, overdue: today.matched };
+    this.counts = { inbox: inbox.n, today: today.n, overdue: today.matched, trash: trash.n };
   }
 
   /** Zählt die Ansicht (bis über `COUNT_CAP`); `matched` = davon `pred` erfüllt – aus denselben Seiten. */
