@@ -56,11 +56,15 @@ const COMMANDS: &[&str] = &[
     "open_external",
     "import_notes_folder",
     "export_data",
+    "background_settings",
+    "set_background_settings",
     "import_data",
     "set_online",
     "app_ready",
     "dev_selftest",
     "dev_selftest_report",
+    "dev_reminders_fired",
+    "dev_close_window",
 ];
 
 fn main() {

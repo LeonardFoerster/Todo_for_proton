@@ -303,6 +303,13 @@ fn only_writing_commands_trigger_a_sync() {
     expect("sync_status", json!({}), 0);
     expect("auth_info", json!({}), 0);
     expect("app_ready", json!({}), 0);
+    // Gerätelokale Einstellungen (ADR-033): kein Sync.
+    expect("background_settings", json!({}), 0);
+    expect(
+        "set_background_settings",
+        json!({ "settings": { "reminders": true, "allDayTime": "08:00", "background": false, "autostart": false } }),
+        0,
+    );
 
     // Notizen: jedes schreibende Command genau eine Meldung, lesende keine.
     let folder = expect("create_note_folder", json!({ "name": "Uni" }), 1);

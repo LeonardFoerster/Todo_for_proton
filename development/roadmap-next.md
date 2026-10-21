@@ -244,7 +244,7 @@ Detail im Papierkorb nur lesend mit „Wiederherstellen“.
 09:00 (einstellbar). Schließen lässt die App im Tray weiterlaufen; Autostart optional. Kein Polling: ein einziger Timer
 auf die nächste Erinnerung, neu berechnet bei Änderungen, Fokus und Aufwachen.
 
-### [ ] N7-01 · ADR-033 + Planer
+### [x] N7-01 · ADR-033 + Planer — 2026-10-21 · 58a96ee
 **Schritte:** ADR-033 (nur lokal, nicht synchronisiert; jedes Gerät meldet selbst; schon gemeldet = je Gerät gemerkt,
 `(task, due)` in einer kleinen Datei im Datenordner; verpasste Erinnerungen beim Start/Aufwachen zusammengefasst, höchstens
 24 h zurück). Reine Planungsfunktion (nächster Zeitpunkt, fällige Meldungen) mit Unit-Tests (ganztägig, Uhrzeit,

@@ -13,7 +13,8 @@ crate-type = ["rlib"]
 tauri-build = { version = "2.7.3", features = [] }
 
 [dependencies]
-tauri = { version = "2.12.4", features = [] }
+# `tray-icon`: Symbol im Tray für den Hintergrundbetrieb (N7, ADR-033).
+tauri = { version = "2.12.4", features = ["tray-icon"] }
 todo-core.workspace = true
 todo-storage-sqlite.workspace = true
 todo-sync = { workspace = true, features = ["zstd-native"] }
@@ -22,6 +23,7 @@ proton-adapter.workspace = true
 # Nur Debug-Builds: Verzeichnis-Backend für die Zwei-Geräte-Abnahme (`src/dev.rs`).
 todo-remote-fs.workspace = true
 async-trait.workspace = true
+futures.workspace = true
 serde.workspace = true
 # `tasks.json` für Export/Import (ADR-032); ohnehin über Tauri im Binary.
 serde_json.workspace = true
@@ -40,7 +42,7 @@ todo-keystore-secret-service.workspace = true
 # Ordnerauswahl für „Ordner importieren…" über das XDG-Desktop-Portal. ashpd ist über oo7 (Secret
 # Service) schon im Binary; nur das Feature `file_chooser` kommt dazu (serde_repr, ebenfalls schon
 # da) – statt tauri-plugin-dialog + rfd (N5-11).
-ashpd = { version = "0.13.13", default-features = false, features = ["tokio", "file_chooser"] }
+ashpd = { version = "0.13.13", default-features = false, features = ["tokio", "file_chooser", "notification"] }
 
 [dev-dependencies]
 tauri = { version = "2.12.4", features = ["test"] }

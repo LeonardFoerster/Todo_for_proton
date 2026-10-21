@@ -63,10 +63,14 @@
     "allow-open-external",
     "allow-import-notes-folder",
     "allow-export-data",
+    "allow-background-settings",
+    "allow-set-background-settings",
     "allow-import-data",
     "allow-set-online",
     "allow-app-ready",
     "allow-dev-selftest",
-    "allow-dev-selftest-report"
+    "allow-dev-selftest-report",
+    "allow-dev-reminders-fired",
+    "allow-dev-close-window"
   ]
 }

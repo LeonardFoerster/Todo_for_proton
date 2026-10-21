@@ -48,6 +48,18 @@ export class TauriCoreClient implements CoreClient {
   deleteTasks: CoreClient["deleteTasks"] = (ids) => invoke("delete_tasks", { ids });
   moveTasks: CoreClient["moveTasks"] = (ids, target) => invoke("move_tasks", { ids, target });
   restoreTasks: CoreClient["restoreTasks"] = (tasks) => invoke("restore_tasks", { tasks });
+  background: CoreClient["background"] = {
+    get: () => invoke("background_settings"),
+    set: (settings) => invoke("set_background_settings", { settings }),
+    onShellAction: (cb) => {
+      const offOpen = subscribe<string>("app://open-task", (taskId) => cb({ kind: "openTask", taskId }));
+      const offNew = subscribe<null>("app://new-task", () => cb({ kind: "newTask" }));
+      return () => {
+        offOpen();
+        offNew();
+      };
+    },
+  };
   data: CoreClient["data"] = {
     exportAll: (today) => invoke("export_data", { today }),
     importFile: () => invoke("import_data"),
@@ -120,4 +132,8 @@ export const devSelftest = {
   suites: (): Promise<string | null> => invoke("dev_selftest"),
   /** Zeile auf stdout der App; `exit` beendet sie danach. */
   report: (line: string, exit = false): Promise<void> => invoke("dev_selftest_report", { line, exit }),
+  /** Bisher gemeldete Erinnerungen (ADR-033). */
+  remindersFired: (): Promise<{ taskId: string; title: string; at: number }[]> => invoke("dev_reminders_fired"),
+  /** Fenster schließen wie mit dem X (Hintergrundbetrieb prüfen). */
+  closeWindow: (): Promise<void> => invoke("dev_close_window"),
 };

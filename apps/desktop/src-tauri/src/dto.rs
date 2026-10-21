@@ -44,6 +44,20 @@ impl ErrorDto {
             message: message.into(),
         }
     }
+
+    pub fn validation(message: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::Validation,
+            message: message.into(),
+        }
+    }
+
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::Internal,
+            message: message.into(),
+        }
+    }
 }
 
 impl From<CoreError> for ErrorDto {

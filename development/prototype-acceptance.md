@@ -239,3 +239,20 @@ um den Eindruck – siehe `ui-guidelines.md` §9.
 | 9 | „Neue Task" (`N`): „Bericht bis fr 14:00 !1 @Arbeit" tippen | Fenster oben, ohne Kopf; „bis fr 14:00", „!1", „@Arbeit" im Text getönt; Chips „Fr, … 14:00", „Hoch", „Arbeit" getönt mit × | |
 | 10 | Chip „Fällig" anklicken, `Esc`; × an „Hoch"; `Tab` in die Notiz, `Strg+Enter` | Popover am Chip, `Esc` schließt nur das Popover; Markierung von „!1" verschwindet; Task mit Notiz angelegt | |
 | 11 | „Weitere anlegen" an, zwei Tasks nacheinander; schmales Fenster | Bestätigungszeile im Fenster; schmal geht das Fenster unten auf, Chips scrollen waagerecht | |
+
+
+## G · Papierkorb, Export, Erinnerungen (N6/N7) – Abnahme durch den User am Desktop: **offen**
+
+Automatisch geprüft: Core-/Szenario-Tests (Papierkorb konvergiert mit gleichzeitiger Bearbeitung), Rundlauf Export →
+leeres Profil → Import (`tests/export.rs`), Vitest, Selbsttest `p0sel`, `p709a`, `n7rem` (Erinnerung nach 3,0 s),
+`n7bg` (Schließen versteckt im Hintergrundbetrieb). Hier geht es um das, was nur am echten Desktop sichtbar ist.
+
+| # | Schritt | Erwartung | Ergebnis |
+|---|---|---|---|
+| 1 | Task löschen (`Entf`), „Rückgängig"; dann löschen und im Papierkorb „Wiederherstellen" | Task am alten Platz; Papierkorb unten in der Seitenleiste mit Zahl | |
+| 2 | Einstellungen › Daten › Exportieren… in einen Ordner | Ordner `Tasks-Export-…` mit `tasks.json` und `notizen/…`, Hinweis mit Pfad | |
+| 3 | Zweites Profil (`TODO_DATA_DIR=…`): Aus Export wiederherstellen… | Listen und Tasks da (Papierkorb-Tasks im Papierkorb); zweites Mal: „… schon vorhanden" | |
+| 4 | Task „Test" fällig in 2 Minuten (Uhrzeit) | Benachrichtigung „Fällig – Test"; Klick öffnet die Task | |
+| 5 | Einstellungen › Erinnerungen › Im Hintergrund weiterlaufen; Fenster schließen | Fenster weg, Symbol im Tray; Tray › Öffnen / Neue Task / Beenden | |
+| 6 | Mit dem System starten an, abmelden/anmelden | App läuft im Tray, ohne Fenster; Starter öffnet das vorhandene Fenster (keine zweite Instanz) | |
+

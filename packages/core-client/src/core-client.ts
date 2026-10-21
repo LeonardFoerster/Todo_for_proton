@@ -1,6 +1,7 @@
 import type {
   AuthInfoDto,
   AuthStepDto,
+  BackgroundSettingsDto,
   ChangedEventDto,
   CreateTaskDto,
   ExportResultDto,
@@ -102,6 +103,17 @@ export interface DataClient {
   importFile(): Promise<ImportDataReportDto | null>;
 }
 
+/** Aktion der Shell außerhalb der Oberfläche: Klick auf eine Erinnerung bzw. „Neue Task“ im Tray. */
+export type ShellAction = { kind: "openTask"; taskId: string } | { kind: "newTask" };
+
+/** Nur Desktop (ADR-033): Erinnerungen und Hintergrundbetrieb dieses Geräts (nicht synchronisiert). */
+export interface BackgroundClient {
+  get(): Promise<BackgroundSettingsDto>;
+  /** Speichert und wendet an (Erinnerungen, Tray, Autostart); `validation` bei ungültiger Uhrzeit. */
+  set(settings: BackgroundSettingsDto): Promise<BackgroundSettingsDto>;
+  onShellAction(cb: (action: ShellAction) => void): () => void;
+}
+
 /**
  * Einzige Schnittstelle der UI zum Core. Alle Methoden lehnen mit `CoreClientError` ab.
  * Schreibende Methoden lösen zusätzlich `onChange` mit genau den geschriebenen IDs aus.
@@ -155,6 +167,8 @@ export interface CoreClient {
   sync: SyncClient;
   /** Nur Desktop: Export/Import (ADR-032). */
   data?: DataClient;
+  /** Nur Desktop: Erinnerungen und Hintergrundbetrieb (ADR-033). */
+  background?: BackgroundClient;
 
   /** Erste Ansicht ist gerendert (Startzeitmessung, Sync-Start). */
   ready(): Promise<void>;

@@ -499,6 +499,8 @@ export interface CoreClient {
   untrashTasks(ids: string[]): Promise<TaskDto[]>;
   purgeTasks(ids: string[]): Promise<number>;                         // nur aus dem Papierkorb
   emptyTaskTrash(): Promise<number>;
+  data?: DataClient;          // nur Desktop (ADR-032): exportAll(today) → ExportResultDto | null, importFile() → ImportDataReportDto | null
+  background?: BackgroundClient; // nur Desktop (ADR-033): get/set(BackgroundSettingsDto), onShellAction(openTask | newTask)
   setDues(dues: TaskDueDto[]): Promise<TaskDto[]>;                   // {id, due|null} je Task (ADR-026)
   searchTasks(text: string, limit: number): Promise<TaskSummaryDto[]>; // Titel + Notiz, Teilwort (ADR-027)
   notes: NotesClient; // N5-06: listFolders, listItems, get, create, updateBody(id, text, baseRev), discardIfEmpty,

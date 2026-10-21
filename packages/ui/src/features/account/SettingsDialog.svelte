@@ -4,7 +4,7 @@
    * `AuthStepDto` gebaut – Browser öffnen → warten → fertig; Passwort, 2FA und Human Verification
    * erledigt die Login-Seite des Anbieters im Browser (ADR-013). Die UI kennt den Anbieter nur als Namen.
    */
-  import { CoreClientError, type AuthInfoDto } from "@tasks/core-client";
+  import { CoreClientError, type AuthInfoDto, type BackgroundSettingsDto } from "@tasks/core-client";
   import { onDestroy, onMount } from "svelte";
   import Button from "../../components/Button.svelte";
   import Dialog from "../../components/Dialog.svelte";
@@ -42,6 +42,35 @@
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
   let clock: ReturnType<typeof setInterval> | undefined;
 
+  /** Erinnerungen und Hintergrund (ADR-033, nur Desktop). */
+  let background = $state<BackgroundSettingsDto | null>(null);
+  let allDayTime = $state("");
+  let timeError = $state<string | null>(null);
+
+  async function saveBackground(next: BackgroundSettingsDto) {
+    if (!client.background) return;
+    try {
+      background = await client.background.set(next);
+      allDayTime = background.allDayTime;
+      timeError = null;
+    } catch (e) {
+      toasts.show({ message: `Nicht gespeichert: ${(e as Error).message}`, tone: "danger" });
+    }
+  }
+
+  function commitTime() {
+    if (!background) return;
+    const m = /^(\d{1,2})[:.]?(\d{2})$/.exec(allDayTime.trim());
+    const [h, min] = m ? [Number(m[1]), Number(m[2])] : [NaN, NaN];
+    if (!(h < 24 && min < 60)) {
+      timeError = "Uhrzeit wie 09:00 eingeben";
+      return;
+    }
+    const value = `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+    if (value !== background.allDayTime) void saveBackground({ ...background, allDayTime: value });
+    else allDayTime = value;
+  }
+
   /** Export/Import läuft (System-Dialog offen). */
   let dataBusy = $state(false);
   async function runData(action: typeof exportAll) {
@@ -58,6 +87,15 @@
   const secondsLeft = $derived(step.kind === "waiting" ? Math.max(0, Math.round((step.expiresAt - now) / 1000)) : 0);
 
   onMount(async () => {
+    if (client.background) {
+      void client.background.get().then(
+        (s) => {
+          background = s;
+          allDayTime = s.allDayTime;
+        },
+        () => undefined,
+      );
+    }
     try {
       info = await client.auth.info();
     } catch {
@@ -291,6 +329,64 @@
     </div>
   </section>
 
+  {#if client.background && background}
+    {@const bg = background}
+    <section aria-labelledby="reminders-title">
+      <h3 id="reminders-title">Erinnerungen</h3>
+      <div class="bg-prefs">
+        <label class="check">
+          <input
+            type="checkbox"
+            checked={bg.reminders}
+            onchange={(e) => void saveBackground({ ...bg, reminders: e.currentTarget.checked })}
+          />
+          An Fälligkeiten erinnern (mit Uhrzeit zur Uhrzeit)
+        </label>
+        <label class="time-row">
+          Ganztägige um
+          <input
+            class="time"
+            aria-label="Uhrzeit für ganztägige"
+            aria-invalid={timeError ? true : undefined}
+            disabled={!bg.reminders}
+            bind:value={allDayTime}
+            onchange={commitTime}
+            onkeydown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commitTime();
+              }
+            }}
+          />
+          Uhr
+        </label>
+        {#if timeError}<p class="error" role="alert">{timeError}</p>{/if}
+        <label class="check">
+          <input
+            type="checkbox"
+            checked={bg.background}
+            onchange={(e) =>
+              void saveBackground({
+                ...bg,
+                background: e.currentTarget.checked,
+                autostart: e.currentTarget.checked && bg.autostart,
+              })}
+          />
+          Im Hintergrund weiterlaufen (Schließen versteckt das Fenster, Symbol im Tray)
+        </label>
+        <label class="check">
+          <input
+            type="checkbox"
+            checked={bg.autostart}
+            disabled={!bg.background}
+            onchange={(e) => void saveBackground({ ...bg, autostart: e.currentTarget.checked })}
+          />
+          Mit dem System starten (im Tray)
+        </label>
+      </div>
+    </section>
+  {/if}
+
   {#if client.data}
     <section aria-labelledby="data-title">
       <h3 id="data-title">Daten</h3>
@@ -316,6 +412,37 @@
 <style>
   section + section {
     margin-top: var(--space-6);
+  }
+  .bg-prefs {
+    display: grid;
+    gap: var(--space-2);
+    justify-items: start;
+  }
+  .time-row {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+  }
+  .time {
+    width: 64px;
+    height: 28px;
+    padding: 0 var(--space-2);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+  .time:focus {
+    outline: none;
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 3px var(--color-focus-ring);
+  }
+  .time:disabled {
+    opacity: 0.5;
   }
   .data-hint {
     margin: 0 0 var(--space-3);

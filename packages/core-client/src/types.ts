@@ -2,6 +2,7 @@
 // sondern die Rust-DTOs (`todo_core::api::dto`, `apps/desktop/src-tauri/src/dto.rs`) anpassen.
 export type { AuthInfoDto } from "./generated/AuthInfoDto";
 export type { AuthStepDto } from "./generated/AuthStepDto";
+export type { BackgroundSettingsDto } from "./generated/BackgroundSettingsDto";
 export type { ChangedEventDto } from "./generated/ChangedEventDto";
 export type { CreateTaskDto } from "./generated/CreateTaskDto";
 export type { DueDto } from "./generated/DueDto";

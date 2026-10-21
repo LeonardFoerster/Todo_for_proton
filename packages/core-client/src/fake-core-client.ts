@@ -429,6 +429,8 @@ export class FakeCoreClient implements CoreClient {
 
   /** Export/Import gibt es nur in der Desktop-Shell; Tests setzen es bei Bedarf (ADR-032). */
   data?: CoreClient["data"];
+  /** Erinnerungen/Hintergrund nur in der Desktop-Shell; Tests setzen es bei Bedarf (ADR-033). */
+  background?: CoreClient["background"];
 
   auth: CoreClient["auth"] = {
     info: () =>

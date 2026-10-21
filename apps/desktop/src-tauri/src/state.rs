@@ -26,7 +26,8 @@ use todo_sync::{SchedulerConfig, SyncConfig, SyncEngine, SyncReport};
 
 use crate::{
     dto::ErrorDto,
-    events::{ChangedEmitter, SYNC_STATUS_EVENT},
+    events::{ChangedEmitter, OPEN_TASK_EVENT, SYNC_STATUS_EVENT},
+    reminders::{self, settings::BackgroundSettingsDto, Notifier, Reminders},
     sync::{self, SyncHandle, SyncRunner},
 };
 
@@ -82,6 +83,16 @@ pub struct AppState {
     notes_purged_at: AtomicI64,
     /// Schließen läuft (das zweite `CloseRequested` schließt sofort).
     pub closing: AtomicBool,
+    /// „Beenden“ aus dem Tray: Schließen beendet wirklich, auch im Hintergrundbetrieb.
+    pub quitting: AtomicBool,
+    /// Erinnerungen (ADR-033).
+    pub reminders: Reminders,
+    /// Hintergrundbetrieb und Erinnerungen dieses Geräts (`settings.json`).
+    pub settings: Mutex<BackgroundSettingsDto>,
+    /// Datenordner (Einstellungen, Erinnerungsstand).
+    pub data_dir: PathBuf,
+    /// Eigenes Profil (`TODO_DATA_DIR`) – der Autostart startet dasselbe.
+    pub profile: Option<PathBuf>,
 }
 
 /// Höchstens so oft wird der Notiz-Papierkorb automatisch geleert (`notes.md` §4.7).
@@ -129,16 +140,19 @@ impl AppState {
 /// # Errors
 /// Wenn das Datenverzeichnis oder die Datenbank nicht geöffnet werden kann.
 pub fn init<R: Runtime>(app: &AppHandle<R>, options: &Options) -> Result<AppState, String> {
-    let dir = match &options.data_dir {
-        Some(dir) => dir.clone(),
-        None => app.path().app_data_dir().map_err(|e| e.to_string())?,
-    };
-    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    restrict_to_owner(&dir);
+    let dir = data_dir(app, options)?;
     let repo = SqliteTaskRepository::open(dir.join(DB_FILE)).map_err(|e| e.to_string())?;
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let api = Arc::new(CoreApi::new(Arc::new(repo), Arc::clone(&clock)));
     api.subscribe(Box::new(ChangedEmitter::new(app.clone())));
+    let settings = reminders::settings::load(&dir);
+    let reminders = reminders::spawn(
+        Arc::clone(&api),
+        dir.clone(),
+        settings.clone(),
+        notifier(app),
+    );
+    api.subscribe(reminders.sink());
 
     let emitter = app.clone();
     let sync = sync::spawn(
@@ -170,7 +184,66 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, options: &Options) -> Result<AppStat
         account,
         notes_purged_at: AtomicI64::new(0),
         closing: AtomicBool::new(false),
+        quitting: AtomicBool::new(false),
+        reminders,
+        settings: Mutex::new(settings),
+        data_dir: dir,
+        profile: options.data_dir.clone(),
     })
+}
+
+/// Datenordner des Profils (angelegt, nur für den Besitzer lesbar).
+///
+/// # Errors
+/// Wenn er nicht bestimmt oder angelegt werden kann.
+pub fn data_dir<R: Runtime>(app: &AppHandle<R>, options: &Options) -> Result<PathBuf, String> {
+    let dir = match &options.data_dir {
+        Some(dir) => dir.clone(),
+        None => app.path().app_data_dir().map_err(|e| e.to_string())?,
+    };
+    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    restrict_to_owner(&dir);
+    Ok(dir)
+}
+
+/// Benachrichtigungen über das Portal; Klick zeigt das Fenster und öffnet die Task. Im Debug-Build
+/// mit `TODO_NOTIFY=log` nur ins Log (Selbsttest ohne Meldungen auf dem Desktop).
+fn notifier<R: Runtime>(app: &AppHandle<R>) -> Arc<dyn Notifier> {
+    if cfg!(debug_assertions) && env::var("TODO_NOTIFY").is_ok_and(|v| v == "log") {
+        return Arc::new(reminders::LogNotifier);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let app = app.clone();
+        Arc::new(reminders::PortalNotifier::new(Arc::new(
+            move |task_id: String| {
+                crate::tray::show_window(&app);
+                let _ = app.emit(OPEN_TASK_EVENT, task_id);
+            },
+        )))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app;
+        Arc::new(reminders::LogNotifier)
+    }
+}
+
+impl AppState {
+    /// Aktuelle Einstellungen des Hintergrundbetriebs.
+    #[must_use]
+    pub fn settings(&self) -> BackgroundSettingsDto {
+        self.settings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Hintergrundbetrieb an (Schließen versteckt nur)?
+    #[must_use]
+    pub fn background(&self) -> bool {
+        self.settings().background
+    }
 }
 
 /// Schlüsselbund + Anmeldung beim Sync-Backend. Wird beim ersten Zugriff (oder im Hintergrund

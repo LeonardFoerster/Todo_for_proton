@@ -2217,8 +2217,53 @@ const n5sync: Step[] = [
   ["Zustand", async (client) => notesState(client)],
 ];
 
+// N7 (ADR-033): Erinnerung zur Fälligkeit – im Debug-Build mit `TODO_NOTIFY=log` ohne Meldung auf dem Desktop;
+// geprüft über die gemeldeten Erinnerungen der Shell.
+const n7rem: Step[] = [
+  [
+    "Task fällig in 3 s → Erinnerung gemeldet, Verschieben meldet neu, Erledigen nicht",
+    async (client) => {
+      const { devSelftest } = await import("@tasks/core-client/tauri");
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const at = (ms: number) => ({ kind: "dateTime" as const, at: new Date(Date.now() + ms).toISOString(), tz });
+      const fired = async (id: string) => (await devSelftest.remindersFired()).filter((r) => r.taskId === id).length;
+      const t0 = performance.now();
+      const task = await client.createTask({ title: "Erinnerungstest", due: at(3000) });
+      await untilAsync("gemeldet", async () => (await fired(task.id)) === 1, 10_000);
+      const delay = performance.now() - t0;
+      if (delay < 2500) throw new Error(`zu früh: ${delay.toFixed(0)} ms`);
+      await client.updateTask(task.id, { due: at(2000) });
+      await untilAsync("nach Verschieben erneut", async () => (await fired(task.id)) === 2, 10_000);
+      const done = await client.createTask({ title: "Schon erledigt", due: at(1500) });
+      await client.completeTask(done.id, true);
+      await sleep(3500);
+      if ((await fired(done.id)) !== 0) throw new Error("erledigte Task gemeldet");
+      return `nach ${(delay / 1000).toFixed(1)} s`;
+    },
+  ],
+];
+
+// N7 (ADR-033): Im Hintergrundbetrieb versteckt Schließen das Fenster nur – die App läuft weiter.
+const n7bg: Step[] = [
+  [
+    "Hintergrund an: Schließen versteckt, App läuft weiter",
+    async (client) => {
+      const { devSelftest } = await import("@tasks/core-client/tauri");
+      const settings = await client.background!.get();
+      await client.background!.set({ ...settings, background: true });
+      await devSelftest.closeWindow();
+      await sleep(2500);
+      // Noch am Leben: Der Core antwortet, das Fenster ist versteckt.
+      await client.listTaskLists();
+      const hidden = document.visibilityState;
+      await client.background!.set({ ...settings, background: false });
+      return `nach dem Schließen weiter aktiv (Sichtbarkeit: ${hidden})`;
+    },
+  ],
+];
+
 const SUITES: Record<string, Step[]> = { p002, p3new, p4due, p4today, p4upcoming, p4keys, p4search, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
-  p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth, notes, n5seed, n5create, n5offA, n5offB, n5sync };
+  p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth, notes, n5seed, n5create, n5offA, n5offB, n5sync, n7rem, n7bg };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */
 export async function runSelftest(

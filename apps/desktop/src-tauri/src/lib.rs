@@ -7,9 +7,11 @@ pub mod dto;
 mod events;
 pub mod export;
 pub mod import;
+mod instance;
 pub mod reminders;
 pub mod state;
 mod sync;
+mod tray;
 
 use std::{
     env,
@@ -86,8 +88,12 @@ macro_rules! handlers {
             commands::import_data,
             commands::set_online,
             commands::app_ready,
+            commands::background_settings,
+            commands::set_background_settings,
             commands::dev_selftest,
             commands::dev_selftest_report,
+            commands::dev_reminders_fired,
+            commands::dev_close_window,
         ]
     };
 }
@@ -154,6 +160,8 @@ macro_rules! handlers {
             commands::import_data,
             commands::set_online,
             commands::app_ready,
+            commands::background_settings,
+            commands::set_background_settings,
         ]
     };
 }
@@ -219,8 +227,29 @@ pub fn manage_state<R: Runtime>(
 /// `tauri::test::mock_builder()` übergeben können.
 pub fn builder<R: Runtime>(base: tauri::Builder<R>, options: Options) -> tauri::Builder<R> {
     base.setup(move |app| {
-        let state = state::init(app.handle(), &options)?;
+        let handle = app.handle().clone();
+        // Eine Instanz je Profil (ADR-033): Läuft schon eine (z. B. im Tray), holt sie ihr Fenster nach
+        // vorn und diese hier endet, bevor sie die Datenbank öffnet.
+        let dir = state::data_dir(&handle, &options)?;
+        match instance::claim(&dir) {
+            instance::Instance::Other => std::process::exit(0),
+            instance::Instance::First(Some(listener)) => {
+                let shown = handle.clone();
+                instance::listen(listener, move || tray::show_window(&shown));
+            }
+            instance::Instance::First(None) => {}
+        }
+        let state = state::init(&handle, &options)?;
+        let background = state.background();
         app.manage(state);
+        if background {
+            tray::create(&handle);
+        }
+        // Versteckt starten nur aus dem Autostart (`--hidden`) und nur mit Tray.
+        let hidden = background && env::args().any(|a| a == "--hidden");
+        if !hidden {
+            tray::show_window(&handle);
+        }
         Ok(())
     })
     .on_window_event(window_event)
@@ -237,6 +266,8 @@ fn window_event<R: Runtime>(window: &Window<R>, event: &WindowEvent) {
         WindowEvent::Focused(true) => {
             state.sync.event(SchedulerEvent::AppFocused);
             state.purge_expired_notes_daily();
+            // Nach dem Aufwachen/Ruhezustand: verpasste Erinnerungen nachholen (ADR-033).
+            state.reminders.changed();
         }
         WindowEvent::Focused(false) | WindowEvent::Resized(_) if hidden() => {
             state.sync.event(SchedulerEvent::AppHidden);
@@ -255,11 +286,31 @@ fn window_event<R: Runtime>(window: &Window<R>, event: &WindowEvent) {
                 let window = window.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(CLOSE_TIMEOUT).await;
-                    let _ = window.destroy();
+                    finish_close(&window);
                 });
             }
         }
         _ => {}
+    }
+}
+
+/// Nach dem Speichern (oder Timeout): im Hintergrundbetrieb nur verstecken, sonst schließen. Nur
+/// einmal je Schließen (`closing`).
+pub(crate) fn finish_close<R: Runtime>(window: &Window<R>) {
+    let Some(state) = window.try_state::<AppState>() else {
+        let _ = window.destroy();
+        return;
+    };
+    if !state
+        .closing
+        .swap(false, std::sync::atomic::Ordering::SeqCst)
+    {
+        return;
+    }
+    if state.background() && !state.quitting.load(std::sync::atomic::Ordering::SeqCst) {
+        let _ = window.hide();
+    } else {
+        let _ = window.destroy();
     }
 }
 

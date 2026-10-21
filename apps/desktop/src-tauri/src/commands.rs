@@ -18,7 +18,8 @@
 //!   `sync_flush` lädt sofort hoch, wenn etwas wartet (Notiz- oder Moduswechsel in der UI).
 //!
 //! Lesende Commands (`list_*`, `get_*`, `search_*`, `ensure_inbox`, `auth_*`, `sync_status`,
-//! `sync_now`, `app_ready`) melden nichts. Nachweis: `tests/commands.rs`
+//! `sync_now`, `app_ready`, `export_data`) und die gerätelokalen Einstellungen (`background_settings`,
+//! `set_background_settings`, ADR-033) melden nichts. Nachweis: `tests/commands.rs`
 //! (`only_writing_commands_trigger_a_sync`).
 
 use tauri::State;
@@ -532,8 +533,47 @@ pub async fn import_data(
 /// Die UI hat vor dem Schließen gespeichert (Antwort auf `app://close-requested`).
 #[tauri::command]
 pub async fn close_ready<R: tauri::Runtime>(window: tauri::Window<R>) -> Result<()> {
-    let _ = window.destroy();
+    crate::finish_close(&window);
     Ok(())
+}
+
+/// Erinnerungen und Hintergrundbetrieb dieses Geräts (ADR-033). Liest nur.
+#[tauri::command]
+pub async fn background_settings(
+    state: State<'_, AppState>,
+) -> Result<crate::reminders::settings::BackgroundSettingsDto> {
+    Ok(state.settings())
+}
+
+/// Speichert und wendet an: Planer, Tray, Autostart-Eintrag. Kein Sync-Auslöser (nur lokal).
+#[tauri::command]
+pub async fn set_background_settings<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    settings: crate::reminders::settings::BackgroundSettingsDto,
+) -> Result<crate::reminders::settings::BackgroundSettingsDto> {
+    settings.validate().map_err(ErrorDto::validation)?;
+    crate::reminders::settings::save(&state.data_dir, &settings).map_err(ErrorDto::internal)?;
+    let exe = std::env::current_exe().map_err(|e| ErrorDto::internal(e.to_string()))?;
+    if let Err(err) = crate::reminders::settings::set_autostart(
+        "dev.tasks.app",
+        settings.autostart,
+        &exe,
+        state.profile.as_deref(),
+    ) {
+        tracing::warn!(error = %err, "autostart entry not written");
+    }
+    if settings.background {
+        crate::tray::create(&app);
+    } else {
+        crate::tray::remove(&app);
+    }
+    state.reminders.set_settings(settings.clone());
+    *state
+        .settings
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = settings.clone();
+    Ok(settings)
 }
 
 /// Jetzt hochladen, falls etwas wartet (Notiz- oder Moduswechsel, `notes.md` §4.6).
@@ -570,6 +610,23 @@ pub async fn app_ready(state: State<'_, AppState>) -> Result<()> {
 #[tauri::command]
 pub async fn dev_selftest() -> Result<Option<String>> {
     Ok(crate::dev::selftest_suites())
+}
+
+/// Fenster schließen wie mit dem X (Selbsttest des Hintergrundbetriebs, nur Debug-Build).
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub async fn dev_close_window<R: tauri::Runtime>(window: tauri::Window<R>) -> Result<()> {
+    let _ = window.close();
+    Ok(())
+}
+
+/// Bisher gemeldete Erinnerungen (Selbsttest, nur Debug-Build).
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub async fn dev_reminders_fired(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::reminders::FiredDto>> {
+    Ok(state.reminders.fired())
 }
 
 /// Berichtszeilen des Selbsttests auf stdout; `exit` beendet danach die App (nur Debug-Build).

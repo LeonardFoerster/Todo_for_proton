@@ -217,6 +217,18 @@
       await notesMain?.flush();
     });
     if (offClose) stops.push(offClose);
+    // Shell (ADR-033): Klick auf eine Erinnerung öffnet die Task, „Neue Task“ im Tray das Fenster dafür.
+    const offShell = client.background?.onShellAction((action) => {
+      if (action.kind === "newTask") {
+        newTask();
+        return;
+      }
+      void (async () => {
+        if (appMode.mode !== "tasks") await switchMode("tasks");
+        openFromPalette(action.taskId);
+      })();
+    });
+    if (offShell) stops.push(offShell);
     if (appMode.mode === "notes") void loadNotes();
     void (async () => {
       try {

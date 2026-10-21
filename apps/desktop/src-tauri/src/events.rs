@@ -11,6 +11,10 @@ pub const CHANGED_EVENT: &str = "core://changed";
 pub const NOTE_CONFLICTS_EVENT: &str = "core://note-conflicts";
 /// Ohne Payload: Das Fenster soll schließen – UI speichert und meldet `close_ready`.
 pub const CLOSE_REQUESTED_EVENT: &str = "app://close-requested";
+/// Payload: Task-ID – Klick auf eine Erinnerung (ADR-033): Task öffnen.
+pub const OPEN_TASK_EVENT: &str = "app://open-task";
+/// Ohne Payload: „Neue Task“ im Tray.
+pub const NEW_TASK_EVENT: &str = "app://new-task";
 /// Payload [`crate::dto::SyncStatusDto`].
 pub const SYNC_STATUS_EVENT: &str = "core://sync-status";
 
