@@ -15,9 +15,11 @@
     onopen: (task: TaskSummaryDto) => void;
     /** Ziehen beginnt (P2-07). */
     onpointerdown?: (e: PointerEvent, task: TaskSummaryDto) => void;
+    /** Namen der Tags (ADR-035). */
+    tagNames?: readonly string[];
   }
 
-  let { task, cursor = false, dragging = false, ontoggle, onopen, onpointerdown }: Props = $props();
+  let { task, cursor = false, dragging = false, ontoggle, onopen, onpointerdown, tagNames = [] }: Props = $props();
 
   const done = $derived(task.status === "done");
   const due = $derived(task.due ? dueLabel(task.due) : null);
@@ -33,7 +35,7 @@
     class:cursor
     class:dragging
     role="option"
-    aria-label={[task.title, done ? "erledigt" : null, due?.long, task.recurring ? "wiederholt sich" : null, done ? null : priorityInLabel(task.priority)].filter(Boolean).join(", ")}
+    aria-label={[task.title, done ? "erledigt" : null, due?.long, task.recurring ? "wiederholt sich" : null, tagNames.length > 0 ? tagNames.map((t) => `#${t}`).join(" ") : null, done ? null : priorityInLabel(task.priority)].filter(Boolean).join(", ")}
     aria-selected={cursor}
     tabindex={cursor ? 0 : -1}
     data-task-id={task.id}
@@ -53,7 +55,7 @@
     />
     <span class="body">
       <span class="title">{task.title}</span>
-      {#if due || task.hasNotes || task.recurring || task.checklistTotal > 0}<TaskMeta {task} {due} size="card" />{/if}
+      {#if due || task.hasNotes || task.recurring || task.checklistTotal > 0 || tagNames.length > 0}<TaskMeta {task} {due} size="card" tags={tagNames} />{/if}
     </span>
   </div>
 </div>

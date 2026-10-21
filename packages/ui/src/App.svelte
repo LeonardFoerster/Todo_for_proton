@@ -34,7 +34,9 @@
   import Menu, { type MenuItem } from "./components/Menu.svelte";
   import DeleteListDialog from "./features/lists/DeleteListDialog.svelte";
   import ListNameDialog from "./features/lists/ListNameDialog.svelte";
-  import type { TaskListDto } from "@tasks/core-client";
+  import type { TagDto, TaskListDto } from "@tasks/core-client";
+  import Button from "./components/Button.svelte";
+  import Dialog from "./components/Dialog.svelte";
   import type SettingsDialogType from "./features/account/SettingsDialog.svelte";
   import type CommandPaletteType from "./features/palette/CommandPalette.svelte";
   import type { PaletteCommand, RecentTask } from "./features/palette/CommandPalette.svelte";
@@ -136,7 +138,7 @@
   let reportedReady = false;
 
   const route = $derived(router.route);
-  const title = $derived(routeTitle(route, lists.lists));
+  const title = $derived(routeTitle(route, lists.lists, lists.tags));
   /** Das Board zeigt alle Listen; umschaltbar in Eingang, Listen und „Alle Tasks“. */
   const boardCapable = $derived(route.view === "inbox" || route.view === "list" || route.view === "all");
   const showBoard = $derived(boardCapable && layout === "board");
@@ -242,9 +244,12 @@
     return () => stops.forEach((stop) => stop());
   });
 
-  // Gelöschte oder unbekannte Liste → Eingang.
+  // Gelöschte oder unbekannte Liste bzw. Tag → Eingang.
   $effect(() => {
     if (route.view === "list" && lists.loaded && !lists.lists.some((l) => l.id === route.listId)) {
+      router.navigate({ view: "inbox" }, { replace: true });
+    }
+    if (route.view === "tag" && lists.tagsLoaded && !lists.tags.some((t) => t.id === route.tagId)) {
       router.navigate({ view: "inbox" }, { replace: true });
     }
   });
@@ -330,7 +335,15 @@
   async function openPalette() {
     drawerOpen = false;
     CommandPalette ??= (await import("./features/palette/CommandPalette.svelte")).default;
-    paletteCommands = commandsNow();
+    // Tags als Sprungziele (ADR-035): „#uni“ in der Palette findet „Gehe zu #uni“.
+    paletteCommands = [
+      ...commandsNow(),
+      ...lists.tags.map((t) => ({
+        id: `tag:${t.id}`,
+        label: `Gehe zu #${t.name}`,
+        run: () => router.navigate({ view: "tag", tagId: t.id }),
+      })),
+    ];
     showPalette = true;
   }
 
@@ -541,6 +554,41 @@
   }
 
   const currentList = $derived(route.view === "list" ? lists.userLists.find((l) => l.id === route.listId) : undefined);
+  const currentTag = $derived(route.view === "tag" ? lists.tags.find((t) => t.id === route.tagId) : undefined);
+  let tagMenu = $state<{ x: number; y: number } | null>(null);
+  let tagRename = $state<TagDto | null>(null);
+  let tagDelete = $state<TagDto | null>(null);
+
+  function tagMenuItems(tag: TagDto): MenuItem[] {
+    return [
+      { label: "Umbenennen", icon: Pencil, action: () => (tagRename = tag) },
+      { label: "Löschen…", icon: Trash, danger: true, action: () => (tagDelete = tag) },
+    ];
+  }
+
+  async function renameTag(tag: TagDto, name: string) {
+    try {
+      await client.renameTag(tag.id, name);
+      await lists.reloadTags();
+    } catch (e) {
+      toasts.show({ message: `Nicht umbenannt: ${(e as Error).message}`, tone: "danger" });
+      throw e;
+    }
+  }
+
+  async function confirmTagDelete() {
+    const tag = tagDelete;
+    tagDelete = null;
+    if (!tag) return;
+    try {
+      const n = await client.deleteTag(tag.id);
+      await lists.reloadTags();
+      const rest = n === 0 ? "" : ` · von ${n === 1 ? "1 Task" : `${n} Tasks`} entfernt`;
+      toasts.show({ message: `Tag „#${tag.name}“ gelöscht${rest}` });
+    } catch (e) {
+      toasts.show({ message: `Nicht gelöscht: ${(e as Error).message}`, tone: "danger" });
+    }
+  }
 
   /** Einträge des Kopfzeilen-Menüs im schmalen Fenster: dasselbe wie die Icons der breiten Kopfzeile. */
   function viewMenuItems(at: { x: number; y: number; anchor: Element }): MenuItem[] {
@@ -561,6 +609,7 @@
     });
     const list = currentList;
     if (list) items.push({ label: "Listenaktionen…", icon: Ellipsis, action: () => openListMenuAt(list, at.anchor) });
+    if (currentTag) items.push({ label: "Tag-Aktionen…", icon: Ellipsis, action: () => (tagMenu = { x: at.x, y: at.y }) });
     if (route.view === "completed") {
       items.push({ label: "Aktionen für Erledigt…", icon: Ellipsis, action: () => (completedMenu = { x: at.x, y: at.y }) });
     }
@@ -585,7 +634,7 @@
   }
 
   shortcuts.setModal(
-    () => showShortcuts || showSettings || showNewTask || !!deleteTarget || !!renameDialog || !!duePrompt || showPalette || showNewList || !!cleanup || emptyTrashConfirm || !!taskList?.dialogOpen(),
+    () => showShortcuts || showSettings || showNewTask || !!deleteTarget || !!renameDialog || !!duePrompt || showPalette || showNewList || !!cleanup || emptyTrashConfirm || !!tagRename || !!tagDelete || !!taskList?.dialogOpen(),
   );
   shortcuts.setScope(() => appMode.mode);
   // Überall (beide Modi).
@@ -679,6 +728,7 @@
         ["alt+d", "Fälligkeit", () => newTaskDialog?.toggleDue()],
         ["alt+p", "Priorität", () => newTaskDialog?.openPriority()],
         ["alt+w", "Wiederholung", () => newTaskDialog?.openRepeat()],
+        ["alt+t", "Tags", () => newTaskDialog?.toggleTags()],
         ["alt+l", "Liste", () => newTaskDialog?.openListPicker()],
         ["alt+n", "Notiz", () => newTaskDialog?.toggleNotes()],
       ] as const
@@ -1048,6 +1098,16 @@
               onclick={(e) => openListMenuAt(currentList!, e.currentTarget)}
             />
           {/if}
+          {#if currentTag}
+            <IconButton
+              label="Tag-Aktionen"
+              icon={Ellipsis}
+              onclick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                tagMenu = { x: r.left, y: r.bottom + 4 };
+              }}
+            />
+          {/if}
           {#if route.view === "trash"}
             <IconButton
               label="Aktionen für Papierkorb"
@@ -1130,6 +1190,7 @@
           : undefined}
     onopenlist={(id) => router.navigate(id === lists.inbox?.id ? { view: "inbox" } : { view: "list", listId: id })}
     defaultDue={route.view === "today" ? todayPlus(0) : null}
+    defaultTags={currentTag ? [currentTag.name] : []}
     initialText={newTaskText}
     onclose={() => (showNewTask = false)}
   />
@@ -1242,6 +1303,33 @@
 {/if}
 {#if deleteTarget}
   <DeleteListDialog list={deleteTarget} {lists} onconfirm={() => void confirmDelete()} onclose={() => (deleteTarget = null)} />
+{/if}
+{#if tagMenu && currentTag}
+  <Menu
+    label="Aktionen für Tag {currentTag.name}"
+    items={tagMenuItems(currentTag)}
+    x={tagMenu.x}
+    y={tagMenu.y}
+    onclose={() => (tagMenu = null)}
+  />
+{/if}
+{#if tagRename}
+  <ListNameDialog
+    title="Tag umbenennen"
+    submitLabel="Umbenennen"
+    initial={tagRename.name}
+    onsubmit={(name) => renameTag(tagRename!, name)}
+    onclose={() => (tagRename = null)}
+  />
+{/if}
+{#if tagDelete}
+  <Dialog title="Tag löschen?" onclose={() => (tagDelete = null)} width={400}>
+    <p class="confirm-text">„#{tagDelete.name}“ wird von allen Tasks entfernt. Die Tasks selbst bleiben.</p>
+    <div class="confirm-actions">
+      <Button onclick={() => (tagDelete = null)}>Abbrechen</Button>
+      <Button variant="danger" onclick={() => void confirmTagDelete()}>Tag löschen</Button>
+    </div>
+  </Dialog>
 {/if}
 {#if renameDialog}
   <ListNameDialog
@@ -1506,5 +1594,14 @@
       border: 0;
       border-radius: 0;
     }
+  }
+  .confirm-text {
+    margin: 0 0 var(--space-4);
+    line-height: 1.5;
+  }
+  .confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
   }
 </style>

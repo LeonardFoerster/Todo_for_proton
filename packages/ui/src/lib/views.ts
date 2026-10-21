@@ -1,5 +1,5 @@
-import type { TaskListDto, TaskQueryDto } from "@tasks/core-client";
-import { CalendarDays, CircleCheck, Hash, Inbox, List, Sun, Trash, type IconComponent } from "../icons";
+import type { TagDto, TaskListDto, TaskQueryDto } from "@tasks/core-client";
+import { CalendarDays, CircleCheck, Hash, Inbox, List, Sun, Tag, Trash, type IconComponent } from "../icons";
 import { localDay } from "./local-day";
 import type { Route, SmartViewKind } from "./router.svelte";
 
@@ -40,16 +40,22 @@ export function listName(list: TaskListDto): string {
   return list.isInbox ? "Eingang" : list.name;
 }
 
-export function routeTitle(route: Route, lists: readonly TaskListDto[]): string {
+export function routeTitle(route: Route, lists: readonly TaskListDto[], tags: readonly TagDto[] = []): string {
   if (route.view === "list") {
     const list = lists.find((l) => l.id === route.listId);
     return list ? listName(list) : "Liste";
+  }
+  if (route.view === "tag") {
+    const tag = tags.find((t) => t.id === route.tagId);
+    return tag ? `#${tag.name}` : "Tag";
   }
   return viewMeta(route.view).label;
 }
 
 export function routeIcon(route: Route): IconComponent {
-  return route.view === "list" ? Hash : viewMeta(route.view).icon;
+  if (route.view === "list") return Hash;
+  if (route.view === "tag") return Tag;
+  return viewMeta(route.view).icon;
 }
 
 /** Abfrage der offenen Tasks einer Ansicht (Erledigt: die erledigten). */
@@ -57,6 +63,9 @@ export function routeQuery(route: Route, now: Date = new Date()): TaskQueryDto {
   switch (route.view) {
     case "list":
       return { view: { kind: "list", listId: route.listId }, status: "open" };
+    case "tag":
+      // Tag-Ansicht (ADR-035): alle offenen Tasks mit diesem Tag, über alle Listen.
+      return { view: { kind: "all" }, status: "open", tag: route.tagId };
     case "today":
       return { view: { kind: "today", day: localDay(now) }, status: "open" };
     case "upcoming":

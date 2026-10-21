@@ -57,7 +57,12 @@
   const showListNames = view.view !== "list" && view.view !== "inbox";
   const names = $derived(new Map(lists.lists.map((l) => [l.id, listName(l)])));
   const EmptyIcon = routeIcon(view);
-  const emptyText = view.view === "list" ? "Diese Liste ist leer." : viewMeta(view.view).empty;
+  const emptyText =
+    view.view === "list"
+      ? "Diese Liste ist leer."
+      : view.view === "tag"
+        ? "Keine offenen Tasks mit diesem Tag."
+        : viewMeta(view.view).empty;
   /** Papierkorb (ADR-031): kein Abhaken, kein Detail; Löschen ist endgültig (mit Bestätigung). */
   const inTrash = view.view === "trash";
   let purgeConfirm = $state<TaskSummaryDto[] | null>(null);
@@ -664,6 +669,7 @@
           <TaskRow
             {task}
             listName={showListNames ? names.get(task.listId) : undefined}
+            tagNames={lists.tagNames(task.tags)}
             selected={task.id === selectedId}
             selectable={selection.active}
             checked={selection.active && selection.has(task.id)}

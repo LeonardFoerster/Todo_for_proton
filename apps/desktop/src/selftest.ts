@@ -2400,9 +2400,45 @@ const n4sync: Step[] = [
   ["Zustand", async (client) => seriesState(client)],
 ];
 
+// N8: Checkliste und Tags in der echten WebView.
+const n8: Step[] = [
+  [
+    "„Blatt #selbsttest“: Tag angelegt, in der Zeile, Ansicht je Tag",
+    async (client) => {
+      const input = await openNewTask();
+      type(input, "Blatt #selbsttest");
+      await until("Markierung", () => document.querySelector("dialog[open] mark.tag")?.textContent === "#selbsttest");
+      key(input, "Enter");
+      await newTaskClosed();
+      const tag = (await client.listTags()).find((t) => t.name === "selbsttest");
+      if (!tag) throw new Error("Tag fehlt");
+      await until("Chip in der Zeile", () => byRole("option", /^Blatt, .*#selbsttest/));
+      await click("link", /selbsttest/);
+      await until("Tag-Ansicht", () => heading() === "#selbsttest");
+      await until("Zeile in der Tag-Ansicht", () => byRole("option", /^Blatt/));
+    },
+  ],
+  [
+    "Checkliste im Detail: zwei Punkte, einer erledigt → „1/2“ in der Zeile",
+    async (client) => {
+      (await until("Zeile", () => byRole("option", /^Blatt/))).click();
+      const add = await until("Punkt hinzufügen", () => document.querySelector<HTMLInputElement>('input[aria-label="Punkt hinzufügen"]'));
+      for (const text of ["Aufgabe 1", "Aufgabe 2"]) {
+        type(add, text);
+        key(add, "Enter");
+        await sleep(100);
+      }
+      (await until("Haken", () => document.querySelector<HTMLInputElement>('input[type="checkbox"][aria-label="Erledigt: Aufgabe 1"]'))).click();
+      await until("1/2", () => byRole("option", /^Blatt/)?.textContent?.includes("1/2"));
+      const task = (await client.listTasks({ view: { kind: "all" } }, { limit: 50 })).items.find((t) => t.title === "Blatt");
+      if (task?.checklistDone !== 1 || task.checklistTotal !== 2) throw new Error(JSON.stringify(task));
+    },
+  ],
+];
+
 const SUITES: Record<string, Step[]> = { p002, p3new, p4due, p4today, p4upcoming, p4keys, p4search, p1sync, p2board, p2layout, p2perf, p2syncA, p2syncB, p2syncLocal, p1A, p1B, p0sel, p0perf, p0perf10k, p0bulkA, p0bulkB, p0bulkLocal, base, p707, p708a, p708b, p709a, p709b, p710, p711, p711live,
   p802wait, p802create, p802offA, p802offB, p802sync, p802bulk, p802auth, notes, n5seed, n5create, n5offA, n5offB, n5sync, n7rem, n7bg, n4rec,
-  n4create, n4offA, n4offB, n4sync };
+  n4create, n4offA, n4offB, n4sync, n8 };
 
 /** `VITE_TASKS_SELFTEST` = Suiten mit Komma (z. B. `base,p707`); `1` = base + p707. */
 export async function runSelftest(

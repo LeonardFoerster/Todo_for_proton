@@ -69,6 +69,25 @@ describe("parseNewTask: Wiederholung (N4-05)", () => {
   });
 });
 
+describe("parseNewTask: Tags (N8-03)", () => {
+  it("collects every #tag, drops them from the title and marks them", () => {
+    expect(parse("Blatt 3 #uni #Analysis morgen")).toMatchObject({
+      title: "Blatt 3",
+      tags: ["uni", "Analysis"],
+      due: date("2026-10-19"),
+    });
+    expect(parse("Lesen #uni, #UNI.").tags).toEqual(["uni"]);
+    expect(parse("Fix #12 bauen")).toMatchObject({ title: "Fix #12 bauen" });
+    expect(parse("Fix #12 bauen").tags).toBeUndefined();
+    expect(parse("C# lernen").tags).toBeUndefined();
+    const input = "Blatt #uni !1";
+    expect(recognizedMarks(input, { now }).map((m) => [input.slice(m.start, m.end), m.kind])).toEqual([
+      ["#uni", "tag"],
+      ["!1", "priority"],
+    ]);
+  });
+});
+
 describe("parseNewTask", () => {
   it("extracts simple day words anywhere", () => {
     expect(parse("Zahnarzt anrufen morgen")).toEqual({

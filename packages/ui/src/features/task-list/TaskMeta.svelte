@@ -19,9 +19,13 @@
     listName?: string;
     /** `card`: kleiner (Board). */
     size?: "row" | "card";
+    /** Namen der Tags (ADR-035), ohne `#`. */
+    tags?: readonly string[];
   }
 
-  let { task, due, dueText = due?.text, listName, size = "row" }: Props = $props();
+  let { task, due, dueText = due?.text, listName, size = "row", tags = [] }: Props = $props();
+  /** Höchstens so viele Tags sichtbar, der Rest als „+n“. */
+  const shownTags = $derived(tags.slice(0, size === "card" ? 2 : 3));
   /** Im Papierkorb statt der Fälligkeit: wann gelöscht (ADR-031). */
   const trashed = $derived(task.trashedAt ? trashedLabel(task.trashedAt) : null);
 
@@ -48,6 +52,12 @@
     <span class="trashed" title={trashed.long}>{trashed.text}</span>
   {:else if due && dueText}
     {#key bump}<span class="due {due.tone}" class:bump={bump > 0} title={due.long}>{dueText}</span>{/key}
+  {/if}
+  {#if shownTags.length > 0}
+    <span class="tags" title={tags.map((t) => `#${t}`).join(" ")}>
+      {#each shownTags as tag (tag)}<span class="tag">#{tag}</span>{/each}
+      {#if tags.length > shownTags.length}<span class="more">+{tags.length - shownTags.length}</span>{/if}
+    </span>
   {/if}
   {#if task.recurring && !trashed}
     <span class="repeat" title="Wiederholt sich" aria-label="wiederholt sich">
@@ -123,6 +133,24 @@
   .done .due {
     color: var(--color-text-muted);
     font-weight: var(--weight-regular);
+  }
+  .tags {
+    display: inline-flex;
+    gap: var(--space-1);
+    min-width: 0;
+    overflow: hidden;
+  }
+  .tag {
+    max-width: 96px;
+    padding: 0 6px;
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-hover);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .more {
+    white-space: nowrap;
   }
   .checklist {
     display: inline-flex;

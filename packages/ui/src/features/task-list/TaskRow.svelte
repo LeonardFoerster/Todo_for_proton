@@ -29,6 +29,8 @@
     dueMode?: DueMode;
     /** Papierkorb (ADR-031): kein Haken; „Wiederherstellen“ statt Abhaken, Löschen ist endgültig. */
     onrestore?: (task: TaskSummaryDto) => void;
+    /** Namen der Tags (ADR-035). */
+    tagNames?: readonly string[];
   }
 
   let {
@@ -44,6 +46,7 @@
     dragging = false,
     dueMode = "full",
     onrestore,
+    tagNames = [],
   }: Props = $props();
   const inTrash = $derived(task.trashedAt != null);
 
@@ -65,7 +68,7 @@
   class:dragging
   role="option"
   aria-selected={selectable ? checked : selected}
-  aria-label={[task.title, done ? "erledigt" : null, due?.long, task.recurring ? "wiederholt sich" : null, done ? null : priorityInLabel(task.priority)].filter(Boolean).join(", ")}
+  aria-label={[task.title, done ? "erledigt" : null, due?.long, task.recurring ? "wiederholt sich" : null, tagNames.length > 0 ? tagNames.map((t) => `#${t}`).join(" ") : null, done ? null : priorityInLabel(task.priority)].filter(Boolean).join(", ")}
   tabindex={selected ? 0 : -1}
   data-task-id={task.id}
   onclick={(e) => {
@@ -97,7 +100,7 @@
   />
   {/if}
   <span class="title">{task.title}</span>
-  <TaskMeta {task} {due} {dueText} {listName} />
+  <TaskMeta {task} {due} {dueText} {listName} tags={tagNames} />
   {#if ondelete}
     <span class="actions">
       {#if onrestore && inTrash}

@@ -4,7 +4,7 @@
   import logo from "../../assets/logo.png";
   import Button from "../../components/Button.svelte";
   import IconButton from "../../components/IconButton.svelte";
-  import { ArrowLeftRight, Hash, NotebookPen, PanelLeft, Plus, Search, Trash } from "../../icons";
+  import { ArrowLeftRight, Hash, NotebookPen, PanelLeft, Plus, Search, Tag, Trash } from "../../icons";
   import { MODE_LABELS, type Mode } from "../../lib/app-mode.svelte";
   import { formatCount, type ListsState } from "../../lib/lists.svelte";
   import { routeHash, type Route } from "../../lib/router.svelte";
@@ -245,6 +245,28 @@
         <li class="hint">Eigene Listen für Projekte oder Bereiche – mit + anlegen.</li>
       {/if}
     </ul>
+
+    {#if lists.tags.length > 0}
+      <!-- Tags (ADR-035): angelegt über „#name“ im Fenster „Neue Task“ oder im Detail. -->
+      <div class="section">
+        {#if !collapsed}<span class="section-label" id="tags-label">Tags</span>{:else}<span class="divider"></span>{/if}
+      </div>
+      <ul class="group" aria-labelledby={collapsed ? undefined : "tags-label"}>
+        {#each lists.tags as tag (tag.id)}
+          <li>
+            <SidebarItem
+              href={routeHash({ view: "tag", tagId: tag.id })}
+              icon={Tag}
+              label={tag.name}
+              monogram="#"
+              active={route.view === "tag" && route.tagId === tag.id}
+              {collapsed}
+              {onnavigate}
+            />
+          </li>
+        {/each}
+      </ul>
+    {/if}
   </div>
   <!-- Papierkorb unten, wie im Modus „Notes“ (ADR-031). -->
   <div class="footer-nav">

@@ -3,6 +3,7 @@
   import ListPicker from "../lists/ListPicker.svelte";
   import RecurrenceField from "../recurrence/RecurrenceField.svelte";
   import Checklist from "./Checklist.svelte";
+  import TagPicker from "../tags/TagPicker.svelte";
   import {
     CoreClientError,
     type ChecklistItemDto,
@@ -17,7 +18,7 @@
   import IconButton from "../../components/IconButton.svelte";
   import { toasts } from "../../components/toasts.svelte";
   import Button from "../../components/Button.svelte";
-  import { CalendarDays, Flag, Hash, ListChecks, Redo, Repeat, Trash, X } from "../../icons";
+  import { CalendarDays, Flag, Hash, ListChecks, Plus, Redo, Repeat, Tag, Trash, X } from "../../icons";
   import { useCoreClient } from "../../lib/context";
   import type { ListsState } from "../../lib/lists.svelte";
   import { isoDate } from "../../lib/local-day";
@@ -116,6 +117,26 @@
   function schedule(field: "title" | "notes") {
     clearTimeout(timers[field]);
     timers[field] = setTimeout(field === "title" ? saveTitle : saveNotes, SAVE_DELAY_MS);
+  }
+
+  let tagButton = $state<HTMLButtonElement>();
+  let tagsOpen = $state(false);
+  const tagNames = $derived(task ? lists.tagNames(task.tags) : []);
+
+  /** Tag an/aus; ein neuer Name wird erst angelegt (ADR-035). */
+  async function toggleTag(name: string) {
+    if (!task) return;
+    const known = lists.tags.find((t) => t.name.toLowerCase() === name.toLowerCase());
+    if (known && task.tags.includes(known.id)) {
+      await save({ tags: task.tags.filter((id) => id !== known.id) });
+      return;
+    }
+    try {
+      const id = known?.id ?? (await client.ensureTag(name)).id;
+      await save({ tags: [...task.tags, id] });
+    } catch (e) {
+      toasts.show({ message: `Tag nicht gesetzt: ${(e as Error).message}`, tone: "danger" });
+    }
   }
 
   async function setChecklist(items: ChecklistItemDto[]) {
@@ -239,6 +260,40 @@
           <RecurrenceField id="detail-repeat" value={task.recurrence} due={task.due} onchange={setRecurrence} />
           {#if task.recurrence && task.status === "open"}
             <Button variant="ghost" icon={Redo} onclick={() => void skip()}>Dieses Mal überspringen</Button>
+          {/if}
+        </dd>
+
+        <dt><Tag size={16} strokeWidth={1.75} aria-hidden="true" /><span id="detail-tags">Tags</span></dt>
+        <dd class="tags" aria-labelledby="detail-tags">
+          {#each tagNames as name (name)}
+            <span class="tag-chip">
+              #{name}
+              <button type="button" aria-label="Tag entfernen: {name}" onclick={() => void toggleTag(name)}>
+                <X size={12} strokeWidth={2} aria-hidden="true" />
+              </button>
+            </span>
+          {/each}
+          <button
+            bind:this={tagButton}
+            type="button"
+            class="add-tag"
+            aria-haspopup="dialog"
+            aria-expanded={tagsOpen}
+            onclick={() => (tagsOpen = !tagsOpen)}
+          >
+            <Plus size={14} strokeWidth={2} aria-hidden="true" />Tag
+          </button>
+          {#if tagsOpen && tagButton}
+            <TagPicker
+              anchor={tagButton}
+              tags={lists.tags}
+              selected={tagNames}
+              ontoggle={(name) => void toggleTag(name)}
+              onclose={(refocus) => {
+                tagsOpen = false;
+                if (refocus) tagButton?.focus();
+              }}
+            />
           {/if}
         </dd>
 
@@ -387,6 +442,54 @@
   }
   dd {
     margin: 0;
+  }
+  dd.tags {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
+  }
+  .tag-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    height: 26px;
+    padding: 0 2px 0 var(--space-2);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-hover);
+    font-size: var(--text-sm);
+  }
+  .tag-chip button,
+  .add-tag {
+    display: inline-flex;
+    align-items: center;
+    border: 0;
+    background: transparent;
+    color: var(--color-text-muted);
+    font: inherit;
+    cursor: pointer;
+  }
+  .tag-chip button {
+    width: 22px;
+    height: 22px;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+  }
+  .tag-chip button:hover {
+    color: var(--color-danger);
+  }
+  .add-tag {
+    gap: 2px;
+    height: 26px;
+    padding: 0 var(--space-2);
+    border: 1px dashed var(--color-border-strong);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+  }
+  .add-tag:hover,
+  .add-tag[aria-expanded="true"] {
+    border-color: var(--color-accent);
+    color: var(--color-text);
   }
   dd.repeat {
     display: flex;

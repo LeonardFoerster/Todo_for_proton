@@ -14,7 +14,7 @@
   import IconButton from "../../components/IconButton.svelte";
   import Menu, { type MenuItem } from "../../components/Menu.svelte";
   import { toasts } from "../../components/toasts.svelte";
-  import { CalendarDays, Check, Circle, CircleHelp, Repeat, Settings, X } from "../../icons";
+  import { CalendarDays, Check, Circle, CircleHelp, Repeat, Settings, Tag, X } from "../../icons";
   import { useCoreClient } from "../../lib/context";
   import { density } from "../../lib/density.svelte";
   import { dueLabel } from "../../lib/format-date";
@@ -24,6 +24,7 @@
   import { readFlag, writeFlag } from "../../lib/preferences";
   import DuePopover from "../due/DuePopover.svelte";
   import ListPicker from "../lists/ListPicker.svelte";
+  import TagPicker from "../tags/TagPicker.svelte";
   import type RecurrenceDialogType from "../recurrence/RecurrenceDialog.svelte";
   import { parseNewTask, recognizedMarks, type TextMark } from "./parse";
 
@@ -41,10 +42,13 @@
     defaultDue?: DueDto | null;
     /** Vorbelegter Text der Titelzeile (z. B. aus der Befehlspalette ohne Treffer). */
     initialText?: string;
+    /** Tags ohne Angabe im Text (z. B. der Tag der Ansicht). */
+    defaultTags?: string[];
     onclose: () => void;
   }
 
-  let { lists, listId, shownListId, onopenlist, defaultDue = null, initialText = "", onclose }: Props = $props();
+  let { lists, listId, shownListId, onopenlist, defaultDue = null, initialText = "", defaultTags = [], onclose }: Props =
+    $props();
 
   const KEEP_OPEN_KEY = "tasks.new-task-keep-open";
   const PRIORITIES: { value: PriorityDto; label: string }[] = [
@@ -60,6 +64,7 @@
     "täglich · jeden Mo · alle 2 Wochen · bis 20.12.   Wiederholung",
     "!1 hoch · !2 mittel · !3 niedrig   Priorität",
     "@Liste   Liste",
+    "#tag   Tags",
   ].join("\n");
   const DAY = new Intl.DateTimeFormat("de-DE", { weekday: "short", day: "numeric", month: "short" });
 
@@ -70,6 +75,8 @@
   let prioButton = $state<HTMLButtonElement>();
   let dueButton = $state<HTMLButtonElement>();
   let repeatButton = $state<HTMLButtonElement>();
+  let tagButton = $state<HTMLButtonElement>();
+  let tagsOpen = $state(false);
   let busy = false;
 
   // svelte-ignore state_referenced_locally
@@ -90,6 +97,8 @@
   let manualDue = $state<DueDto | null | undefined>();
   let manualPriority = $state<PriorityDto | undefined>();
   let manualRecurrence = $state<RecurrenceDto | null | undefined>();
+  /** Von Hand gewählte Tag-Namen (`undefined` = aus dem Text). */
+  let manualTags = $state<string[] | undefined>();
   let chosenList = $state<string | undefined>();
 
   const parsed = $derived(parseNewTask(value, { lists: lists.lists }));
@@ -103,6 +112,7 @@
   );
   const priority = $derived(manualPriority ?? parsed.priority ?? "none");
   const target = $derived(chosenList ?? parsed.listId ?? listId);
+  const tagNames = $derived(manualTags ?? parsed.tags ?? defaultTags);
   const dueTone = $derived(due ? dueLabel(due).tone : null);
   const prioLabel = $derived(PRIORITIES.find((p) => p.value === priority)!.label);
 
@@ -113,6 +123,7 @@
         (m.kind === "due" && manualDue === undefined) ||
         (m.kind === "priority" && manualPriority === undefined) ||
         (m.kind === "repeat" && manualRecurrence === undefined) ||
+        (m.kind === "tag" && manualTags === undefined) ||
         (m.kind === "list" && chosenList === undefined),
     ),
   );
@@ -157,6 +168,18 @@
   export function openPriority() {
     const r = prioButton?.getBoundingClientRect();
     prioMenu = { x: r?.left ?? 0, y: (r?.bottom ?? 0) + 4 };
+  }
+
+  /** `Alt+T`: Tag-Auswahl auf-/zuklappen. */
+  export function toggleTags() {
+    tagsOpen = !tagsOpen;
+    if (!tagsOpen) input?.focus();
+  }
+
+  function toggleTag(name: string) {
+    const current = tagNames;
+    const has = current.some((n) => n.toLowerCase() === name.toLowerCase());
+    manualTags = has ? current.filter((n) => n.toLowerCase() !== name.toLowerCase()) : [...current, name];
   }
 
   /** `Alt+W`: Wiederholungsmenü öffnen. */
@@ -261,6 +284,8 @@
     manualDue = undefined;
     manualPriority = undefined;
     manualRecurrence = undefined;
+    manualTags = undefined;
+    tagsOpen = false;
     scroll = 0;
   }
 
@@ -269,6 +294,8 @@
     if (!title || busy) return;
     busy = true;
     try {
+      // Unbekannte Tags erst anlegen (ADR-035: ID aus dem Namen).
+      const tags = tagNames.length > 0 ? await lists.ensureTags(tagNames) : undefined;
       const task = await client.createTask({
         title,
         listId: target,
@@ -276,6 +303,7 @@
         priority: priority === "none" ? undefined : priority,
         due: due ?? undefined,
         recurrence: recurrence ?? undefined,
+        tags,
       });
       announce(title, task.listId);
       if (keepOpen) reset();
@@ -418,6 +446,33 @@
           </button>
         {/if}
       </span>
+      <span class="chip-group" class:set={tagNames.length > 0}>
+        <button
+          bind:this={tagButton}
+          type="button"
+          class="chip"
+          aria-haspopup="dialog"
+          aria-expanded={tagsOpen}
+          aria-label="Tags: {tagNames.length > 0 ? tagNames.map((n) => `#${n}`).join(' ') : 'keine'}"
+          data-tooltip="Tags   Alt+T"
+          onclick={toggleTags}
+        >
+          <Tag size={14} strokeWidth={1.75} aria-hidden="true" />{tagNames.length > 0 ? tagNames.map((n) => `#${n}`).join(" ") : "Tags"}
+        </button>
+        {#if tagNames.length > 0}
+          <button
+            type="button"
+            class="chip-x"
+            aria-label="Tags entfernen"
+            onclick={() => {
+              manualTags = [];
+              input?.focus();
+            }}
+          >
+            <X size={12} strokeWidth={2} aria-hidden="true" />
+          </button>
+        {/if}
+      </span>
       <ListPicker bind:this={picker} {lists} value={target} onchange={chooseList} shortcut="Alt+L" />
     </div>
 
@@ -466,6 +521,18 @@
   <!-- Im Dialog rendern: außerhalb läge das Menü hinter der modalen Ebene. -->
   {#if prioMenu}
     <Menu label="Priorität wählen" items={prioItems()} x={prioMenu.x} y={prioMenu.y} onclose={() => (prioMenu = null)} />
+  {/if}
+  {#if tagsOpen && tagButton}
+    <TagPicker
+      anchor={tagButton}
+      tags={lists.tags}
+      selected={tagNames}
+      ontoggle={toggleTag}
+      onclose={(refocus) => {
+        tagsOpen = false;
+        if (refocus) input?.focus();
+      }}
+    />
   {/if}
   {#if repeatMenu}
     <Menu label="Wiederholung wählen" items={repeatItems()} x={repeatMenu.x} y={repeatMenu.y} onclose={() => (repeatMenu = null)} />
@@ -559,6 +626,9 @@
   }
   .mark.list {
     --tint: var(--color-text-muted);
+  }
+  .mark.tag {
+    --tint: var(--color-accent);
   }
   .mark.repeat {
     --tint: var(--color-success);

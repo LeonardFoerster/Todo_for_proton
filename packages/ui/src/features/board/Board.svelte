@@ -436,6 +436,7 @@
       ontoggle={(task, done) => void toggle(task, done)}
       onopen={open}
       oncardpointerdown={startCardDrag}
+      tagNames={(ids) => lists.tagNames(ids)}
       dropIndex={dropIndexFor(column)}
       dragging={drag ? new Set([drag.task.id]) : undefined}
       onheaderpointerdown={column.list.isInbox ? undefined : (e) => startColumnDrag(e, column)}

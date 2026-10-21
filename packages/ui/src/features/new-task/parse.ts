@@ -12,6 +12,8 @@ export interface ParsedNewTask {
   recurrence: RecurrenceDto | null;
   /** Nur mit Regel: die Fälligkeit, wenn man die Regel wegnimmt (Chip „Keine“). */
   dueWithoutRule?: DueDto | null;
+  /** Tag-Namen aus `#name` (N8-03), ohne `#`; nur gesetzt, wenn es welche gibt. */
+  tags?: string[];
 }
 
 /**
@@ -21,7 +23,7 @@ export interface ParsedNewTask {
 export interface TextMark {
   start: number;
   end: number;
-  kind: "due" | "priority" | "list" | "repeat";
+  kind: "due" | "priority" | "list" | "repeat" | "tag";
   priority?: PriorityDto;
 }
 
@@ -133,6 +135,8 @@ function scan(tokens: readonly string[], now: Date, lists: readonly TaskListDto[
   let time: Hit<Time> | null = null;
   let priority: Hit<PriorityDto> | null = null;
   let list: Hit<string> | null = null;
+  /** Alle `#tags` (nicht nur der letzte). */
+  const tags: Hit<string>[] = [];
 
   for (let i = 0; i < tokens.length; i++) {
     const ruleHit = matchRule(tokens, i, now);
@@ -167,13 +171,25 @@ function scan(tokens: readonly string[], now: Date, lists: readonly TaskListDto[
       priority = { start: i, end: i + 1, value: PRIORITIES[word] };
       continue;
     }
+    const tag = tagWord(tokens[i]);
+    if (tag) {
+      tags.push({ start: i, end: i + 1, value: tag });
+      continue;
+    }
     if (word.startsWith("@") && word.length > 1 && lists) {
       const id = matchList(word.slice(1), lists);
       if (id) list = { start: i, end: i + 1, value: id };
     }
   }
 
-  return { repeat, day, time, priority, list };
+  return { repeat, day, time, priority, list, tags };
+}
+
+/** `#uni`, `#Uni-Analysis` (Satzzeichen am Ende zählen nicht); reine Zahlen (`#12`) sind kein Tag. */
+function tagWord(token: string): string | null {
+  const m = /^#([\p{L}\p{N}_\-/]+?)[.,;:!?]*$/u.exec(token);
+  if (!m || /^\d+$/.test(m[1])) return null;
+  return m[1];
 }
 
 /**
@@ -214,7 +230,7 @@ function analyze(input: string, options: ParseOptions): { parsed: ParsedNewTask;
   const text = input.trim();
   const words = [...input.matchAll(/\S+/g)].map((m) => ({ word: m[0], start: m.index, end: m.index + m[0].length }));
   const tokens = words.map((w) => w.word);
-  const { repeat, day, time, priority, list } = scan(tokens, now, options.lists);
+  const { repeat, day, time, priority, list, tags } = scan(tokens, now, options.lists);
 
   const drop = new Map<number, TextMark["kind"]>();
   const hits: [Hit<unknown> | null, TextMark["kind"]][] = [
@@ -223,6 +239,7 @@ function analyze(input: string, options: ParseOptions): { parsed: ParsedNewTask;
     [time, "due"],
     [priority, "priority"],
     [list, "list"],
+    ...tags.map((t): [Hit<unknown>, TextMark["kind"]] => [t, "tag"]),
   ];
   for (const [hit, kind] of hits) {
     if (!hit) continue;
@@ -259,9 +276,16 @@ function analyze(input: string, options: ParseOptions): { parsed: ParsedNewTask;
       listId: list?.value ?? null,
       recurrence: repeat?.value ?? null,
       ...(repeat ? { dueWithoutRule: toDue(day?.value.date ?? null, time?.value ?? null, now, options.tz) } : {}),
+      ...(tags.length > 0 ? { tags: uniqueNames(tags.map((t) => t.value)) } : {}),
     },
     marks,
   };
+}
+
+/** Gleiche Namen (Groß/Klein egal) nur einmal, erste Schreibweise gewinnt. */
+function uniqueNames(names: string[]): string[] {
+  const seen = new Set<string>();
+  return names.filter((n) => !seen.has(n.toLowerCase()) && !!seen.add(n.toLowerCase()));
 }
 
 /** `24.10.`, `24.10.26`, `24.10.2026`; ohne Jahr der nächste solche Tag ab heute. */

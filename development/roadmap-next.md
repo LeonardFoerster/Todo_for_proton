@@ -447,7 +447,8 @@ acceptance`.
 **Schritte:** Feld `Checklist` (neuer Code, Liste aus `{id, text, done}`, LWW auf die ganze Liste wie Tags in v1, max.
 100 Punkte), Standard leer beim Materialisieren; API/DTO; Detail-Panel: Punkte hinzufügen/abhaken/umbenennen/löschen/
 ziehen, `Enter` neuer Punkt; Zeile/Karte: „2/5“; Suche findet Punkttext.
-### [ ] N8-02 · ADR-035 + Tags als eigene Entität
+### [x] N8-02 · ADR-035 + Tags als eigene Entität — 2026-10-21 · b7ad6c9
+> Notiz: Tag-ID aus dem Namen abgeleitet (UUIDv5) – offline doppelt angelegt = ein Tag. Export enthält die Tags, Import ordnet über den Namen zu.
 **Schritte:** `Tag { id, name, sort_key }` als neue synchronisierte Entität (`EntityRef::Tag` angehängt, wie
 `TaskList`); `Task.tags: Vec<TagId>` (Feld existiert, Code `Tags`) bekommt Logik; Umbenennen/Löschen eines Tags;
 `TaskQuery.tag` filtert; API/DTO/Commands.

@@ -1,4 +1,4 @@
-import type { CoreClient, MoveListTargetDto, TaskListDto, TaskQueryDto, TaskSummaryDto } from "@tasks/core-client";
+import type { CoreClient, MoveListTargetDto, TagDto, TaskListDto, TaskQueryDto, TaskSummaryDto } from "@tasks/core-client";
 import { isOverdue } from "./groups";
 import { routeQuery } from "./views";
 
@@ -12,6 +12,9 @@ const PAGE = 500;
  */
 export class ListsState {
   lists = $state.raw<TaskListDto[]>([]);
+  /** Tags (ADR-035), nach Name. */
+  tags = $state.raw<TagDto[]>([]);
+  tagsLoaded = $state(false);
   /** Zähler der Seitenleiste; `overdue` = davon in „Heute“ überfällig (P4-02), `trash` = Papierkorb (ADR-031). */
   counts = $state<{ inbox: number; today: number; overdue: number; trash: number }>({
     inbox: 0,
@@ -28,9 +31,11 @@ export class ListsState {
   /** Startet Laden + Abo; gibt die Abmeldung zurück. */
   start(): () => void {
     void this.reloadLists();
+    void this.reloadTags();
     void this.refreshCounts();
     const off = this.client.onChange((e) => {
       if (e.lists.length) void this.reloadLists();
+      if (e.tags.length) void this.reloadTags();
       if (e.tasks.length || e.lists.length) this.scheduleCounts();
     });
     return () => {
@@ -50,6 +55,24 @@ export class ListsState {
   async reloadLists() {
     this.lists = await this.client.listTaskLists();
     this.loaded = true;
+  }
+
+  async reloadTags() {
+    this.tags = await this.client.listTags();
+    this.tagsLoaded = true;
+  }
+
+  /** Namen bekannter Tags in der Reihenfolge der IDs (verwaiste IDs fallen weg, ADR-035). */
+  tagNames(ids: readonly string[]): string[] {
+    if (ids.length === 0) return [];
+    return ids.flatMap((id) => this.tags.find((t) => t.id === id)?.name ?? []);
+  }
+
+  /** Tags zu Namen finden oder anlegen (Reihenfolge bleibt); liefert die IDs. */
+  async ensureTags(names: readonly string[]): Promise<string[]> {
+    const ids: string[] = [];
+    for (const name of names) ids.push((await this.client.ensureTag(name)).id);
+    return ids.filter((id, i) => ids.indexOf(id) === i);
   }
 
   /** Umbenennen (optimistisch; bei Fehler neu laden und weiterwerfen). */

@@ -10,6 +10,7 @@ export interface TaskLike {
   sortKey: string;
   completedAt: string | null;
   trashedAt: string | null;
+  tags: string[];
 }
 
 export interface ViewContext {
@@ -33,6 +34,8 @@ export function inView(task: TaskLike, ctx: ViewContext): boolean {
       return task.listId === ctx.inboxId;
     case "list":
       return task.listId === route.listId;
+    case "tag":
+      return task.tags.includes(route.tagId);
     case "today":
       return task.due != null && dueBy(task.due, ctx.day);
     case "upcoming":
